@@ -14,18 +14,31 @@
 
 ## 工具链版本
 
-| 用途 | 版本 | 声明位置 |
+| 用途 | 版本 | 声明位置（口径） |
 | --- | --- | --- |
-| 前端构建 / 运行 | **Node 24** | `.nvmrc`、`web/package.json` 的 `engines`、`Dockerfile` 的 `node:24-alpine` |
-| 后端构建 / 运行 | **Go 1.27** | `server/go.mod` 的 `go 1.27.1`、`Dockerfile` 的 `golang:1.27-alpine` |
+| 前端构建 / 运行 | **Node 26** | `.nvmrc` 是准；`web/package.json` 的 `engines`（`>=26`）是下限；`Dockerfile` 的 `node:26-alpine` 跟随 |
+| 后端构建 / 运行 | **Go 1.27** | `server/go.mod` 的 `go 1.27.1` 是准；`Dockerfile` 的 `golang:1.27-alpine` 跟随 |
 | 最终镜像基础层 | **Alpine 3.24** | `Dockerfile` |
 
 ```bash
-nvm use            # 读 .nvmrc，切到 Node 24
+nvm use            # 读 .nvmrc，切到 Node 26
 ```
 
-`scripts/build.sh` 会在 PATH 上找不到合规版本时，自动到 nvm / Homebrew 里找
-Node 24 与 Go 1.27，并把实际用到的版本打印出来；也可用 `NODE_BIN` / `GO_BIN` 显式指定。
+**大版本不冻结**：Node / Go 该升就升，dependabot 提大版本升级不会被挡。
+代价是版本声明有四个落点（`.nvmrc`、`engines`、`server/go.mod`、`Dockerfile`），
+其中只有 Dockerfile 读不到另外三个 —— 所以多了一道校验：
+
+```bash
+./scripts/check-toolchain.sh    # 声明不一致即非零退出；CI 里也会先跑这一步
+```
+
+它让「只改一处」的升级立刻暴露（并指出还要改哪几个文件），而不是让本地、CI 测试与镜像
+悄悄跑在不同的运行时上。
+
+版本号在 CI 与本地脚本里都不写死：workflow 用 `node-version-file: .nvmrc` 与
+`go-version-file: server/go.mod`，`scripts/build.sh` 也按 `.nvmrc` 找 Node。
+PATH 上找不到合规版本时会依次到 nvm / Homebrew 里找，并把实际用到的版本打印出来；
+也可用 `NODE_BIN` / `GO_BIN` 显式指定。
 
 ---
 
@@ -100,7 +113,7 @@ docker run --rm -v shenshi-data:/data -v "$PWD:/backup" alpine \
 docker pull ghcr.io/felix2yu/shenshi:latest    # 只拉镜像，不启动
 ```
 
-镜像本身用三阶段 Dockerfile 构建（`node:24-alpine` 构建前端 → `golang:1.27-alpine` 编译 → `alpine:3.24` 运行），
+镜像本身用三阶段 Dockerfile 构建（`node:26-alpine` 构建前端 → `golang:1.27-alpine` 编译 → `alpine:3.24` 运行），
 最终约 20MB，只含一个静态链接的二进制、tzdata 与根证书；编译工具链与 `node_modules` 都不进最终镜像。
 由于 SQLite 驱动是纯 Go 实现，构建期 `CGO_ENABLED=0`，可交叉编译到 `amd64` / `arm64`。
 确实想在服务器上本地出镜像时，`docker build -t shenshi:local .`（`docker-compose.yml` 里留了改法注释）。
@@ -115,15 +128,20 @@ docker pull ghcr.io/felix2yu/shenshi:latest    # 只拉镜像，不启动
 
 | 步骤 | 内容 |
 | --- | --- |
-| `test` | 前端类型检查 → `build.sh` → 后端冒烟 184 项 → 浏览器 UI 冒烟 78 项（失败时截图作为 artifact 上传） |
+| `test` | 校验工具链声明一致 → 前端类型检查 → `build.sh` → 后端冒烟 184 项 → 浏览器 UI 冒烟 78 项（失败时截图作为 artifact 上传） |
 | `docker` | 仅 `main`：`amd64` / `arm64` 各自在**原生 runner** 上构建并推到 `ghcr.io` |
 | `docker-manifest` | 把两个架构合成多架构 manifest（`latest` 与 `<sha>`） |
+
+工具链版本由 workflow 直接读声明文件决定（`node-version-file: .nvmrc`、
+`go-version-file: server/go.mod`），不在 YAML 里写版本号。
 
 **`release.yml`** —— 在 GitHub 上发布 release 时，交叉编译 `linux/darwin × amd64/arm64` 四个二进制，
 连同 `SHA256SUMS.txt` 挂到该 release 上。
 
 **`.github/dependabot.yml`** —— 每周五检查依赖更新并开 PR：`gomod`（`/server`）、
 `npm`（`/web`）、`docker`（基础镜像）、`github-actions`（工作流里用到的 action）。
+Node / Go 的**大版本不冻结**，这类 PR 正常提；只改镜像 tag 的那种会被
+`check-toolchain.sh` 挡下，并提示把 `.nvmrc` / `engines` / `go.mod` 一起改。
 
 > **关于 runner 选择**：`ubuntu-24.04` / `ubuntu-24.04-arm` 是**显式钉死**的，不用 `-latest`。
 > `-latest` 已经静默换过底层镜像，而这类漂移只在出问题时才被发现。本项目的二进制是静态的、
@@ -279,6 +297,7 @@ shendu/
 │       └── components/           # 视图与组件
 └── scripts/
     ├── build.sh                  # 一键构建
+    ├── check-toolchain.sh        # 校验各处版本声明是否一致
     ├── smoke.py                  # 后端端到端冒烟（184 项）
     └── ui-smoke.mjs              # 真实浏览器 UI 冒烟（78 项）
 ```

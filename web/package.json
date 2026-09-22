@@ -5,7 +5,7 @@
   "description": "慎始 · 专注规划与善始善终的任务管理应用前端",
   "type": "module",
   "engines": {
-    "node": ">=24"
+    "node": ">=26"
   },
   "scripts": {
     "dev": "vite",

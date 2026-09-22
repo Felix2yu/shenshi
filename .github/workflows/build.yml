@@ -33,17 +33,26 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # 工具链版本不在工作流里写死：下面两个 Setup 各自去读声明文件
+      # （.nvmrc / server/go.mod），与本地开发、build.sh 用的是同一份来源。
+      # 于是升级大版本只改声明，不必回来动 CI。
+      #
+      # 这条校验守的是另一件事：Dockerfile 的基镜像 tag 读不到这些文件，只能写死，
+      # 是四处声明里唯一可能悄悄分叉的地方。dependabot 只提镜像大版本时会在这一步失败。
+      - name: 校验工具链声明一致
+        run: ./scripts/check-toolchain.sh
+
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: web/package-lock.json
 
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.27"
+          go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
 
       - name: 安装前端依赖
@@ -54,7 +63,7 @@ jobs:
         run: npx tsc --noEmit
         working-directory: web
 
-      # build.sh 会校验 Node 24 / Go 1.27 并打印实际版本；
+      # build.sh 会自动定位符合 .nvmrc / server/go.mod 的 node 与 go，并打印实际版本；
       # 它同时产出 bin/shenshi（UI 冒烟的被测对象）与 server/dist（供 go:embed）。
       - name: 构建（前端 + 二进制）
         run: ./scripts/build.sh

@@ -4,8 +4,10 @@
 # 编译期依赖（node_modules、Go 工具链）全部留在前面的阶段，不进最终镜像。
 
 # ---------- 1. 前端 ----------
-# 与本地开发同版本：Node 24（见根目录 .nvmrc 与 web/package.json 的 engines）。
-FROM node:24-alpine AS web
+# 与本地开发同版本：Node 26（`.nvmrc` 是准，`web/package.json` 的 engines 是下限）。
+# 大版本不冻结 —— dependabot 可以提 node:28-alpine；但那时得连 .nvmrc 与 engines 一起改，
+# 否则 scripts/check-toolchain.sh 会在 CI 里把「只改一处」的 PR 拦下来。
+FROM node:26-alpine AS web
 
 WORKDIR /app/web
 
@@ -18,7 +20,7 @@ RUN npm run build
 
 
 # ---------- 2. 后端 ----------
-# 同样与本地对齐：Go 1.27（go.mod 声明 go 1.27.1）。
+# 同样与本地对齐：Go 1.27（`server/go.mod` 的 go 指令是准）。
 FROM golang:1.27-alpine AS server
 
 # SQLite 驱动是纯 Go 实现的（modernc.org/sqlite），因此无需 gcc / CGO。
