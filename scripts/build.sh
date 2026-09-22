@@ -56,6 +56,19 @@ if [ -z "${NODE_BIN:-}" ] || [ ! -x "${NODE_BIN:-}" ]; then
   exit 1
 fi
 
+ACTUAL_MAJOR="$(node_major "$NODE_BIN")"
+if [ -z "$ACTUAL_MAJOR" ]; then
+  echo "无法识别 $NODE_BIN 的版本。" >&2
+  exit 1
+fi
+# 硬校验：低于 .nvmrc 要求的大版本直接拒绝构建。
+# 有了这一条，「CI 里构建成功」本身就证明 CI 用的是够新的 Node，不必去翻日志。
+# 显式传 NODE_BIN 时同样会校验，避免用错版本编出与 CI 不一致的产物。
+if [ "$ACTUAL_MAJOR" -lt "$REQ_MAJOR" ]; then
+  echo "Node 大版本过低：.nvmrc 要求 $REQ_MAJOR，$NODE_BIN 是 $ACTUAL_MAJOR。" >&2
+  exit 1
+fi
+
 # 让 npm / npx 与 NODE_BIN 同源，避免「node 来自一处、npm 却来自另一处」。
 export PATH="$(dirname "$NODE_BIN"):$PATH"
 
@@ -80,9 +93,9 @@ say "node $("$NODE_BIN" -v)（$NODE_BIN）"
 say "go   $("$GO_BIN" version | awk '{print $3}')（$GO_BIN）"
 
 # 「.nvmrc 写 26、本机只装了 28」这类情况：能跑，但要让用的人知道自己用的不是声明的大版本。
-if [ "$(node_major "$NODE_BIN")" != "$REQ_MAJOR" ]; then
+if [ "$ACTUAL_MAJOR" != "$REQ_MAJOR" ]; then
   printf '  ⚠ .nvmrc 要求的是 Node %s，上面用的是 %s（本机没有 %s 大版本，已退让到更高的版本）\n' \
-    "$REQ_MAJOR" "$(node_major "$NODE_BIN")" "$REQ_MAJOR" >&2
+    "$REQ_MAJOR" "$ACTUAL_MAJOR" "$REQ_MAJOR" >&2
 fi
 
 # 1) 前端
