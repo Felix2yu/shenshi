@@ -1,0 +1,36 @@
+# 「慎始」单机部署。
+#
+# 用法：
+#   cp .env.example .env      # 然后在 .env 里填一个口令
+#   docker compose up -d --build
+#   浏览器打开 http://<服务器地址>:8787
+#
+# 数据放在具名卷里而不是绑定挂载：镜像里的 /data 属于容器内的 shenshi 用户（非 root），
+# 若改成 ./data:/data 这类绑定挂载，宿主目录的属主与容器内 uid 不一致会导致写入失败。
+# 确实想直接用宿主目录，请先 chown 100:100 ./data。
+
+services:
+  shenshi:
+    build:
+      context: .
+    image: shenshi:latest
+    container_name: shenshi
+    restart: unless-stopped
+
+    ports:
+      # 默认只监听所有网卡的 8787。若前面已有反向代理，改成 "127.0.0.1:8787:8787" 更稳妥。
+      - "8787:8787"
+
+    environment:
+      # 时区直接决定「今天」「逾期」「习惯打卡」的归属日，务必与使用者一致。
+      TZ: ${TZ:-Asia/Shanghai}
+      SHENSHI_DB: /data/shenshi.db
+      # 访问口令。留空即不启用鉴权 —— 只适合完全可信的内网。
+      # 用 `openssl rand -base64 24` 生成一个即可。
+      SHENSHI_TOKEN: ${SHENSHI_TOKEN:?请先在 .env 设置 SHENSHI_TOKEN，或显式留空以关闭鉴权}
+
+    volumes:
+      - shenshi-data:/data
+
+volumes:
+  shenshi-data:

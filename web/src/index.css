@@ -1,0 +1,245 @@
+@import 'tailwindcss';
+
+/* ============================================================
+   慎始 · 设计令牌
+   取「宣纸、松烟墨、朱砂印」三色为骨。浅色如素笺，深色如夜砚。
+   ============================================================ */
+
+:root {
+  --paper: #faf7f2;
+  --paper-deep: #f2ede4;
+  --surface: #ffffff;
+  --surface-2: #f5f2ec;
+  --surface-3: #ece7de;
+  --line: #e7e1d7;
+  --line-strong: #d5ccbe;
+  --ink: #221f1b;
+  --ink-2: #6b635a;
+  --ink-3: #9c948a;
+  --seal: #b4553d;
+  --seal-contrast: #fdf6f2;
+  --jade: #5f7a66;
+  --azure: #5a6b8c;
+  --amber: #a8762c;
+  --violet: #7a5c7a;
+  --p-high: #c1453a;
+  --p-mid: #bf8324;
+  --p-low: #4f7f9e;
+  --shadow-sm: 0 1px 2px rgb(60 48 32 / 0.06), 0 1px 3px rgb(60 48 32 / 0.04);
+  --shadow-md: 0 4px 16px -4px rgb(60 48 32 / 0.12), 0 2px 6px -2px rgb(60 48 32 / 0.08);
+  --shadow-lg: 0 18px 48px -12px rgb(48 38 24 / 0.22), 0 4px 12px -4px rgb(48 38 24 / 0.1);
+  --ring: color-mix(in oklab, var(--seal) 45%, transparent);
+}
+
+[data-theme='dark'] {
+  --paper: #171513;
+  --paper-deep: #121110;
+  --surface: #201d1a;
+  --surface-2: #292521;
+  --surface-3: #332e29;
+  --line: #322e28;
+  --line-strong: #453f37;
+  --ink: #ece6dc;
+  --ink-2: #a8a096;
+  --ink-3: #786f66;
+  --seal: #d4765c;
+  --seal-contrast: #201a17;
+  --jade: #7e9c85;
+  --azure: #8296bb;
+  --amber: #cf9a4a;
+  --violet: #a884a8;
+  --p-high: #e0705e;
+  --p-mid: #dfaa55;
+  --p-low: #7aa9c6;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 6px 20px -6px rgb(0 0 0 / 0.55);
+  --shadow-lg: 0 22px 56px -16px rgb(0 0 0 / 0.7);
+}
+
+/* 印章色可换：不改结构，只换一处色相。 */
+[data-accent='azure'] { --seal: #4a6386; }
+[data-accent='jade'] { --seal: #4f7358; }
+[data-accent='violet'] { --seal: #6f4f74; }
+[data-accent='ink'] { --seal: #4a4741; }
+[data-theme='dark'][data-accent='azure'] { --seal: #8aa3c8; }
+[data-theme='dark'][data-accent='jade'] { --seal: #86ac8e; }
+[data-theme='dark'][data-accent='violet'] { --seal: #b28cb6; }
+[data-theme='dark'][data-accent='ink'] { --seal: #b0aaa2; }
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-paper-deep: var(--paper-deep);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-seal: var(--seal);
+  --color-seal-contrast: var(--seal-contrast);
+  --color-jade: var(--jade);
+  --color-azure: var(--azure);
+  --color-amber: var(--amber);
+  --color-violet: var(--violet);
+  --color-p-high: var(--p-high);
+  --color-p-mid: var(--p-mid);
+  --color-p-low: var(--p-low);
+
+  --font-serif: 'Songti SC', 'Noto Serif SC', 'Source Han Serif SC', 'STSong', serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Segoe UI', Roboto, system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+
+  --radius-card: 12px;
+
+  --animate-fade-in: fade-in 0.18s ease-out both;
+  --animate-rise: rise 0.24s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-slide-left: slide-left 0.26s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-pop: pop 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes slide-left {
+  from { opacity: 0; transform: translateX(14px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes pop {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes check-sweep {
+  from { stroke-dashoffset: 22; }
+  to { stroke-dashoffset: 0; }
+}
+
+/* ============================================================
+   基础样式
+   ============================================================ */
+
+* {
+  border-color: var(--line);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overscroll-behavior: none;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--seal) 24%, transparent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+  border-radius: 6px;
+}
+
+input,
+textarea,
+button,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+input,
+textarea {
+  background: transparent;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--ink-3);
+}
+
+textarea {
+  resize: none;
+}
+
+/* 细窄滚动条，避免打断纸面感 */
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--ink-3) 34%, transparent);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--ink-3) 58%, transparent);
+  background-clip: padding-box;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* 品牌字：宋体，带一点字距 */
+.brand-serif {
+  font-family: var(--font-serif);
+  letter-spacing: 0.04em;
+}
+
+/* 印章：朱砂底、米白字，内描一圈细边 */
+.seal-mark {
+  font-family: var(--font-serif);
+  background: var(--seal);
+  color: var(--seal-contrast);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--seal-contrast) 30%, transparent);
+}
+
+/* 纸面质感：极淡的斜向纹理，仅在浅色下出现 */
+.paper-grain {
+  background-image: repeating-linear-gradient(
+      135deg,
+      color-mix(in oklab, var(--ink) 1.6%, transparent) 0 1px,
+      transparent 1px 4px
+    );
+}
+
+.drag-ghost {
+  opacity: 0.42;
+}
+
+.drop-target {
+  background: color-mix(in oklab, var(--seal) 9%, transparent);
+  outline: 1.5px dashed color-mix(in oklab, var(--seal) 46%, transparent);
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

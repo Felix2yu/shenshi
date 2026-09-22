@@ -1,0 +1,34 @@
+# 构建镜像时忽略的内容。
+#
+# 只保留源码与依赖清单：node_modules、前端产物、二进制、数据库一律排除，
+# 它们要么在镜像里重新生成，要么根本不该进镜像（尤其是 data/ 里的真实数据）。
+.git
+.gitignore
+.workbuddy
+
+# 构建产物与本地二进制
+bin/
+web/dist/
+server/dist/
+server/shendu
+
+# 本地数据（含真实任务数据，绝不能进镜像层）
+data/
+
+# 依赖目录（在镜像里重新安装）
+web/node_modules/
+
+# 开发与文档
+docs/
+scripts/
+README.md
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# 杂项
+**/.DS_Store
+**/*.log
+**/*.db
+**/*.db-wal
+**/*.db-shm
