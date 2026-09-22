@@ -1,0 +1,89 @@
+name: Release
+
+# 在 GitHub 上发布 release 时，交叉编译各平台二进制并挂到该 release 上。
+#
+# 与 mujian 的 release 工作流最大的不同：它要为每个平台开一个 runner
+# （CGO 让二进制与编译机绑定），「慎始」全部目标都能在同一个 Linux runner 上
+# 用 GOOS/GOARCH 交叉编译出来 —— CGO_ENABLED=0，产物是完全静态的。
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: 编译各平台二进制
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache-dependency-path: server/go.sum
+
+      - name: 安装前端依赖
+        run: npm ci
+        working-directory: web
+
+      # 前端产物要先落到 server/dist，go:embed 才编译得过。
+      - name: 构建前端
+        run: npm run build
+        working-directory: web
+
+      - name: 同步前端产物到 server/dist
+        run: |
+          rm -rf server/dist
+          mkdir -p server/dist
+          cp -R web/dist/. server/dist/
+
+      # 发布前顺手跑一遍端到端，避免把一个坏掉的提交发出去。
+      - name: 后端冒烟
+        run: python3 scripts/smoke.py
+
+      - name: 交叉编译
+        working-directory: server
+        run: |
+          set -euo pipefail
+          mkdir -p ../dist
+          build() {
+            local goos="$1" goarch="$2"
+            echo "── ${goos}/${goarch}"
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+              go build -trimpath -ldflags="-s -w" -o "../dist/shenshi-${goos}-${goarch}" .
+          }
+          build linux amd64
+          build linux arm64
+          build darwin arm64
+          build darwin amd64
+          ls -lh ../dist
+
+      # 二进制是用户直接下载运行的，把校验和一并附上，便于核对完整性。
+      - name: 生成校验和
+        working-directory: dist
+        run: sha256sum shenshi-* > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: shenshi-binaries
+          path: dist/*
+          retention-days: 7
+
+      - name: 挂到 release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            dist/shenshi-*
+            dist/SHA256SUMS.txt

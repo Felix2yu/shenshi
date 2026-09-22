@@ -1,0 +1,172 @@
+name: Build
+
+# 参考 Felix2yu/mujian 的 CI 结构，但「慎始」的约束更少，因此有意做了简化：
+#
+#   mujian 用 CGO，二进制与编译机的 glibc 绑死，所以它必须
+#   ① 在固定版本 runner 上编译 ② 用 readelf 校验 GLIBC 符号 ③ 为每个平台开独立 runner。
+#
+#   「慎始」的 SQLite 驱动是纯 Go 实现，`CGO_ENABLED=0` 出的是完全静态的二进制，
+#   没有 glibc 依赖，也就没有上面任何一项负担 —— 一次交叉编译即可覆盖所有平台。
+#   CI 因此只保留真正有价值的部分：跑测试、按架构出镜像。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # 每周一次空跑：没人推代码也能暴露「依赖被上游删了 / 基础镜像没了」这类腐烂。
+  # 依赖版本本身的例行检查交给 .github/dependabot.yml（每周五出 PR）。
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+# 最小权限；docker job 需要写 packages，单独在该 job 里提权。
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  # PR 上连着推多次时，旧的那次没必要跑完；main 上的构建不互相取消。
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: 测试
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache-dependency-path: server/go.sum
+
+      - name: 安装前端依赖
+        run: npm ci
+        working-directory: web
+
+      - name: 前端类型检查
+        run: npx tsc --noEmit
+        working-directory: web
+
+      # build.sh 会校验 Node 24 / Go 1.27 并打印实际版本；
+      # 它同时产出 bin/shenshi（UI 冒烟的被测对象）与 server/dist（供 go:embed）。
+      - name: 构建（前端 + 二进制）
+        run: ./scripts/build.sh
+
+      - name: 缓存 Playwright 浏览器
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
+
+      # playwright-core 自带 install 子命令，不必为了下载浏览器再引入完整的 playwright 包。
+      - name: 安装 Chromium
+        run: npx playwright-core install --with-deps chromium
+        working-directory: web
+
+      # 后端端到端：自建临时实例与数据库，逐条验证核心接口。
+      - name: 后端冒烟
+        run: python3 scripts/smoke.py
+
+      # 真实 Chromium 走一遍主流程，并硬性要求「无控制台错误 / 无未捕获异常」。
+      - name: 浏览器 UI 冒烟
+        run: node scripts/ui-smoke.mjs
+        env:
+          SHOT_DIR: ${{ github.workspace }}/screenshots
+
+      # 失败时截图是排查的主要线索，所以无论如何都传。
+      - name: 上传 UI 截图
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-screenshots
+          path: ${{ github.workspace }}/screenshots
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # 每个架构在自己的原生 runner 上构建：arm64 走到 QEMU 模拟的话，
+  # 镜像里那次 Go 编译会被拖慢好几倍，而 arm64 runner 对公开仓库是免费的。
+  docker:
+    name: 镜像 ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux/amd64, runner: ubuntu-24.04,     label: amd64 }
+          - { platform: linux/arm64, runner: ubuntu-24.04-arm, label: arm64 }
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 镜像引用必须全小写，仓库名将来若含大写会在这里被纠正。
+      - name: 仓库名转小写
+        id: repo
+        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: 构建并推送
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: ghcr.io/${{ steps.repo.outputs.name }}:${{ matrix.label }}
+          # 强制重新解析基础镜像 tag：alpine:3.24 背后的 digest 变了就重建，
+          # 这样每周的空跑确实能把上游补丁带进来（比 CACHEBUST 参数更直接）。
+          pull: true
+          cache-from: type=gha,scope=${{ matrix.label }}
+          cache-to: type=gha,scope=${{ matrix.label }},mode=max
+
+  # 把两个架构的镜像合成一个多架构 manifest，拉取端不必关心自己在什么机器上。
+  docker-manifest:
+    name: 合并镜像 manifest
+    runs-on: ubuntu-24.04
+    needs: docker
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: 登录 GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 仓库名转小写
+        id: repo
+        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: 创建并推送 manifest
+        run: |
+          image=ghcr.io/${{ steps.repo.outputs.name }}
+          docker buildx imagetools create \
+            --tag "$image:latest" \
+            "$image:amd64" "$image:arm64"
+          docker buildx imagetools create \
+            --tag "$image:${{ github.sha }}" \
+            "$image:amd64" "$image:arm64"

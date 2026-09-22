@@ -7,12 +7,13 @@
  * 用法：
  *   node scripts/ui-smoke.mjs
  *
- * 依赖 playwright-core（web 的开发依赖）。浏览器复用 Playwright 缓存里的 Chromium，
- * 不会额外下载。
+ * 依赖 playwright-core（web 的开发依赖）。浏览器优先复用 Playwright 缓存里的 Chromium，
+ * 不会额外下载；找不到缓存时回退到系统安装的 Chromium / Chrome。
+ * 缺浏览器可执行：cd web && npx playwright-core install --with-deps chromium
  *
  * 可选环境变量：
  *   SHENSHI_BIN       指定被测二进制（默认 <repo>/bin/shenshi）
- *   CHROMIUM_PATH     指定 Chromium 可执行文件（默认自动探测 Playwright 缓存）
+ *   CHROMIUM_PATH     指定 Chromium 可执行文件（默认自动探测）
  *   SHOT_DIR          截图输出目录（默认 /tmp/shenshi-shots）
  */
 
@@ -96,22 +97,51 @@ async function waitHealthy(base, timeoutMs = 15000) {
   throw new Error('服务未在预期时间内就绪')
 }
 
+/** Playwright 在各平台存放浏览器的缓存根目录。 */
+function playwrightCacheDirs() {
+  const dirs = []
+  // 显式指定优先（CI 里常用）。
+  if (process.env.PLAYWRIGHT_BROWSERS_PATH) dirs.push(process.env.PLAYWRIGHT_BROWSERS_PATH)
+  // Linux 走 XDG 约定，macOS 走 Library/Caches，两者都可能有。
+  if (process.env.XDG_CACHE_HOME) dirs.push(path.join(process.env.XDG_CACHE_HOME, 'ms-playwright'))
+  dirs.push(path.join(os.homedir(), '.cache', 'ms-playwright'))
+  dirs.push(path.join(os.homedir(), 'Library', 'Caches', 'ms-playwright'))
+  return [...new Set(dirs)].filter((d) => fs.existsSync(d))
+}
+
 function findChromium() {
   if (process.env.CHROMIUM_PATH) return process.env.CHROMIUM_PATH
-  const cache = path.join(os.homedir(), 'Library', 'Caches', 'ms-playwright')
-  if (fs.existsSync(cache)) {
+
+  for (const cache of playwrightCacheDirs()) {
     const dirs = fs.readdirSync(cache).filter((d) => d.startsWith('chromium-'))
     for (const d of dirs.sort().reverse()) {
       const cand = [
+        // macOS（Apple Silicon / Intel）
         path.join(cache, d, 'chrome-mac-arm64', 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing'),
         path.join(cache, d, 'chrome-mac', 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing'),
         path.join(cache, d, 'chrome-mac-arm64', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
+        // Linux（CI 与本地都走这条）
         path.join(cache, d, 'chrome-linux', 'chrome'),
+        path.join(cache, d, 'chrome-linux64', 'chrome'),
       ].find((p) => fs.existsSync(p))
       if (cand) return cand
     }
   }
-  throw new Error('找不到 Chromium，可设置 CHROMIUM_PATH 指定')
+
+  // 最后兜底：系统包管理器装的 Chromium / Chrome。
+  const system = [
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/snap/bin/chromium',
+  ].find((p) => fs.existsSync(p))
+  if (system) return system
+
+  throw new Error(
+    '找不到 Chromium。可执行 `cd web && npx playwright-core install --with-deps chromium` 安装，' +
+      '或用 CHROMIUM_PATH 指定可执行文件。',
+  )
 }
 
 async function main() {

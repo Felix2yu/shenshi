@@ -93,6 +93,39 @@ docker run --rm -v shenshi-data:/data -v "$PWD:/backup" alpine \
 最终约 20MB，只含一个静态链接的二进制、tzdata 与根证书；编译工具链与 `node_modules` 都不进最终镜像。
 由于 SQLite 驱动是纯 Go 实现，构建期 `CGO_ENABLED=0`，可交叉编译到 `amd64` / `arm64`。
 
+推送到 `main` 后，CI 会把多架构镜像发布到 GitHub 容器仓库，服务器上可以直接拉现成的：
+
+```bash
+docker pull ghcr.io/felix2yu/shenshi:latest
+```
+
+---
+
+## 持续集成
+
+`.github/workflows/` 下两个工作流（结构参考 [Felix2yu/mujian](https://github.com/Felix2yu/mujian/tree/main/.github)）。
+
+**`build.yml`** —— 推送 / PR / 手动 / **每周一 03:00 UTC 定时**触发：
+
+| 步骤 | 内容 |
+| --- | --- |
+| `test` | 前端类型检查 → `build.sh` → 后端冒烟 184 项 → 浏览器 UI 冒烟 78 项（失败时截图作为 artifact 上传） |
+| `docker` | 仅 `main`：`amd64` / `arm64` 各自在**原生 runner** 上构建并推到 `ghcr.io` |
+| `docker-manifest` | 把两个架构合成多架构 manifest（`latest` 与 `<sha>`） |
+
+**`release.yml`** —— 在 GitHub 上发布 release 时，交叉编译 `linux/darwin × amd64/arm64` 四个二进制，
+连同 `SHA256SUMS.txt` 挂到该 release 上。
+
+**`.github/dependabot.yml`** —— 每周五检查依赖更新并开 PR：`gomod`（`/server`）、
+`npm`（`/web`）、`docker`（基础镜像）、`github-actions`（工作流里用到的 action）。
+
+> **关于 runner 选择**：`ubuntu-24.04` / `ubuntu-24.04-arm` 是**显式钉死**的，不用 `-latest`。
+> `-latest` 已经静默换过底层镜像，而这类漂移只在出问题时才被发现。本项目的二进制是静态的、
+> 不受 glibc 影响，钉版本主要是为了让「CI 跑在什么环境上」这件事保持可预期。
+>
+> 另外，`CGO_ENABLED=0` 让所有目标平台都能在**同一个 Linux runner** 上交叉编译出来，
+> 所以这里不需要为每个平台开独立 runner —— 那是 CGO 项目才有的负担。
+
 ---
 
 ## 功能
@@ -244,6 +277,8 @@ shendu/
     └── ui-smoke.mjs              # 真实浏览器 UI 冒烟（78 项）
 ```
 
+CI 配置另在 `.github/`（`workflows/build.yml`、`workflows/release.yml`、`dependabot.yml`）。
+
 **几处设计取舍**
 
 - **单文件交付**：前端产物 `go:embed` 进二进制，省掉 Nginx 与跨域配置；开发时用 `-web` 指向磁盘目录即可热更新。
@@ -294,12 +329,23 @@ shendu/
 python3 scripts/smoke.py
 
 # 前端 UI（真实 Chromium，验证渲染、交互与运行时零报错）
-cd web && npm install     # 首次：安装 playwright-core（复用已有 Chromium 缓存，不额外下载）
+cd web && npm ci
 node scripts/ui-smoke.mjs
 ```
 
+UI 冒烟脚本需要 Chromium，按以下顺序查找：`CHROMIUM_PATH` → `PLAYWRIGHT_BROWSERS_PATH` /
+`~/.cache/ms-playwright`、`~/Library/Caches/ms-playwright` → 系统安装的 Chromium / Chrome。
+本机若已有 Playwright 的浏览器缓存会直接复用；没有就装一份：
+
+```bash
+cd web && npx playwright-core install --with-deps chromium
+```
+
+两个脚本都不需要事先手动准备数据 —— 各自起临时实例与临时数据库，跑完即清理。
+
 当前状态：后端 **184/184** 通过，前端 **78/78** 通过（含「无控制台错误 / 无未捕获异常」两项硬性检查）。
-UI 冒烟脚本会把各视图截图写到 `/tmp/shenshi-shots`，便于人工复核。
+UI 冒烟脚本会把各视图截图写到 `SHOT_DIR`（默认 `/tmp/shenshi-shots`），便于人工复核；
+CI 里该目录被改到仓库内并作为 artifact 上传，失败时可直接下载定位。
 
 ---
 
