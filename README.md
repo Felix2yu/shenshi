@@ -21,7 +21,10 @@
 | 最终镜像基础层 | **Alpine 3.24** | `Dockerfile` |
 
 ```bash
+nvm install        # nvm 里还没有 26 时先装（nvm 会读 .nvmrc）
 nvm use            # 读 .nvmrc，切到 Node 26
+# 不用 nvm 的话，Homebrew 的 node（当前即 26.x）也可以，或直接指定：
+#   NODE_BIN=/opt/homebrew/opt/node/bin/node ./scripts/build.sh
 ```
 
 **大版本不冻结**：Node / Go 该升就升，dependabot 提大版本升级不会被挡。
