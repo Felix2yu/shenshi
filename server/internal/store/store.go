@@ -4,21 +4,48 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite 驱动，无需 cgo
 )
 
+// Options 描述数据目录的布局。留空的目录按数据文件所在目录推导。
+type Options struct {
+	AttachmentDir string // 附件存放目录
+	BackupDir     string // 自动备份存放目录
+}
+
 // Store 封装数据库句柄。
 type Store struct {
-	db *sql.DB
+	db            *sql.DB
+	attachmentDir string
+	backupDir     string
+
+	hookMu sync.RWMutex
+	hooks  []EventHook
 }
+
+// EventHook 是数据变更的观察者。kind 形如 task.created，payload 依 kind 而定
+// （目前任务事件统一传 *model.Task）。钩子不得阻塞：实现方自行异步化。
+type EventHook func(kind string, payload any)
 
 // Open 打开（必要时创建）数据库并完成迁移与首次种子数据写入。
 func Open(path string) (*Store, error) {
+	return OpenWith(path, Options{})
+}
+
+// OpenWith 与 Open 相同，但允许指定附件与备份目录。
+func OpenWith(path string, opt Options) (*Store, error) {
 	if path == "" {
 		path = filepath.Join("data", "shenshi.db")
+	}
+	base := filepath.Dir(path)
+	if base == "" || base == "." {
+		base = "data"
 	}
 	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)", path)
 	db, err := sql.Open("sqlite", dsn)
@@ -32,14 +59,62 @@ func Open(path string) (*Store, error) {
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("连接数据库失败: %w", err)
 	}
-	s := &Store{db: db}
+	s := &Store{
+		db:            db,
+		attachmentDir: orDefault(opt.AttachmentDir, filepath.Join(base, "attachments")),
+		backupDir:     orDefault(opt.BackupDir, filepath.Join(base, "backups")),
+	}
 	if err := s.migrate(); err != nil {
 		return nil, err
 	}
 	if err := s.seed(); err != nil {
 		return nil, err
 	}
+	// 目录不存在时立刻建好，避免第一次上传/备份才失败。
+	if err := os.MkdirAll(s.attachmentDir, 0o755); err != nil {
+		return nil, fmt.Errorf("创建附件目录失败: %w", err)
+	}
+	if err := os.MkdirAll(s.backupDir, 0o755); err != nil {
+		return nil, fmt.Errorf("创建备份目录失败: %w", err)
+	}
 	return s, nil
+}
+
+func orDefault(v, fallback string) string {
+	if strings.TrimSpace(v) == "" {
+		return fallback
+	}
+	return v
+}
+
+// AttachmentDir 返回附件存放目录。
+func (s *Store) AttachmentDir() string { return s.attachmentDir }
+
+// BackupDir 返回自动备份存放目录。
+func (s *Store) BackupDir() string { return s.backupDir }
+
+// OnEvent 注册一个变更观察者。钩子内不应执行耗时操作。
+func (s *Store) OnEvent(fn EventHook) {
+	if fn == nil {
+		return
+	}
+	s.hookMu.Lock()
+	s.hooks = append(s.hooks, fn)
+	s.hookMu.Unlock()
+}
+
+// emit 向所有观察者广播一次变更。单个钩子 panic 不影响其它钩子与主流程。
+func (s *Store) emit(kind string, payload any) {
+	s.hookMu.RLock()
+	hooks := make([]EventHook, len(s.hooks))
+	copy(hooks, s.hooks)
+	s.hookMu.RUnlock()
+	for _, fn := range hooks {
+		func() {
+			defer func() { _ = recover() }()
+			fn(kind, payload)
+		}()
+	}
 }
 
 // Close 关闭数据库。
@@ -173,6 +248,75 @@ CREATE TABLE IF NOT EXISTS reminder_log (
   fired_at TEXT    NOT NULL,
   PRIMARY KEY (task_id, fire_at)
 );
+
+-- 附件：元数据在库里，内容落在数据目录下的 attachments/。
+-- 只存相对文件名，换机器时整个数据目录拷走即可。
+CREATE TABLE IF NOT EXISTS attachments (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  name       TEXT    NOT NULL,
+  file       TEXT    NOT NULL,
+  size       INTEGER NOT NULL DEFAULT 0,
+  mime       TEXT    NOT NULL DEFAULT '',
+  created_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_attachments_task ON attachments(task_id);
+
+-- 出站 Webhook：把库里的变更推给外部系统，让「慎始」不必长成一座孤岛。
+CREATE TABLE IF NOT EXISTS webhooks (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT    NOT NULL DEFAULT '',
+  url        TEXT    NOT NULL,
+  secret     TEXT    NOT NULL DEFAULT '',
+  events     TEXT    NOT NULL DEFAULT '[]',
+  enabled    INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT    NOT NULL,
+  updated_at TEXT    NOT NULL
+);
+
+-- 投递台账：只留最近若干条，用于排查「为什么没收到」。
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  webhook_id INTEGER NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+  event      TEXT    NOT NULL,
+  code       INTEGER NOT NULL DEFAULT 0,
+  ok         INTEGER NOT NULL DEFAULT 0,
+  error      TEXT    NOT NULL DEFAULT '',
+  created_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_deliveries_hook ON webhook_deliveries(webhook_id, id DESC);
+
+-- 模板任务：把「每周例会」这类反复要做的事存成底稿，一键铺开成真正的任务。
+CREATE TABLE IF NOT EXISTS task_templates (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT    NOT NULL,
+  title       TEXT    NOT NULL,
+  notes       TEXT    NOT NULL DEFAULT '',
+  list_id     INTEGER REFERENCES lists(id) ON DELETE SET NULL,
+  priority    INTEGER NOT NULL DEFAULT 0,
+  due_offset  INTEGER,                            -- 相对创建日的天数偏移，空表示不带日期
+  due_time    TEXT,
+  reminders   TEXT    NOT NULL DEFAULT '[]',
+  repeat_rule TEXT,
+  important   INTEGER NOT NULL DEFAULT 0,
+  urgent      INTEGER NOT NULL DEFAULT 0,
+  tag_ids     TEXT    NOT NULL DEFAULT '[]',
+  subtasks    TEXT    NOT NULL DEFAULT '[]',      -- JSON 字符串数组
+  sort_order  REAL    NOT NULL DEFAULT 0,
+  created_at  TEXT    NOT NULL,
+  updated_at  TEXT    NOT NULL
+);
+
+-- CalDAV 变更日志：为 RFC 6578 增量同步提供单调递增的序号。
+CREATE TABLE IF NOT EXISTS caldav_changes (
+  seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+  collection TEXT    NOT NULL,                    -- events | todos
+  uid        TEXT    NOT NULL,
+  task_id    INTEGER,
+  deleted    INTEGER NOT NULL DEFAULT 0,
+  changed_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_caldav_collection ON caldav_changes(collection, seq);
 `
 
 func (s *Store) migrate() error {

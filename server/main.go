@@ -52,7 +52,7 @@ func run(addr, dbPath, devDir, token string) error {
 			return err
 		}
 	}
-	st, err := store.Open(dbPath)
+	st, err := store.OpenWith(dbPath, store.Options{})
 	if err != nil {
 		return err
 	}
@@ -64,6 +64,18 @@ func run(addr, dbPath, devDir, token string) error {
 		return err
 	}
 	srv.HandleStatic(handler)
+
+	// CalDAV：为既有任务铺好变更基线，之后客户端只拉增量。
+	if err := srv.CalDAV().EnsureChangelog(); err != nil {
+		log.Printf("CalDAV 变更日志初始化失败: %v", err)
+	} else {
+		log.Printf("CalDAV: 日程 %s · 提醒事项 %s", "/caldav/user/calendars/shenshi/", "/caldav/user/calendars/shenshi-tasks/")
+	}
+
+	// 自动备份：进程内定时导出，随进程退出而停止。
+	backup := srv.AutoBackup()
+	backup.Start()
+	defer backup.Stop()
 
 	httpSrv := &http.Server{
 		Addr:              addr,

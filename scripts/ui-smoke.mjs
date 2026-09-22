@@ -341,23 +341,33 @@ async function main() {
     section('⑧ 数据导出入口')
     await page.locator('button[title="外观与设置"]').first().click()
     await page.waitForTimeout(500)
-    // 用 hasText 而非 getByRole(name)：后者对「中文 + ASCII 混排」的可访问名匹配不可靠
-    const exportJson = page.locator('button', { hasText: '导出 JSON 备份' })
+    // 用 hasText / data-* 而非 getByRole(name)：后者对「中文 + ASCII 混排」的可访问名匹配不可靠
+    const exportZip = page.locator('button[data-export-zip]')
+    const exportJson = page.locator('button', { hasText: '仅 JSON' })
     const exportCsv = page.locator('button', { hasText: '导出任务表 CSV' })
+    check('设置弹窗含完整备份导出', (await exportZip.count()) > 0)
     check('设置弹窗含 JSON 导出', (await exportJson.count()) > 0)
     check('设置弹窗含 CSV 导出', (await exportCsv.count()) > 0)
     check('设置弹窗含导入入口', (await page.locator('button', { hasText: '导入（追加）' }).count()) > 0)
+    check(
+      '导入框同时接受 zip 与 json',
+      ((await page.locator('input[data-import-input]').getAttribute('accept')) || '').includes('.zip'),
+      (await page.locator('input[data-import-input]').getAttribute('accept')) || '',
+    )
 
     // 真的点一次导出，确认浏览器收到了附件而非错误页
     const [download] = await Promise.all([
       page.waitForEvent('download', { timeout: 10000 }),
-      exportJson.first().click(),
+      exportZip.first().click(),
     ])
     const fname = download.suggestedFilename()
-    check('导出触发 JSON 附件下载', /^shenshi-backup-\d{8}-\d{6}\.json$/.test(fname), fname)
+    check('导出触发 ZIP 附件下载', /^shenshi-backup-\d{8}-\d{6}\.zip$/.test(fname), fname)
     const savedPath = await download.path()
     const savedSize = savedPath ? fs.statSync(savedPath).size : 0
     check('备份文件内容非空', savedSize > 200, `${savedSize} 字节`)
+    // zip 的魔数：确认拿到的是压缩包，而不是错误页被当成文件存下来
+    const magic = savedPath ? fs.readFileSync(savedPath).subarray(0, 2).toString('latin1') : ''
+    check('下载到的确实是 zip', magic === 'PK', magic)
 
     await page.keyboard.press('Escape')
     await page.waitForTimeout(300)
@@ -543,7 +553,93 @@ async function main() {
     await page.waitForTimeout(1200)
     check('删除后只剩一个习惯', (await page.locator('[data-habit-row]').count()) === 1)
 
-    section('⑫ 访问口令：登录与失效')
+    section('⑫ 备注 Markdown、附件与集成面板')
+    // 注意：右下角可能挂着「开启桌面通知」的提示条，但绝不能手动把它从 DOM 里删掉
+    // ——那是 React 管理的节点，删了会让整棵树在下次 reconcile 时崩成白屏。
+    // 被它挡住的点击一律用 force，让事件直接落在目标元素上。
+    // 回到今天视图（上一节停在习惯打卡），并新建一条专用任务，免得依赖别处的残留数据
+    await page.locator('button[title="列表"]').first().click({ force: true })
+    await page.waitForTimeout(300)
+    await page.keyboard.press('t')
+    await page.waitForTimeout(700)
+    const headingNow = await page.locator('h1').first().innerText()
+    check('切回今天视图', headingNow.includes('今天'), headingNow)
+
+    const quick2 = page.locator('#shenshi-quickadd')
+    // 带「今天」才会落在今天视图里，否则会进收集箱
+    await quick2.fill('今天 Markdown 冒烟任务')
+    await quick2.press('Enter')
+    await page.waitForTimeout(900)
+
+    await page.waitForTimeout(300)
+    const mdRow = page.locator('div.group\\/row').filter({ hasText: 'Markdown 冒烟任务' }).first()
+    await mdRow.scrollIntoViewIfNeeded()
+    await mdRow.click({ position: { x: 140, y: 14 }, force: true })
+    await page.waitForTimeout(900)
+    if ((await page.locator('[data-notes-input]').count()) === 0) {
+      await page.screenshot({ path: path.join(shotDir, 'debug-detail.png') })
+    }
+    check('详情面板已打开', (await page.locator('[data-notes-input]').count()) === 1)
+
+    const notesInput = page.locator('[data-notes-input]')
+    await notesInput.fill('# 议程\n- 第一项\n**重点**：收束结论')
+    await page.waitForTimeout(900) // 备注是去抖保存的，等它落库
+    await page.locator('[data-notes-mode="preview"]').click()
+    await page.waitForTimeout(300)
+    const previewHtml = await page.locator('[data-notes-preview]').innerHTML()
+    check('预览把标题渲染成 h1', previewHtml.includes('<h1'), previewHtml.slice(0, 80))
+    check('预览把 **重点** 渲染成 strong', previewHtml.includes('<strong>') && !previewHtml.includes('**重点**'), previewHtml.slice(0, 160))
+    check('预览保留了列表项', previewHtml.includes('第一项'), previewHtml.slice(0, 160))
+    check('预览不会放行原始 HTML', !previewHtml.includes('<script'), previewHtml.slice(0, 80))
+
+    // 切回编辑态，确认内容没被渲染过程改写
+    await page.locator('[data-notes-mode="edit"]').click()
+    await page.waitForTimeout(250)
+    check('切回编辑态仍是原始 Markdown', (await notesInput.inputValue()).includes('**重点**'))
+
+    // 附件：直接给隐藏的 file input 塞文件，绕开系统文件选择框
+    const tmpFile = path.join(tmp, 'smoke-attachment.txt')
+    fs.writeFileSync(tmpFile, '这是冒烟测试写入的附件内容。')
+    await page.locator('[data-attachment-input]').setInputFiles(tmpFile)
+    await page.waitForTimeout(1200)
+    check('上传后出现附件行', (await page.locator('[data-attachment-row]').count()) >= 1)
+    const attachText = await page.locator('[data-attachment-row]').first().innerText()
+    check('附件显示文件名', attachText.includes('smoke-attachment.txt'), attachText)
+    await page.screenshot({ path: path.join(shotDir, '05-detail-markdown.png') })
+
+    // 存为模板
+    await page.locator('[data-save-template]').click({ force: true })
+    await page.waitForTimeout(900)
+    check('存为模板给出反馈', (await page.getByText('已存为模板').count()) > 0)
+
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+
+    // 集成与自动化面板
+    await page.locator('button[title="外观与设置"]').first().click({ force: true })
+    await page.waitForTimeout(400)
+    await page.locator('[data-open-integrations]').click({ force: true })
+    await page.waitForTimeout(500)
+    check('集成面板打开并停在有模板的那一页', (await page.locator('[data-panel="templates"]').count()) === 1)
+    check('模板列表里有刚存的模板', (await page.locator('[data-template-row]').count()) >= 1)
+
+    for (const [tab, marker] of [
+      ['webhooks', '任务变更时向外部地址推送'],
+      ['backup', '每天在设定的时点导出'],
+      ['caldav', 'shenshi-tasks'],
+    ]) {
+      await page.locator(`[data-integration-tab="${tab}"]`).click()
+      await page.waitForTimeout(350)
+      const seen = (await page.getByText(marker).count()) > 0
+      check(`集成面板可切到 ${tab}`, seen, seen ? '' : `未见「${marker}」`)
+    }
+    await page.screenshot({ path: path.join(shotDir, '06-integrations.png') })
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+
+    section('⑬ 访问口令：登录与失效')
     // 另起一个带口令的实例，走一遍真实部署时的那条路：先登录，再让会话中途失效。
     const authPort = await freePort()
     const authBase = `http://127.0.0.1:${authPort}`
@@ -608,7 +704,7 @@ async function main() {
       fs.closeSync(authLog)
     }
 
-    section('⑬ 运行时无错误')
+    section('⑭ 运行时无错误')
     const realConsole = consoleErrors.filter((t) => !IGNORABLE.test(t))
     check('无控制台错误', realConsole.length === 0, realConsole.slice(0, 3).join(' | '))
     check('无未捕获异常', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '))

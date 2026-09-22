@@ -26,6 +26,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from datetime import date, timedelta
 
 PASSED: list[str] = []
@@ -662,9 +663,453 @@ def run(base: str) -> None:
     check("删除后不可读取", status == 404, str(status))
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """well-known 的重定向要自己看，别让 urllib 替我们跟到下一个地址去。"""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+        return None
+
+
+_NO_REDIRECT = urllib.request.build_opener(_NoRedirect)
+
+
+def call_raw(
+    base: str,
+    method: str,
+    path: str,
+    body: bytes | None = None,
+    headers: dict | None = None,
+    follow: bool = True,
+) -> tuple[int, dict, str]:
+    """发一个原始请求，返回 (status, headers, text)。CalDAV 与上传都要用它。"""
+    hdrs = {"Accept": "*/*"}
+    if headers:
+        hdrs.update(headers)
+    req = urllib.request.Request(base + path, data=body, headers=hdrs, method=method)
+    opener = urllib.request.build_opener() if follow else _NO_REDIRECT
+    try:
+        with opener.open(req, timeout=10) as resp:
+            return resp.status, dict(resp.headers), resp.read().decode("utf-8", "ignore")
+    except urllib.error.HTTPError as e:
+        return e.code, dict(e.headers or {}), e.read().decode("utf-8", "ignore")
+
+
+def hdr(headers: dict, name: str) -> str:
+    """按名字取响应头，忽略大小写——Go 会把 DAV 规范成 Dav。"""
+    for k, v in headers.items():
+        if k.lower() == name.lower():
+            return v
+    return ""
+
+
+def call_bytes(
+    base: str, method: str, path: str, body: bytes | None = None, headers: dict | None = None
+) -> tuple[int, dict, bytes]:
+    """与 call_raw 相同，但原样返回字节——ZIP 备份是二进制，解码成文本就坏了。"""
+    hdrs = {"Accept": "*/*"}
+    if headers:
+        hdrs.update(headers)
+    req = urllib.request.Request(base + path, data=body, headers=hdrs, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.status, dict(resp.headers), resp.read()
+    except urllib.error.HTTPError as e:
+        return e.code, dict(e.headers or {}), e.read()
+
+
+def call_multipart(base: str, path: str, filename: str, content: str, field: str = "file"):
+    """手工拼一个 multipart/form-data：为了不给测试脚本引入外部依赖。"""
+    return call_multipart_blob(base, path, filename, content.encode("utf-8"), field)
+
+
+def call_multipart_blob(base: str, path: str, filename: str, data: bytes, field: str = "file"):
+    """上传二进制内容（压缩包、图片等）。"""
+    boundary = "----shenshi-smoke-boundary"
+    head = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="{field}"; filename="{filename}"\r\n'
+        "Content-Type: application/octet-stream\r\n\r\n"
+    ).encode("utf-8")
+    tail = f"\r\n--{boundary}--\r\n".encode("utf-8")
+    status, _, text = call_raw(
+        base,
+        "POST",
+        path,
+        head + data + tail,
+        {"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    try:
+        return status, json.loads(text)
+    except json.JSONDecodeError:
+        return status, {"raw": text}
+
+
+def run_extras(base: str) -> None:
+    """附件、Webhook、模板、自动备份与 CalDAV —— 后加的几组扩展能力。"""
+
+    # ---------- 附件 ----------
+    section("⑭ 任务附件")
+    status, task = call(base, "POST", "/api/tasks", {"title": "带附件的任务", "notes": "用于验证附件"})
+    check("准备一个任务", status in (200, 201) and task.get("id"), str(status))
+    tid = task["id"]
+
+    status, lst = call(base, "GET", f"/api/tasks/{tid}/attachments")
+    check("新任务没有附件", status == 200 and lst == [], str(lst))
+
+    status, att = call_multipart(base, f"/api/tasks/{tid}/attachments", "纪要.txt", "这是附件的正文。")
+    check("上传附件返回 201", status == 201, str(status))
+    check("附件记录了原始文件名", att.get("name") == "纪要.txt", str(att.get("name")))
+    check("附件带大小", isinstance(att.get("size"), int) and att["size"] > 0, str(att.get("size")))
+    aid = att.get("id")
+
+    # 存储名必须脱离原始文件名，避免同名覆盖与路径穿越
+    check("存储名是随机串而非原名", att.get("file") != "纪要.txt" and str(att.get("file")).endswith(".txt"), str(att.get("file")))
+
+    status, lst = call(base, "GET", f"/api/tasks/{tid}/attachments")
+    check("附件出现在列表里", status == 200 and len(lst) == 1, str(len(lst or [])))
+
+    status, headers, text = call_raw(base, "GET", f"/api/attachments/{aid}")
+    check("下载附件返回内容", status == 200 and "这是附件的正文。" in text, str(status))
+    check("下载带 Content-Disposition", "attachment" in hdr(headers, "Content-Disposition"), hdr(headers, "Content-Disposition"))
+
+    status, _, _ = call_raw(base, "GET", "/api/attachments/999999")
+    check("下载不存在的附件返回 404", status == 404, str(status))
+
+    # 列表接口带上附件：详情面板不必再单独拉一次
+    status, got = call(base, "GET", f"/api/tasks/{tid}")
+    check("任务详情自带附件列表", status == 200 and len(got.get("attachments") or []) == 1, str(got.get("attachments")))
+
+    status, _ = call(base, "DELETE", f"/api/attachments/{aid}")
+    check("删除附件", status == 200, str(status))
+    status, lst = call(base, "GET", f"/api/tasks/{tid}/attachments")
+    check("删除后列表为空", status == 200 and lst == [], str(lst))
+
+    # 上传一个超大附件应当被拒，而不是把磁盘写满
+    status, body = call_multipart(base, f"/api/tasks/{tid}/attachments", "big.txt", "x" * (33 * 1024 * 1024))
+    check("超过 32MB 的附件被拒绝", status == 400, f"{status} {str(body)[:60]}")
+
+    # ---------- 模板任务 ----------
+    section("⑮ 模板任务")
+    status, tpl = call(
+        base,
+        "POST",
+        "/api/templates",
+        {
+            "name": "每周例会",
+            "title": "周会前同步本周计划",
+            "notes": "先写议程再开会",
+            "priority": 3,
+            "dueOffset": 0,
+            "dueTime": "09:30",
+            "reminders": [0, 30],
+            "subtasks": ["整理议程", "同步进度"],
+        },
+    )
+    check("新建模板返回 201", status == 201, str(status))
+    check("模板保留子任务", len(tpl.get("subtasks") or []) == 2, str(tpl.get("subtasks")))
+    tpl_id = tpl["id"]
+
+    status, tpls = call(base, "GET", "/api/templates")
+    check("模板列表可读", status == 200 and any(t["id"] == tpl_id for t in tpls), str(len(tpls or [])))
+
+    status, made = call(base, "POST", f"/api/templates/{tpl_id}/instantiate")
+    check("按模板生成任务", status == 201 and made.get("title") == "周会前同步本周计划", str(status))
+    check("生成物沿用模板的优先级", made.get("priority") == 3, str(made.get("priority")))
+    check("生成物带上子任务", len(made.get("subtasks") or []) == 2, str(made.get("subtasks")))
+    check("偏移 0 天时日期落在今天", made.get("dueDate") == date.today().isoformat(), str(made.get("dueDate")))
+    check("生成物带时间", made.get("dueTime") == "09:30", str(made.get("dueTime")))
+    made_id = made["id"]
+
+    # 指定日期可以覆盖模板的偏移
+    future = (date.today() + timedelta(days=5)).isoformat()
+    status, made2 = call(base, "POST", f"/api/templates/{tpl_id}/instantiate", {"dueDate": future})
+    check("可覆盖生成日期", status == 201 and made2.get("dueDate") == future, str(made2.get("dueDate")))
+
+    status, _ = call(base, "PATCH", f"/api/templates/{tpl_id}", {"name": "每周例会（改）"})
+    status, tpls = call(base, "GET", "/api/templates")
+    check("改模板名称", any(t.get("name") == "每周例会（改）" for t in tpls), str(tpls))
+
+    status, _ = call(base, "POST", "/api/templates", {"name": "缺标题"})
+    check("缺标题的模板被拒", status == 400, str(status))
+
+    status, _ = call(base, "DELETE", f"/api/templates/{tpl_id}")
+    check("删除模板", status == 200, str(status))
+    for t in (made_id, made2["id"]):
+        call(base, "DELETE", f"/api/tasks/{t}")
+
+    # ---------- 出站 Webhook ----------
+    section("⑯ 出站 Webhook")
+    status, hook = call(
+        base,
+        "POST",
+        "/api/webhooks",
+        {"name": "测试回调", "url": "http://127.0.0.1:9/hook", "secret": "s3cret", "events": ["task.created", "task.completed"]},
+    )
+    check("新建 Webhook 返回 201", status == 201, str(status))
+    check("密钥不回显", hook.get("secret") == "" and hook.get("hasSecret") is True, str(hook))
+    check("订阅事件被保留", sorted(hook.get("events") or []) == ["task.completed", "task.created"], str(hook.get("events")))
+    hid = hook["id"]
+
+    status, _ = call(base, "POST", "/api/webhooks", {"url": "ftp://example.com/hook"})
+    check("非 http 地址被拒", status == 400, str(status))
+
+    status, hooks = call(base, "GET", "/api/webhooks")
+    check("Webhook 列表可读", status == 200 and any(h["id"] == hid for h in hooks), str(len(hooks or [])))
+
+    # 投递到一个必然失败的地址，验证失败被记进台账而不是抛出去
+    status, fired = call(base, "POST", "/api/tasks", {"title": "触发一次事件"})
+    check("新建任务仍成功（Webhook 失败不影响写入）", status in (200, 201), str(status))
+    time.sleep(1.2)
+    status, _ = call(base, "POST", f"/api/webhooks/{hid}/test")
+    check("测试投递接口可用", status == 200, str(status))
+    time.sleep(1.5)
+    status, logs = call(base, "GET", f"/api/webhooks/{hid}/deliveries")
+    check("投递结果进了台账", status == 200 and isinstance(logs, list), str(status))
+    check("失败的投递被记为未送达", any(d.get("ok") is False for d in logs or []), str(logs[:1]))
+
+    status, _ = call(base, "PATCH", f"/api/webhooks/{hid}", {"enabled": False})
+    status, hooks = call(base, "GET", "/api/webhooks")
+    check("可停用 Webhook", any(h["id"] == hid and h["enabled"] is False for h in hooks), str(hooks))
+
+    status, _ = call(base, "DELETE", f"/api/webhooks/{hid}")
+    check("删除 Webhook", status == 200, str(status))
+    call(base, "DELETE", f"/api/tasks/{fired['id']}")
+
+    # ---------- 自动备份 ----------
+    section("⑰ 自动备份")
+    status, bk = call(base, "GET", "/api/backups")
+    check("可读取自动备份状态", status == 200 and "enabled" in bk, str(status))
+    check("默认未启用自动备份", bk.get("enabled") is False, str(bk.get("enabled")))
+
+    status, res = call(base, "POST", "/api/backups/run")
+    check("可立即备份一次", status == 200 and res.get("file"), str(status))
+    check("备份文件名带时间戳", "shenshi-backup-" in str(res.get("file")), str(res.get("file")))
+
+    status, bk = call(base, "GET", "/api/backups")
+    check("备份后文件列表非空", len(bk.get("files") or []) >= 1, str(bk.get("files")))
+    check("记录了上次备份时间", bool(bk.get("lastAt")), str(bk.get("lastAt")))
+
+    # 保留份数：连做三次只留两份，验证裁剪逻辑真的会删
+    for _ in range(2):
+        call(base, "POST", "/api/backups/run?keep=2")
+    status, bk = call(base, "GET", "/api/backups")
+    check("按保留份数裁剪旧备份", len(bk.get("files") or []) <= 2, str(len(bk.get("files") or [])))
+
+    status, _ = call(base, "PUT", "/api/settings", {"autoBackup": "1", "autoBackupHour": "4", "autoBackupKeep": "7"})
+    status, bk = call(base, "GET", "/api/backups")
+    check("自动备份开关可写入设置", bk.get("enabled") is True and bk.get("hour") == "4", str(bk))
+
+    # 备份出来的文件必须能喂回导入接口，否则「自动备份」没有意义
+    status, bundle = call(base, "GET", "/api/export")
+    check("手动导出仍是自洽的备份", status == 200 and bundle.get("app") == "慎始", str(status))
+
+    # ---------- CalDAV ----------
+    section("⑱ CalDAV 同步")
+
+    # Apple 客户端的死穴：任何 501 都会让它放弃整个账户
+    status, headers, _ = call_raw(base, "OPTIONS", "/caldav/user/")
+    check("OPTIONS 返回 204", status == 204, str(status))
+    check("Dav 头含 calendar-access", "calendar-access" in hdr(headers, "DAV"), hdr(headers, "DAV"))
+    check("Allow 头含 PROPPATCH", "PROPPATCH" in hdr(headers, "Allow"), hdr(headers, "Allow"))
+    check("Allow 头含 PUT（提醒事项勾选要靠它）", "PUT" in hdr(headers, "Allow"), hdr(headers, "Allow"))
+
+    status, headers, _ = call_raw(base, "GET", "/.well-known/caldav", follow=False)
+    check("well-known 用 302 重定向", status == 302, str(status))
+    check("well-known 指向账户根", "/caldav/user/" in hdr(headers, "Location"), hdr(headers, "Location"))
+
+    propfind = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<D:propfind xmlns:D="DAV:"><D:prop><D:displayname/><D:getetag/></D:prop></D:propfind>'
+    ).encode("utf-8")
+    status, _, text = call_raw(base, "PROPFIND", "/caldav/user/", propfind, {"Depth": "0", "Content-Type": "application/xml"})
+    check("PROPFIND 账户根返回 207", status == 207, str(status))
+    check("PROPFIND 不是 501", status != 501, str(status))
+
+    status, _, text = call_raw(base, "PROPFIND", "/caldav/user/calendars/shenshi-tasks/", propfind, {"Depth": "1", "Content-Type": "application/xml"})
+    check("PROPFIND 提醒事项集合返回 207", status == 207, str(status))
+    check("集合里列出了对象", ".ics" in text, text[:80])
+
+    # 尾斜杠差异必须被容忍：Apple 刷新账户时会自己补上
+    status2, _, _ = call_raw(base, "PROPFIND", "/caldav/user/calendars/shenshi-tasks", propfind, {"Depth": "0", "Content-Type": "application/xml"})
+    check("集合路径带不带尾斜杠都认", status2 == 207, str(status2))
+
+    status, r = call(base, "POST", "/api/tasks", {"title": "CalDAV 同步用任务", "dueDate": date.today().isoformat(), "dueTime": "10:00"})
+    check("准备一个带日期的任务", status in (200, 201) and r.get("id"), str(status))
+    cid = r["id"]
+
+    status, _, text = call_raw(base, "GET", f"/caldav/user/calendars/shenshi-tasks/shenshi-td-{cid}.ics")
+    check("可读取单个 VTODO", status == 200 and "BEGIN:VTODO" in text, str(status))
+    check("VTODO 带标题", "CalDAV 同步用任务" in text, text[:80])
+
+    status, _, text = call_raw(base, "GET", f"/caldav/user/calendars/shenshi/shenshi-ev-{cid}.ics")
+    check("带日期的任务也进日历集合", status == 200 and "BEGIN:VEVENT" in text, str(status))
+
+    # RFC 6578 增量同步
+    sync_body = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<D:sync-collection xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">'
+        "<D:sync-level>1</D:sync-level><D:prop><D:getetag/><C:calendar-data/></D:prop>"
+        "</D:sync-collection>"
+    ).encode("utf-8")
+    status, _, text = call_raw(base, "REPORT", "/caldav/user/calendars/shenshi-tasks/", sync_body, {"Content-Type": "application/xml"})
+    check("sync-collection 返回 207", status == 207, str(status))
+    check("响应带回 sync-token", "sync-token" in text, text[:120])
+
+    # 取一个可用令牌，再用它做一次增量同步（应当只报变化，且令牌单调前进）
+    token = ""
+    if "<D:sync-token>" in text:
+        token = text.split("<D:sync-token>")[1].split("</D:sync-token>")[0].strip()
+    status, _, text2 = call_raw(
+        base,
+        "REPORT",
+        "/caldav/user/calendars/shenshi-tasks/",
+        (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<D:sync-collection xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">'
+            f"<D:sync-token>{token}</D:sync-token><D:sync-level>1</D:sync-level>"
+            "<D:prop><D:getetag/><C:calendar-data/></D:prop></D:sync-collection>"
+        ).encode("utf-8"),
+        {"Content-Type": "application/xml"},
+    )
+    check("带令牌的增量同步成功", status == 207, str(status))
+    check("增量结果不再包含全部历史", "BEGIN:VTODO" not in text2 or text2.count("BEGIN:VTODO") <= 1, str(text2.count("BEGIN:VTODO")))
+
+    status, _, _ = call_raw(
+        base,
+        "REPORT",
+        "/caldav/user/calendars/shenshi-tasks/",
+        (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<D:sync-collection xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">'
+            "<D:sync-token>not-a-valid-token</D:sync-token><D:sync-level>1</D:sync-level>"
+            "<D:prop><D:getetag/></D:prop></D:sync-collection>"
+        ).encode("utf-8"),
+        {"Content-Type": "application/xml"},
+    )
+    check("无效令牌返回 403 而非 501", status == 403, str(status))
+
+    # PROPPATCH：库会返回 501，这里是重点回归项
+    proppatch = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><D:displayname>改名</D:displayname></D:prop></D:set></D:propertyupdate>'
+    ).encode("utf-8")
+    status, _, _ = call_raw(base, "PROPPATCH", "/caldav/user/calendars/shenshi-tasks/shenshi-td-%d.ics" % cid, proppatch, {"Content-Type": "application/xml"})
+    check("PROPPATCH 返回 207 而不是 501", status == 207, str(status))
+
+    for m in ("COPY", "MOVE", "MKCOL", "LOCK"):
+        status, _, _ = call_raw(base, m, "/caldav/user/calendars/shenshi-tasks/", None, {"Destination": "/caldav/user/other/"})
+        check(f"{m} 返回 403 而不是 501", status == 403, str(status))
+
+    # 写回：在提醒事项里勾掉一个任务
+    ics = (
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//test//EN\r\n"
+        "BEGIN:VTODO\r\nUID:shenshi-td-%d\r\nSUMMARY:CalDAV 同步用任务\r\nSTATUS:COMPLETED\r\nEND:VTODO\r\nEND:VCALENDAR\r\n" % cid
+    ).encode("utf-8")
+    status, _, _ = call_raw(base, "PUT", f"/caldav/user/calendars/shenshi-tasks/shenshi-td-{cid}.ics", ics, {"Content-Type": "text/calendar"})
+    check("PUT 完成状态被接受", status in (200, 201, 204), str(status))
+    status, after = call(base, "GET", f"/api/tasks/{cid}")
+    check("勾选后任务在服务端变为完成", after.get("status") == "done", str(after.get("status")))
+
+    # 日历集合是只读的：往里 PUT 事件应被拒，且不能是 501
+    vevent = (
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//test//EN\r\n"
+        "BEGIN:VEVENT\r\nUID:shenshi-ev-%d\r\nSUMMARY:改标题\r\nDTSTAMP:20260101T000000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" % cid
+    ).encode("utf-8")
+    status, _, _ = call_raw(base, "PUT", f"/caldav/user/calendars/shenshi/shenshi-ev-{cid}.ics", vevent, {"Content-Type": "text/calendar"})
+    check("日历集合拒绝写入且不是 501", status == 403, str(status))
+
+    status, _, _ = call_raw(base, "DELETE", f"/caldav/user/calendars/shenshi-tasks/shenshi-td-{cid}.ics")
+    check("不允许从客户端删除任务", status == 403, str(status))
+
+    call(base, "DELETE", f"/api/tasks/{cid}")
+    call(base, "DELETE", f"/api/tasks/{tid}")
+
+    # ---------- 完整备份（ZIP） ----------
+    # 这一节刻意放在最后：它会用覆盖导入重建整库，前面的断言都跑完了才动。
+    section("⑲ 完整备份：附件随 JSON 一起打包")
+
+    status, ztask = call(base, "POST", "/api/tasks", {"title": "备份往返用的任务", "notes": "验证附件跟着备份走"})
+    check("准备一个待备份的任务", status in (200, 201) and ztask.get("id"), str(status))
+    zid = ztask["id"]
+
+    payload = "附件正文：跟着备份一起走。"
+    status, zatt = call_multipart(base, f"/api/tasks/{zid}/attachments", "随行.txt", payload)
+    check("给任务挂一个附件", status == 201 and zatt.get("id"), str(status))
+    zstored = zatt.get("file")
+
+    status, zheaders, zdata = call_bytes(base, "GET", "/api/export/zip")
+    check("导出 ZIP 返回 200", status == 200, str(status))
+    check("响应类型是 zip", "zip" in hdr(zheaders, "Content-Type"), hdr(zheaders, "Content-Type"))
+    check("文件名带时间戳", "shenshi-backup-" in hdr(zheaders, "Content-Disposition"), hdr(zheaders, "Content-Disposition"))
+    check("响应头报告打包的附件数", hdr(zheaders, "X-Shenshi-Attachments") == "1", hdr(zheaders, "X-Shenshi-Attachments"))
+
+    with zipfile.ZipFile(io.BytesIO(zdata)) as zf:
+        names = zf.namelist()
+        check("包根上是 JSON 备份", "shenshi-backup.json" in names, str(names[:4]))
+        check("附件按存储名放进 attachments/", f"attachments/{zstored}" in names, str([n for n in names if n.startswith("attachments/")]))
+        check("包内附件内容与原件一致", zf.read(f"attachments/{zstored}").decode("utf-8") == payload, "内容不符")
+        zbundle = json.loads(zf.read("shenshi-backup.json"))
+    check("包内 JSON 是自洽备份", zbundle.get("app") == "慎始" and zbundle.get("tasks"), str(zbundle.get("app")))
+
+    # 只含 JSON 的包：用来验证「没带来文件」会被如实报出来，而不是假装恢复成功
+    json_only = io.BytesIO()
+    with zipfile.ZipFile(json_only, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("shenshi-backup.json", json.dumps(zbundle, ensure_ascii=False))
+
+    # 删掉原任务：之后恢复出来的附件只可能来自压缩包，不会是磁盘上的残留
+    status, _ = call(base, "DELETE", f"/api/tasks/{zid}")
+    check("删掉原任务（连带清掉附件文件）", status == 200, str(status))
+
+    status, res = call_multipart_blob(base, "/api/import/file?mode=merge", "json-only.zip", json_only.getvalue())
+    check("只有 JSON 的压缩包也能导入", status == 200 and res.get("mode") == "merge", str(res))
+    check("没带来文件的附件被记为缺失", (res.get("attachmentsMissed") or 0) >= 1, str(res))
+    check("缺失时不会凭空造出附件记录", (res.get("attachments") or 0) == 0, str(res))
+
+    status, res = call_multipart_blob(base, "/api/import/file?mode=merge", "backup.zip", zdata)
+    check("上传完整压缩包导入成功", status == 200 and (res.get("tasks") or 0) >= 1, str(res))
+    check("导入报告恢复了附件", (res.get("attachments") or 0) >= 1, str(res))
+    check("完整备份没有缺失附件", (res.get("attachmentsMissed") or 0) == 0, str(res))
+
+    # 找回恢复出来的那一份，确认文件真能下载
+    status, found = call(base, "GET", "/api/tasks?q=备份往返用的任务&status=all")
+    rows = (found or {}).get("tasks") or []
+    check("恢复出的任务可被检索到", len(rows) >= 1, str(len(rows)))
+    restored = None
+    for t in rows:
+        if t.get("attachments"):
+            restored = t
+            break
+    check("恢复出的任务带着附件记录", restored is not None, str([t.get("id") for t in rows]))
+    if restored:
+        new_att = restored["attachments"][0]
+        status, _, body = call_raw(base, "GET", f"/api/attachments/{new_att['id']}")
+        check("恢复出的附件可以下载", status == 200, str(status))
+        check("下载的附件内容与原件一致", payload in body, body[:40])
+        check("merge 模式给附件换了存储名", new_att.get("file") != zstored, str(new_att.get("file")))
+
+    # 覆盖导入：任务 id 复原，附件沿用原存储名
+    status, res = call_multipart_blob(base, "/api/import/file?mode=replace", "backup.zip", zdata)
+    check("覆盖导入压缩包成功", status == 200 and res.get("mode") == "replace", str(res))
+    check("覆盖导入同样恢复了附件", (res.get("attachments") or 0) >= 1, str(res))
+    status, after = call(base, "GET", f"/api/tasks/{zid}")
+    check("覆盖导入后任务按原 id 复原", status == 200 and after.get("title") == "备份往返用的任务", str(status))
+    back = (after.get("attachments") or [])
+    check("覆盖导入后任务带着附件", len(back) == 1, str(back))
+    if back:
+        status, _, body = call_raw(base, "GET", f"/api/attachments/{back[0]['id']}")
+        check("覆盖导入后的附件可以下载", status == 200 and payload in body, str(status))
+
+    # 不是备份的压缩包要被明确拒绝，而不是当成空备份把库清掉
+    junk = io.BytesIO()
+    with zipfile.ZipFile(junk, "w") as zf:
+        zf.writestr("readme.txt", "这不是备份")
+    status, res = call_multipart_blob(base, "/api/import/file?mode=merge", "junk.zip", junk.getvalue())
+    check("不含 JSON 的压缩包被拒", status == 400, f"{status} {str(res)[:60]}")
+
+
 def run_auth(base: str, token: str) -> None:
     """访问口令鉴权：单开一个带 -token 的实例，验证这道门该拦的拦住、该放的放行。"""
-    section("⑬ 访问口令鉴权")
+    section("⑳ 访问口令鉴权")
 
     # 首页未登录时应当直接返回登录页，而不是把整个前端加载进来
     status, headers, _ = call_full(base, "GET", "/")
@@ -750,6 +1195,7 @@ def main() -> int:
     print(f"测试目标: {base}", flush=True)
     try:
         run(base)
+        run_extras(base)
         if binary and tmp:
             # 鉴权需要独立实例：主实例是不带口令的，用来验证「不设口令时一切照旧」
             auth_proc, auth_base = spawn_instance(binary, repo_root, tmp, "test-token-9f3a2b7c")

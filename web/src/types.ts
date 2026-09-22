@@ -44,12 +44,117 @@ export interface Task {
   createdAt: string
   updatedAt: string
   subtasks: Subtask[]
+  attachments: Attachment[]
   tags: Tag[]
   listName: string
   listColor: string
   folderId: number | null
   subtaskDone: number
   subtaskOpen: number
+}
+
+/** 任务附件。内容存在服务端数据目录，这里只描述它。 */
+export interface Attachment {
+  id: number
+  taskId: number
+  name: string
+  file: string
+  size: number
+  mime: string
+  createdAt: string
+}
+
+/** 出站 Webhook：任务变更时向外部地址推送一条 JSON。 */
+export interface Webhook {
+  id: number
+  name: string
+  url: string
+  /** 列表接口一律脱敏，只有 hasSecret 表示是否配过签名密钥 */
+  secret: string
+  hasSecret: boolean
+  events: string[]
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface WebhookDelivery {
+  id: number
+  webhookId: number
+  event: string
+  code: number
+  ok: boolean
+  error: string
+  createdAt: string
+}
+
+/** 模板任务：反复要做的事存成底稿，一键铺开成真正的任务。 */
+export interface TaskTemplate {
+  id: number
+  name: string
+  title: string
+  notes: string
+  listId: number | null
+  priority: Priority
+  /** 相对生成日的天数偏移，null 表示不带日期 */
+  dueOffset: number | null
+  dueTime: string | null
+  reminders: number[]
+  repeatRule: string | null
+  important: boolean
+  urgent: boolean
+  tagIds: number[]
+  subtasks: string[]
+  sortOrder: number
+  createdAt: string
+  updatedAt: string
+}
+
+/** 模板写入载荷，字段缺席表示不改动。 */
+export interface TemplatePatch {
+  name?: string
+  title?: string
+  notes?: string
+  listId?: number | null
+  priority?: Priority
+  dueOffset?: number | null
+  dueTime?: string | null
+  reminders?: number[]
+  repeatRule?: string | null
+  important?: boolean
+  urgent?: boolean
+  tagIds?: number[]
+  subtasks?: string[]
+  sortOrder?: number
+}
+
+/** 自动备份的状态与设置。 */
+export interface BackupStatus {
+  enabled: boolean
+  hour: string
+  keep: string
+  lastAt: string
+  lastFile: string
+  lastError: string
+  dir: string
+  files: string[]
+}
+
+/** 可订阅的 Webhook 事件。 */
+export const WEBHOOK_EVENTS = [
+  'task.created',
+  'task.updated',
+  'task.completed',
+  'task.reopened',
+  'task.deleted',
+] as const
+
+export const WEBHOOK_EVENT_LABEL: Record<string, string> = {
+  'task.created': '新建任务',
+  'task.updated': '任务被修改',
+  'task.completed': '任务完成',
+  'task.reopened': '任务恢复未完成',
+  'task.deleted': '任务被删除',
 }
 
 export interface List {

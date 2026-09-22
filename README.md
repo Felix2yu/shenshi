@@ -100,7 +100,7 @@ openssl rand -base64 24
 ```
 
 **数据落在具名卷 `shenshi-data`**（容器内 `/data/shenshi.db`）。备份有两条路：
-应用内「导出 JSON 备份」；或直接取卷里的文件：
+应用内「导出完整备份 ZIP」（JSON 连同任务附件，一份即可独立还原）；或直接取卷里的文件：
 
 ```bash
 docker run --rm -v shenshi-data:/data -v "$PWD:/backup" alpine \
@@ -166,6 +166,10 @@ Node / Go 的**大版本不冻结**，这类 PR 正常提；只改镜像 tag 的
 - **自然语言快速添加**：`明天下午3点 交季度材料 #工作 !高` —— 一键识别日期、时间、标签、优先级，
   并在输入框下方实时预览识别结果（`今天` `/项目推进` `@重要@紧急` `!高` `每天` 等写法均支持）
 - 任务详情面板：子任务（带完成进度）、备注、优先级、四象限、日期与时间、提醒、重复规则、标签、清单、专注计时
+- **备注支持 Markdown**：标题、列表、引用、代码块、链接、强调、任务项；编辑与预览两态切换。
+  渲染器是自带的极简实现 —— 先整体转义 HTML 再做替换，链接协议走白名单，备注来自哪里都不怕
+- **附件**：任务上可挂截图与资料，单个最大 32MB，存放在数据目录的 `attachments/`（库里只留元数据）
+- **模板任务**：反复要做的事存成底稿，一键铺开成真正的任务；详情面板里「存为模板」一步到位
 - 行内改标题、勾选完成、右键菜单式操作，删除前有确认
 - **多选批处理**：批量完成 / 恢复 / 改期 / 移清单 / 删除
 - **手动排序**：工具栏切换「排序方式」（智能 / 手动 / 优先级 / 到期 / 创建 / 标题）；
@@ -249,11 +253,36 @@ Node / Go 的**大版本不冻结**，这类 PR 正常提；只改镜像 tag 的
 
 ### 8. 数据管理
 
-- **导出**：JSON 全量备份（分组 / 清单 / 任务 / 标签 / 复盘 / 专注 / 习惯与打卡流水 / 设置）与
-  任务表 CSV（带 BOM，Excel 直接打开不乱码）
+- **导出**：完整备份 ZIP（JSON + 任务附件）与仅 JSON 两种，外加任务表 CSV（带 BOM，Excel 直接打开不乱码）。
+  ZIP 是推荐方式 —— 一份就能还原全部；JSON 只带文字，附件要另拷 `attachments/` 目录
+  - 包内布局固定：根上 `shenshi-backup.json`，附件在 `attachments/` 下按存储名存放。
+    用存储名而不是原始文件名，是因为它是库里的主键，同名文件与非法路径都干扰不到
 - **导入**：`merge` 把备份作为副本追加（分组与标签按名称合并，习惯流水重挂到新 id），
-  `replace` 清空后按原 id 精确复原，用于灾难恢复
+  `replace` 清空后按原 id 精确复原，用于灾难恢复。两种模式都接受 JSON 与 ZIP
+  - 附件随备份一起还原；没带来文件的附件会被**如实报数**（`attachmentsMissed`）而不是假装恢复成功，
+    也不会建出点开就 404 的死记录
+  - `merge` 给还原的附件换存储名：两条记录共用一个文件的话，删掉其中一条会带走另一条的文件
+- **自动备份**：进程内定时导出（默认每天 04:00，保留最近 14 份，可在设置里调整），
+  产出的是完整备份 ZIP —— 拿其中任意一份就能独立还原。
+  先写临时文件再改名，中途失败不会留下半截的「备份」骗人
 - 导出走进浏览器附件下载，导入前有二次确认
+
+### 8.5 集成与自动化
+
+- **出站 Webhook**：任务的新建 / 修改 / 完成 / 恢复 / 删除都可以推给外部地址，
+  请求头带 `X-Shenshi-Event` 与 HMAC-SHA256 签名（`X-Shenshi-Signature`，密钥在界面上配）。
+  投递是尽力而为：失败记进台账（每个钩子留最近 20 条）供排查，绝不阻塞任务写入
+- **CalDAV**：系统自带的日历与提醒事项可以直接订阅 ——
+  日程集合 `/caldav/user/calendars/shenshi/`（有日期的任务，只读）、
+  提醒事项集合 `/caldav/user/calendars/shenshi-tasks/`（全部任务，**在手机上勾选完成会写回服务端**）。
+  针对 Apple 客户端做过专门兼容：
+  - 不支持的方法一律返回 403，绝不返回 501（Apple 见到 501 会把整个账户标红）
+  - `Dav` 头出现在每一个响应上（包括 401 挑战），OPTIONS 免认证，否则账户设置阶段就探测不到能力
+  - 集合路径带尾斜杠，比较用 `path.Clean` 归一化（Apple 刷新账户时会自己补斜杠）
+  - well-known 用 302 而非 308 重定向；HTTP Basic 的 password 字段即访问口令（Apple 只认 Basic）
+  - 实现 RFC 6578 增量同步（`sync-collection` REPORT），变更日志在库内单调递增，
+    令牌无效时返回 403 + `DAV:valid-sync-token` 让客户端全量重同步
+  - ETag 基于渲染内容的 SHA-256，`DTSTAMP` 用任务的更新时间而非 `time.Now()`，保证内容不变就不变
 
 ### 9. 理念功能：让「善始善终」落到交互里
 
@@ -291,9 +320,13 @@ shendu/
 │   │   ├── repeat.go             # 重复规则解释
 │   │   ├── habits.go             # 习惯与打卡、连续天数与达标率
 │   │   ├── backup.go             # 全量导出与导入（merge / replace）
+│   │   ├── backup_zip.go         # ZIP 备份：打包与读回（含附件）
+│   │   ├── autobackup.go         # 进程内定时备份与裁剪
+│   │   ├── extras.go             # 附件、Webhook、模板、CalDAV 变更日志
 │   │   ├── reminders.go          # 提醒调度与台账
 │   │   └── stats.go              # 统计、复盘、专注
 │   ├── internal/api/             # HTTP 层：路由、CORS、错误映射
+│   ├── internal/caldav/          # CalDAV 服务端（Apple 客户端兼容 + RFC 6578 增量同步）
 │   └── dist/                     # 前端构建产物（由 build.sh 生成，供 embed）
 ├── web/                          # React 前端
 │   └── src/
@@ -305,8 +338,8 @@ shendu/
 └── scripts/
     ├── build.sh                  # 一键构建
     ├── check-toolchain.sh        # 校验各处版本声明是否一致
-    ├── smoke.py                  # 后端端到端冒烟（184 项）
-    └── ui-smoke.mjs              # 真实浏览器 UI 冒烟（78 项）
+    ├── smoke.py                  # 后端端到端冒烟（287 项）
+    └── ui-smoke.mjs              # 真实浏览器 UI 冒烟（96 项）
 ```
 
 CI 配置另在 `.github/`（`workflows/build.yml`、`workflows/release.yml`、`dependabot.yml`）。
@@ -343,14 +376,22 @@ CI 配置另在 `.github/`（`workflows/build.yml`、`workflows/release.yml`、`
 | POST · PATCH/DELETE `/api/habits[/{id}]` | 新建 / 更新 / 删除习惯 |
 | PUT | `/api/habits/reorder` | 习惯排序 |
 | POST · DELETE | `/api/habits/{id}/check` | 打卡（不传 `count` 为加一次，传 0 即撤销）/ 撤销打卡 |
-| GET | `/api/export` · `/api/export/csv` | 全量 JSON 备份 / 任务表 CSV |
-| POST | `/api/import?mode=merge\|replace` | 导入备份 |
+| GET | `/api/export` · `/api/export/zip` · `/api/export/csv` | 全量 JSON / 完整备份 ZIP（含附件） / 任务表 CSV |
+| POST | `/api/import?mode=merge\|replace` | 导入裸 JSON 备份 |
+| POST | `/api/import/file?mode=merge\|replace` | 上传备份文件导入，接受 JSON 与 ZIP（字段名 `file`） |
 | GET/PUT | `/api/settings` | 设置 |
 | GET | `/api/stats` | 统计（趋势、连续天数、分布） |
 | GET/PUT | `/api/reviews[/{date}]` | 日省复盘 |
 | GET/POST | `/api/focus` | 专注时段 |
 | GET | `/api/reminders/due` · POST `/api/reminders/ack`、`/reset` | 提醒投递与台账 |
 | GET | `/api/meta/repeat` | 重复规则元数据 |
+| GET/POST | `/api/tasks/{id}/attachments` · GET/DELETE `/api/attachments/{id}` | 附件（上传走 multipart，下载支持断点续传） |
+| GET/POST · PATCH/DELETE | `/api/webhooks[/{id}]` | 出站 Webhook |
+| POST | `/api/webhooks/{id}/test` · GET `/api/webhooks/{id}/deliveries` | 测试投递与投递台账 |
+| GET/POST · PATCH/DELETE | `/api/templates[/{id}]` | 模板任务 |
+| POST | `/api/templates/{id}/instantiate` | 按模板生成任务（可覆盖清单与日期） |
+| GET | `/api/backups` · POST `/api/backups/run` | 自动备份状态与立即备份 |
+| Any | `/caldav/…` · `/.well-known/caldav` | CalDAV（日历 + 提醒事项，Apple 客户端兼容） |
 
 ---
 
@@ -384,6 +425,13 @@ CI 里该目录被改到仓库内并作为 artifact 上传，失败时可直接�
 ## 已知限制
 
 - **单用户**：没有账号体系，`SHENSHI_TOKEN` 是一道全局门禁而非多用户隔离；多人共用同一份数据。
-- 提醒依赖前端轮询（30 秒一次）：关闭页面则不会弹出桌面通知，需要常驻后台提醒时应另接系统级通知。
+- 提醒依赖前端轮询（30 秒一次）：关闭页面则不会弹出桌面通知，需要常驻后台提醒时应另接系统级通知
+  ——或者用 CalDAV 把任务挂到系统日历上，让系统替你提醒。
 - 日历视图按月/周拉取数据，未做跨时区换算，一律按本机时区处理。
 - 子任务仅一层，不支持无限嵌套。
+- CalDAV 的写回只放开「提醒事项里勾选完成」一条缝：在客户端改标题、日期或删除都会被拒绝，
+  服务端始终是权威。
+- 附件与自动备份都在数据目录里。完整备份 ZIP 已经把附件一起打包，
+  但**只导 JSON** 时不带附件本体，那份备份只能还原文字。
+- 备份里的附件沿用上传上限（单个 32MB），超过的会在导入时被拒；
+  已压缩的格式（jpg / mp4 / zip 等）再压一遍收益很小，包体积接近原文件之和。

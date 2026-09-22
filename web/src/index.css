@@ -243,3 +243,130 @@ textarea {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* ---------- 备注里的 Markdown ---------- */
+/* 只覆盖备注用到的那几种语法，不追求完整 CommonMark。 */
+
+.markdown > *:first-child {
+  margin-top: 0;
+}
+
+.markdown > *:last-child {
+  margin-bottom: 0;
+}
+
+.markdown p {
+  margin: 0 0 0.5em;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  margin: 0.7em 0 0.35em;
+  font-weight: 500;
+  color: var(--ink);
+  line-height: 1.35;
+}
+
+.markdown h1 {
+  font-size: 15px;
+}
+.markdown h2 {
+  font-size: 14px;
+}
+.markdown h3 {
+  font-size: 13px;
+}
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.markdown ul,
+.markdown ol {
+  margin: 0 0 0.5em;
+  padding-left: 1.25em;
+  list-style: revert;
+}
+
+.markdown li {
+  margin: 0.1em 0;
+}
+
+.markdown a {
+  color: var(--seal);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+
+.markdown code {
+  padding: 0.1em 0.35em;
+  border-radius: 5px;
+  background: var(--surface-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.88em;
+}
+
+.markdown pre {
+  margin: 0 0 0.5em;
+  padding: 0.6em 0.7em;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.markdown pre code {
+  padding: 0;
+  background: none;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.markdown blockquote {
+  margin: 0 0 0.5em;
+  padding: 0.15em 0 0.15em 0.7em;
+  border-left: 2px solid color-mix(in oklab, var(--seal) 45%, transparent);
+  color: var(--ink-3);
+}
+
+.markdown hr {
+  margin: 0.7em 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.markdown del {
+  color: var(--ink-3);
+}
+
+/* 任务项：复选框用一个小方框示意，不做真实交互（备注是记录，不是待办） */
+.markdown .md-tasklist {
+  padding-left: 0.2em;
+  list-style: none;
+}
+
+.markdown .md-task {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45em;
+}
+
+.markdown .md-box {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-top: 0.28em;
+  border: 1px solid var(--line-strong, var(--ink-3));
+  border-radius: 3px;
+  font-size: 9px;
+  line-height: 11px;
+  text-align: center;
+  color: var(--jade, var(--seal));
+}

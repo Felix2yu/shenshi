@@ -2,11 +2,18 @@ package store
 
 import (
 	"bytes"
+	"crypto/rand"
 	"database/sql"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yufei/shendu/server/internal/model"
 )
@@ -47,6 +54,10 @@ type ImportResult struct {
 	Focus     int    `json:"focus"`
 	Habits    int    `json:"habits"`
 	HabitLogs int    `json:"habitLogs"`
+	// 附件单独报数：裸 JSON 备份不带文件，恢复不出来是预期内的，
+	// 但不说一声用户会以为已经一并恢复了。
+	Attachments       int `json:"attachments"`
+	AttachmentsMissed int `json:"attachmentsMissed"`
 }
 
 // txer 是 *sql.DB 与 *sql.Tx 共有的方法集，让同一套导入逻辑在事务内外都能复用。
@@ -224,12 +235,22 @@ func boolWord(b bool) string {
 
 // Import 导入备份。merge 重建 id 映射并把数据作为副本追加；
 // replace 则在清空后按原 id 精确复原，用于灾难恢复。
-func (s *Store) Import(b *ExportBundle, mode string) (*ImportResult, error) {
+//
+// src 提供随备份一起带来的附件内容（压缩包导入时非 nil）；
+// 裸 JSON 备份传 nil，此时只有磁盘上原本就在的附件能被挂回去。
+func (s *Store) Import(b *ExportBundle, mode string, src AttachmentSource) (*ImportResult, error) {
 	if mode != ImportMerge && mode != ImportReplace {
 		return nil, ValidationError{Msg: "导入模式只能是 merge 或 replace"}
 	}
 	if b == nil || (len(b.Lists) == 0 && len(b.Tasks) == 0 && len(b.Habits) == 0) {
 		return nil, ValidationError{Msg: "备份内容为空，无法导入"}
+	}
+
+	// 先落盘再入库：反过来的话，事务提交后写文件失败会在库里留下指向空文件的记录。
+	// 反过来失败只留几个没人引用的随机名文件，无害。
+	files, missed, err := s.stageAttachments(b, mode, src)
+	if err != nil {
+		return nil, err
 	}
 
 	tx, err := s.db.Begin()
@@ -238,11 +259,11 @@ func (s *Store) Import(b *ExportBundle, mode string) (*ImportResult, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	res := &ImportResult{Mode: mode}
+	res := &ImportResult{Mode: mode, AttachmentsMissed: missed}
 	if mode == ImportReplace {
-		err = importReplace(tx, b, res)
+		err = importReplace(tx, b, res, files)
 	} else {
-		err = importMerge(tx, b, res)
+		err = importMerge(tx, b, res, files)
 	}
 	if err != nil {
 		return nil, err
@@ -253,11 +274,136 @@ func (s *Store) Import(b *ExportBundle, mode string) (*ImportResult, error) {
 	return res, nil
 }
 
-func importReplace(tx txer, b *ExportBundle, res *ImportResult) error {
+// stageAttachments 把备份里的附件写进附件目录，返回「备份中的存储名 → 磁盘上的存储名」。
+//
+// replace 模式沿用原名：任务 id 不变，重复导入不会堆出一串副本。
+// merge 模式必须换名：任务会重新编号，两条记录共用同一个文件的话，
+// 删掉其中一条会连带把另一条的文件带走。
+func (s *Store) stageAttachments(b *ExportBundle, mode string, src AttachmentSource) (map[string]string, int, error) {
+	out := map[string]string{}
+	missed := 0
+	done := map[string]bool{}
+	for _, t := range b.Tasks {
+		for i := range t.Attachments {
+			a := t.Attachments[i]
+			if a.File == "" || done[a.File] {
+				continue
+			}
+			done[a.File] = true
+
+			data, ok, err := attachmentBytes(src, s.attachmentDir, a.File, mode)
+			if err != nil {
+				return nil, 0, err
+			}
+			if !ok {
+				missed++
+				continue
+			}
+			stored := a.File
+			// data 为 nil 表示文件已在位，只需把记录挂上去，不必重写。
+			if data != nil {
+				if mode == ImportMerge {
+					stored = newStoredName(a.File)
+				}
+				if err := s.writeAttachmentFile(stored, data); err != nil {
+					return nil, 0, err
+				}
+			}
+			out[a.File] = stored
+		}
+	}
+	return out, missed, nil
+}
+
+// attachmentBytes 取出一个附件的内容，三种来源按优先级：
+// ① 备份自带（压缩包） ② 磁盘上原本就在 ③ 都没有 —— 返回 ok=false。
+//
+// 返回 nil 的 data 且 ok 为真，表示「文件已在位、沿用原名即可，不必重写」，
+// 只在 replace 模式下出现。
+func attachmentBytes(src AttachmentSource, dir, stored string, mode string) (data []byte, ok bool, err error) {
+	if src != nil {
+		rc, err := src.Open(stored)
+		switch {
+		case err == nil:
+			defer rc.Close()
+			// 与上传同一个上限，避免畸形备份塞进一个巨大文件。
+			b, err := io.ReadAll(io.LimitReader(rc, maxAttachmentSize+1))
+			if err != nil {
+				return nil, false, fmt.Errorf("读取备份里的附件失败: %w", err)
+			}
+			if int64(len(b)) > maxAttachmentSize {
+				return nil, false, ValidationError{Msg: "备份里的附件超过 32MB 上限"}
+			}
+			return b, true, nil
+		case notProvided(err):
+			// 这次备份没带它，往下看磁盘。
+		default:
+			return nil, false, fmt.Errorf("读取备份里的附件失败: %w", err)
+		}
+	}
+
+	disk := filepath.Join(dir, stored)
+	if _, err := os.Stat(disk); err != nil {
+		return nil, false, nil // 到处都没有：记一笔缺失，任务本身照常导入
+	}
+	if mode == ImportReplace {
+		return nil, true, nil // 沿用原名，重复导入不会堆副本
+	}
+	f, err := os.Open(disk)
+	if err != nil {
+		return nil, false, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, maxAttachmentSize+1))
+	if err != nil {
+		return nil, false, err
+	}
+	return b, true, nil
+}
+
+// newStoredName 生成一个不冲突的存储名，保留原扩展名。
+func newStoredName(old string) string {
+	var salt [8]byte
+	if _, err := rand.Read(salt[:]); err != nil {
+		// 随机数取不到时退回时间戳，唯一性略弱但不至于撞车。
+		return fmt.Sprintf("imp-%x%s", time.Now().UnixNano(), safeExt(old))
+	}
+	return fmt.Sprintf("imp-%s%s", hex.EncodeToString(salt[:]), safeExt(old))
+}
+
+// writeAttachmentFile 把附件内容落到磁盘：先写临时文件再改名，
+// 中途失败不会留下半截文件被当成完整附件。
+func (s *Store) writeAttachmentFile(stored string, data []byte) error {
+	if err := os.MkdirAll(s.attachmentDir, 0o755); err != nil {
+		return fmt.Errorf("创建附件目录失败: %w", err)
+	}
+	tmp, err := os.CreateTemp(s.attachmentDir, ".import-*")
+	if err != nil {
+		return fmt.Errorf("创建临时文件失败: %w", err)
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("写入附件失败: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, filepath.Join(s.attachmentDir, stored)); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
+}
+
+func importReplace(tx txer, b *ExportBundle, res *ImportResult, files map[string]string) error {
 	// 按外键层级自上而下清空；reminder_log 一并清掉，免得旧台账挡住新数据的提醒。
 	for _, stmt := range []string{
 		`DELETE FROM task_tags`,
 		`DELETE FROM subtasks`,
+		`DELETE FROM attachments`,
 		`DELETE FROM tasks`,
 		`DELETE FROM lists`,
 		`DELETE FROM folders`,
@@ -311,6 +457,9 @@ func importReplace(tx txer, b *ExportBundle, res *ImportResult) error {
 			continue
 		}
 		if err := insertTaskWithID(tx, t); err != nil {
+			return err
+		}
+		if err := insertAttachments(tx, t, t.ID, files, res); err != nil {
 			return err
 		}
 		res.Tasks++
@@ -373,7 +522,7 @@ func importReplace(tx txer, b *ExportBundle, res *ImportResult) error {
 	return ensureInbox(tx)
 }
 
-func importMerge(tx txer, b *ExportBundle, res *ImportResult) error {
+func importMerge(tx txer, b *ExportBundle, res *ImportResult, files map[string]string) error {
 	// 分组与标签按名称合并到已有记录上；清单与任务一律作为新纪录追加。
 	folderID, err := mergeFolders(tx, b.Folders, res)
 	if err != nil {
@@ -431,6 +580,9 @@ func importMerge(tx txer, b *ExportBundle, res *ImportResult) error {
 			}
 		}
 		if err := syncTaskTags(tx, newID, ids); err != nil {
+			return err
+		}
+		if err := insertAttachments(tx, t, newID, files, res); err != nil {
 			return err
 		}
 		res.Tasks++
@@ -588,6 +740,29 @@ func mergeTags(tx txer, tags []model.Tag, res *ImportResult) (map[int64]int64, e
 		res.Tags++
 	}
 	return mapped, nil
+}
+
+// insertAttachments 把任务上的附件记录重新登记到库里。
+//
+// files 里查不到的存储名，说明文件这次没随备份带来（裸 JSON 导入常见），
+// 那就只记一笔缺失，不建指向空文件的记录 —— 宁可少一条附件，
+// 也不要在详情里摆一个点开就 410 的死链。
+func insertAttachments(tx txer, t model.Task, taskID int64, files map[string]string, res *ImportResult) error {
+	for i := range t.Attachments {
+		a := t.Attachments[i]
+		stored, ok := files[a.File]
+		if !ok {
+			continue // 缺失数已由 stageAttachments 统计，这里不重复计
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO attachments(task_id, name, file, size, mime, created_at) VALUES(?,?,?,?,?,?)`,
+			taskID, safeDisplayName(a.Name), stored, a.Size, a.Mime, stamp(a.CreatedAt),
+		); err != nil {
+			return err
+		}
+		res.Attachments++
+	}
+	return nil
 }
 
 // insertTaskWithID 按原 id 精确复原一条任务（replace 模式）。

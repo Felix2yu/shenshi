@@ -1,6 +1,8 @@
 /** 极简 API 客户端：只做 fetch 的包装、错误规整与类型标注。 */
 
 import type {
+  Attachment,
+  BackupStatus,
   Bootstrap,
   FocusSession,
   Habit,
@@ -16,7 +18,11 @@ import type {
   Tag,
   Task,
   TaskPatch,
+  TaskTemplate,
+  TemplatePatch,
   ToggleResult,
+  Webhook,
+  WebhookDelivery,
 } from '../types'
 
 export class ApiError extends Error {
@@ -110,10 +116,18 @@ export interface ImportResult {
   tags: number
   reviews: number
   focus: number
+  /** 随备份一起恢复出来的附件数。 */
+  attachments?: number
+  /** 备份里有记录、但这次没有带来文件的附件数（裸 JSON 导入时常见）。 */
+  attachmentsMissed?: number
 }
 
 /** 导出接口的下载地址，直接交给浏览器以附件形式下载。 */
-export const EXPORT_URLS = { json: '/api/export', csv: '/api/export/csv' } as const
+export const EXPORT_URLS = {
+  zip: '/api/export/zip',
+  json: '/api/export',
+  csv: '/api/export/csv',
+} as const
 
 export const api = {
   bootstrap: () => request<Bootstrap>('GET', '/api/bootstrap'),
@@ -184,6 +198,30 @@ export const api = {
   /** 导出走浏览器直接下载（见 EXPORT_URLS），这里只提供导入。 */
   importBackup: (bundle: unknown, mode: 'merge' | 'replace') =>
     request<ImportResult>('POST', `/api/import?mode=${mode}`, bundle),
+  /**
+   * 上传备份文件导入：可以是裸 JSON，也可以是导出接口产出的压缩包（含附件）。
+   * 走 multipart 而不是塞进 JSON —— 附件是字节流，base64 会白白膨胀三分之一。
+   */
+  importBackupFile: async (file: File, mode: 'merge' | 'replace') => {
+    const fd = new FormData()
+    fd.append('file', file)
+    const resp = await fetch(`/api/import/file?mode=${mode}`, { method: 'POST', body: fd })
+    const text = await resp.text()
+    let data: unknown = null
+    if (text) {
+      try {
+        data = JSON.parse(text)
+      } catch {
+        data = { error: text }
+      }
+    }
+    if (!resp.ok) {
+      if (resp.status === 401) onUnauthorized?.()
+      const msg = (data as { error?: string } | null)?.error || `请求失败（${resp.status}）`
+      throw new ApiError(msg, resp.status)
+    }
+    return data as ImportResult
+  },
 
   stats: (days = 30) => request<Stats>('GET', `/api/stats?days=${days}`),
   listReviews: (limit = 30) => request<{ reviews: Review[] }>('GET', `/api/reviews?limit=${limit}`),
@@ -203,6 +241,49 @@ export const api = {
     request<{ ok: boolean }>('POST', '/api/reminders/reset', taskId ? { taskId } : {}),
 
   repeatMeta: () => request<RepeatMeta>('GET', '/api/meta/repeat'),
+
+  // ---- 附件 ----
+  listAttachments: (taskId: number) => request<Attachment[]>('GET', `/api/tasks/${taskId}/attachments`),
+  /** 上传走 multipart，不能复用 JSON 的 request 封装。 */
+  uploadAttachment: async (taskId: number, file: File): Promise<Attachment> => {
+    const form = new FormData()
+    form.append('file', file)
+    const resp = await fetch(`/api/tasks/${taskId}/attachments`, { method: 'POST', body: form })
+    const text = await resp.text()
+    const data = text ? JSON.parse(text) : null
+    if (!resp.ok) {
+      if (resp.status === 401) onUnauthorized?.()
+      throw new ApiError(data?.error || `上传失败（${resp.status}）`, resp.status)
+    }
+    return data as Attachment
+  },
+  /** 附件下载地址：交给浏览器直接下载，便于大文件走流式。 */
+  attachmentURL: (id: number) => `/api/attachments/${id}`,
+  deleteAttachment: (id: number) => request<{ ok: boolean; id: number }>('DELETE', `/api/attachments/${id}`),
+
+  // ---- 出站 Webhook ----
+  listWebhooks: () => request<Webhook[]>('GET', '/api/webhooks'),
+  createWebhook: (body: { name?: string; url: string; secret?: string; events?: string[]; enabled?: boolean }) =>
+    request<Webhook>('POST', '/api/webhooks', body),
+  updateWebhook: (
+    id: number,
+    body: Partial<{ name: string; url: string; secret: string; events: string[]; enabled: boolean }>,
+  ) => request<Webhook>('PATCH', `/api/webhooks/${id}`, body),
+  deleteWebhook: (id: number) => request<{ ok: boolean }>('DELETE', `/api/webhooks/${id}`),
+  testWebhook: (id: number) => request<{ ok: boolean }>('POST', `/api/webhooks/${id}/test`),
+  listDeliveries: (id: number) => request<WebhookDelivery[]>('GET', `/api/webhooks/${id}/deliveries`),
+
+  // ---- 模板任务 ----
+  listTemplates: () => request<TaskTemplate[]>('GET', '/api/templates'),
+  createTemplate: (patch: TemplatePatch) => request<TaskTemplate>('POST', '/api/templates', patch),
+  updateTemplate: (id: number, patch: TemplatePatch) => request<TaskTemplate>('PATCH', `/api/templates/${id}`, patch),
+  deleteTemplate: (id: number) => request<{ ok: boolean }>('DELETE', `/api/templates/${id}`),
+  instantiateTemplate: (id: number, body: { listId?: number; dueDate?: string } = {}) =>
+    request<Task>('POST', `/api/templates/${id}/instantiate`, body),
+
+  // ---- 自动备份 ----
+  backupStatus: () => request<BackupStatus>('GET', '/api/backups'),
+  runBackup: (keep?: number) => request<{ ok: boolean; file: string }>('POST', `/api/backups/run${qs({ keep })}`),
 
   /** 鉴权状态：是否需要口令、当前是否已通过。未启用口令时 authenticated 为 false。 */
   authStatus: () => request<{ required: boolean; authenticated: boolean }>('GET', '/api/auth/status'),

@@ -37,6 +37,7 @@ import {
   type IconProps,
 } from './icons'
 import { Button, ColorDot, Field, IconButton, MenuItem, Modal, Popover, cx, inputClass } from './ui'
+import { IntegrationsDialog } from './IntegrationsDialog'
 
 type IconCmp = (p: IconProps) => ReactNode
 
@@ -906,6 +907,7 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
   const { settings, saveSettings, toast, confirm } = useStore()
   const theme = settings.theme ?? 'light'
   const fileRef = useRef<HTMLInputElement>(null)
+  const [integrationsOpen, setIntegrationsOpen] = useState(false)
   // 文件选择框无法回传「用户点了哪个按钮」，用 ref 记住本次导入的意图。
   const pendingMode = useRef<ImportMode>('merge')
 
@@ -920,13 +922,19 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
     const file = e.target.files?.[0]
     if (!file) return
     const mode = pendingMode.current
-    let bundle: unknown
-    try {
-      bundle = JSON.parse(await file.text())
-    } catch {
-      toast('这个文件不是有效的 JSON 备份', 'error')
-      return
+    const isZip = /\.zip$/i.test(file.name)
+
+    // 压缩包交给服务端解：附件是字节流，前端拆开再拼回 multipart 没有意义。
+    let bundle: unknown = null
+    if (!isZip) {
+      try {
+        bundle = JSON.parse(await file.text())
+      } catch {
+        toast('这个文件不是有效的 JSON 备份', 'error')
+        return
+      }
     }
+
     const ok = await confirm({
       title: mode === 'replace' ? '覆盖导入' : '追加导入',
       message:
@@ -938,8 +946,16 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
     })
     if (!ok) return
     try {
-      const res = await api.importBackup(bundle, mode)
-      toast(`导入完成：${res.tasks} 件任务、${res.lists} 个清单`)
+      const res = isZip
+        ? await api.importBackupFile(file, mode)
+        : await api.importBackup(bundle as object, mode)
+      const missing = res.attachmentsMissed ?? 0
+      toast(
+        `导入完成：${res.tasks} 件任务、${res.lists} 个清单` +
+          (res.attachments ? `、${res.attachments} 个附件` : '') +
+          (missing ? `（${missing} 个附件没带来文件，未恢复）` : ''),
+        missing ? 'info' : 'ok',
+      )
       onClose()
       // 备份可能替换了清单与设置，整页重载最稳妥。
       window.setTimeout(() => window.location.reload(), 500)
@@ -1026,11 +1042,19 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
           </div>
         </Field>
 
-        <Field label="数据" hint="备份是自洽的：清单、标签、子任务、复盘与专注记录都在其中。">
+        <Field label="数据" hint="备份是自洽的：清单、标签、子任务、复盘、专注记录都在其中。">
           <div className="space-y-2">
             <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                data-export-zip
+                onClick={() => downloadExport(EXPORT_URLS.zip)}
+              >
+                导出完整备份 ZIP
+              </Button>
               <Button variant="outline" size="sm" onClick={() => downloadExport(EXPORT_URLS.json)}>
-                导出 JSON 备份
+                仅 JSON
               </Button>
               <Button variant="outline" size="sm" onClick={() => downloadExport(EXPORT_URLS.csv)}>
                 导出任务表 CSV
@@ -1048,17 +1072,28 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
               </Button>
             </div>
             <p className="text-[11px] leading-relaxed text-ink-3">
-              CSV 只含任务表，便于在表格软件里查阅；要完整还原请用 JSON 备份。「追加」保留现有数据，「覆盖」会先清空再重建。
+              ZIP 是完整备份：JSON 加上任务附件，一份就能还原全部。CSV 只含任务表，便于在表格软件里查阅。
+              「追加」保留现有数据，「覆盖」会先清空再重建。
             </p>
           </div>
           <input
             ref={fileRef}
             type="file"
-            accept=".json,application/json"
+            data-import-input
+            accept=".zip,.json,application/zip,application/json"
             className="hidden"
             onChange={(e) => void handleFile(e)}
           />
         </Field>
+
+        <div className="flex items-center justify-between gap-4 border-t border-line pt-4">
+          <span className="text-[12px] leading-relaxed text-ink-3">
+            模板任务、Webhook、自动备份与 CalDAV 订阅。
+          </span>
+          <Button variant="outline" size="sm" data-open-integrations onClick={() => setIntegrationsOpen(true)}>
+            集成与自动化
+          </Button>
+        </div>
 
         <Field label="快捷键">
           <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[12px] text-ink-2">
@@ -1099,6 +1134,8 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
             重置提醒
           </Button>
         </div>
+
+        <IntegrationsDialog open={integrationsOpen} onClose={() => setIntegrationsOpen(false)} />
       </div>
     </Modal>
   )

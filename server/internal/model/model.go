@@ -88,14 +88,125 @@ type Task struct {
 	UpdatedAt   string  `json:"updatedAt"`
 
 	// 关联数据（查询时装配）
-	Subtasks  []Subtask `json:"subtasks"`
-	Tags      []Tag     `json:"tags"`
-	ListName  string    `json:"listName"`
-	ListColor string    `json:"listColor"`
-	FolderID  *int64    `json:"folderId"`
+	Subtasks    []Subtask    `json:"subtasks"`
+	Attachments []Attachment `json:"attachments"`
+	Tags        []Tag        `json:"tags"`
+	ListName    string       `json:"listName"`
+	ListColor   string       `json:"listColor"`
+	FolderID    *int64       `json:"folderId"`
 
 	SubtaskDone int `json:"subtaskDone"`
 	SubtaskOpen int `json:"subtaskOpen"`
+}
+
+// Attachment 任务附件。内容落在数据目录的 attachments/ 下，库里只留元数据，
+// 这样数据库不会随一个几 MB 的截图急剧膨胀。
+type Attachment struct {
+	ID        int64  `json:"id"`
+	TaskID    int64  `json:"taskId"`
+	Name      string `json:"name"`
+	File      string `json:"file"` // 相对附件目录的存储名
+	Size      int64  `json:"size"`
+	Mime      string `json:"mime"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// Webhook 出站钩子：把库内的变更推给外部系统。
+// Secret 用于生成 HMAC 签名；列表一律脱敏（置空），只以 HasSecret 示意是否配过。
+type Webhook struct {
+	ID        int64    `json:"id"`
+	Name      string   `json:"name"`
+	URL       string   `json:"url"`
+	Secret    string   `json:"secret"`
+	HasSecret bool     `json:"hasSecret"`
+	Events    []string `json:"events"`
+	Enabled   bool     `json:"enabled"`
+	CreatedAt string   `json:"createdAt"`
+	UpdatedAt string   `json:"updatedAt"`
+}
+
+// WebhookInput 是 Webhook 的写入入参，字段缺席表示不改动。
+type WebhookInput struct {
+	Name    Opt[string]   `json:"name"`
+	URL     Opt[string]   `json:"url"`
+	Secret  Opt[string]   `json:"secret"`
+	Events  Opt[[]string] `json:"events"`
+	Enabled Opt[bool]     `json:"enabled"`
+}
+
+// WebhookDelivery 一次投递的结果，只保留最近若干条，用于排查「为什么没收到」。
+type WebhookDelivery struct {
+	ID        int64  `json:"id"`
+	WebhookID int64  `json:"webhookId"`
+	Event     string `json:"event"`
+	Code      int    `json:"code"`
+	OK        bool   `json:"ok"`
+	Error     string `json:"error"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// TaskTemplate 模板任务：把「每周例会」这类反复要做的事存成底稿，
+// 需要时按它生成一条真正的任务（dueOffset 决定日期落在几天后）。
+type TaskTemplate struct {
+	ID         int64    `json:"id"`
+	Name       string   `json:"name"`
+	Title      string   `json:"title"`
+	Notes      string   `json:"notes"`
+	ListID     *int64   `json:"listId"`
+	Priority   int      `json:"priority"`
+	DueOffset  *int     `json:"dueOffset"` // 相对生成日的天数偏移
+	DueTime    *string  `json:"dueTime"`
+	Reminders  []int    `json:"reminders"`
+	RepeatRule *string  `json:"repeatRule"`
+	Important  bool     `json:"important"`
+	Urgent     bool     `json:"urgent"`
+	TagIDs     []int64  `json:"tagIds"`
+	Subtasks   []string `json:"subtasks"`
+	SortOrder  float64  `json:"sortOrder"`
+	CreatedAt  string   `json:"createdAt"`
+	UpdatedAt  string   `json:"updatedAt"`
+}
+
+// TemplateInput 是模板任务的写入入参，字段缺席表示不改动。
+type TemplateInput struct {
+	Name       Opt[string]   `json:"name"`
+	Title      Opt[string]   `json:"title"`
+	Notes      Opt[string]   `json:"notes"`
+	ListID     Opt[*int64]   `json:"listId"`
+	Priority   Opt[int]      `json:"priority"`
+	DueOffset  Opt[*int]     `json:"dueOffset"`
+	DueTime    Opt[*string]  `json:"dueTime"`
+	Reminders  Opt[[]int]    `json:"reminders"`
+	RepeatRule Opt[*string]  `json:"repeatRule"`
+	Important  Opt[bool]     `json:"important"`
+	Urgent     Opt[bool]     `json:"urgent"`
+	TagIDs     Opt[[]int64]  `json:"tagIds"`
+	Subtasks   Opt[[]string] `json:"subtasks"`
+	SortOrder  Opt[float64]  `json:"sortOrder"`
+}
+
+// CalDAVChange 是 CalDAV 增量同步用的一行变更记录（RFC 6578）。
+type CalDAVChange struct {
+	Seq        int64  `json:"seq"`
+	Collection string `json:"collection"`
+	UID        string `json:"uid"`
+	TaskID     *int64 `json:"taskId"`
+	Deleted    bool   `json:"deleted"`
+	ChangedAt  string `json:"changedAt"`
+}
+
+// 数据变更事件名，供 Webhook 与 CalDAV 同步消费。
+const (
+	EventTaskCreated   = "task.created"
+	EventTaskUpdated   = "task.updated"
+	EventTaskCompleted = "task.completed"
+	EventTaskReopened  = "task.reopened"
+	EventTaskDeleted   = "task.deleted"
+)
+
+// WebhookEvents 列出可订阅的事件，供界面与校验共用。
+var WebhookEvents = []string{
+	EventTaskCreated, EventTaskUpdated, EventTaskCompleted, EventTaskReopened, EventTaskDeleted,
 }
 
 // Subtask 子任务。

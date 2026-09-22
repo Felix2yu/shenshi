@@ -336,6 +336,45 @@ export const IconNote = (p: IconProps) => (
   </Base>
 )
 
+export const IconPaperclip = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M18.5 11.5 12 18a4 4 0 0 1-5.7-5.7l7.1-7.1a2.7 2.7 0 0 1 3.8 3.8l-7.1 7.1a1.4 1.4 0 0 1-2-2l6.4-6.4" />
+  </Base>
+)
+
+export const IconDownload = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M12 4v10M8 11l4 4 4-4" />
+    <path d="M4.5 17.5v1.5a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-1.5" />
+  </Base>
+)
+
+/** 模板：一张底稿加一枚复制角标。 */
+export const IconTemplate = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="3.5" y="4.5" width="13" height="13" rx="2.5" />
+    <path d="M8 10.5h4M8 13.5h2.5" />
+    <path d="M16.5 8.5h4v11a1.5 1.5 0 0 1-1.5 1.5H8" />
+  </Base>
+)
+
+/** 预览：一只眼睛。 */
+export const IconEye = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12z" />
+    <circle cx="12" cy="12" r="2.8" />
+  </Base>
+)
+
+/** 集成：两个互相咬合的端点。 */
+export const IconPlug = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M9 3v5M15 3v5" />
+    <path d="M6.5 8h11v3.5a5.5 5.5 0 0 1-11 0z" />
+    <path d="M12 17v4" />
+  </Base>
+)
+
 export const IconSubtask = (p: IconProps) => (
   <Base {...p}>
     <path d="M4 7h4M4 12h4M4 17h4M11 7h9M11 12h9M11 17h6" />

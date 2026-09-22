@@ -12,25 +12,45 @@ import (
 	"strings"
 	"time"
 
+	shenshicaldav "github.com/yufei/shendu/server/internal/caldav"
 	"github.com/yufei/shendu/server/internal/store"
 )
 
 // Server 持有依赖并对外暴露 http.Handler。
 type Server struct {
-	st   *store.Store
-	mux  *http.ServeMux
-	gate *gate
-	root http.Handler
+	st     *store.Store
+	mux    *http.ServeMux
+	gate   *gate
+	root   http.Handler
+	hooks  *dispatcher
+	auto   *store.AutoBackup
+	caldav *shenshicaldav.Handler
 }
 
 // New 构造路由表。token 非空时启用访问口令鉴权（见 auth.go）。
 func New(st *store.Store, token string) *Server {
-	s := &Server{st: st, mux: http.NewServeMux(), gate: newGate(token)}
+	dav := shenshicaldav.NewHandler(st)
+	s := &Server{
+		st:     st,
+		mux:    http.NewServeMux(),
+		gate:   newGate(token),
+		auto:   store.NewAutoBackup(st, log.Printf),
+		caldav: dav,
+	}
 	s.routes()
+	s.registerWebhooks()
+	// 任务一变就记进 CalDAV 变更日志，增量同步才有得可查。
+	st.OnEvent(dav.Backend().SyncHook())
 	// root 在最外层套上鉴权，因此 API 与前端静态资源走同一道门。
 	s.root = s.gate.wrap(s.mux)
 	return s
 }
+
+// AutoBackup 返回自动备份器，供 main 启动与停止。
+func (s *Server) AutoBackup() *store.AutoBackup { return s.auto }
+
+// CalDAV 返回 CalDAV 处理器，供 main 在启动时补齐变更日志。
+func (s *Server) CalDAV() *shenshicaldav.Handler { return s.caldav }
 
 // ServeHTTP 实现 http.Handler，并附加日志与 CORS。
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -42,12 +62,31 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 	}
+	isDAV := shenshicaldav.IsCalDAVPath(r.URL.Path)
+	if isDAV {
+		// Dav 头要在最外层就设好：鉴权失败时（401）客户端也必须能看到能力集，
+		// 否则 Apple 日历在账户设置阶段就判定「不支持 CalDAV」。
+		w.Header().Set("DAV", shenshicaldav.DavHeader)
+	}
 	if r.Method == http.MethodOptions {
+		if isDAV {
+			w.Header().Set("Allow", shenshicaldav.AllowHeader)
+		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	sw := &statusWriter{ResponseWriter: w, code: 200}
-	s.root.ServeHTTP(sw, r)
+	out := http.ResponseWriter(sw)
+	if isDAV {
+		// 401 时补 Basic 挑战：Apple 客户端只认这一种认证方式，
+		// 没有 WWW-Authenticate 它连口令框都不会弹。
+		out = &hookWriter{ResponseWriter: sw, hook: func(code int) {
+			if code == http.StatusUnauthorized {
+				sw.Header().Set("WWW-Authenticate", `Basic realm="shenshi", charset="UTF-8"`)
+			}
+		}}
+	}
+	s.root.ServeHTTP(out, r)
 	if strings.HasPrefix(r.URL.Path, "/api/") {
 		log.Printf("%s %s -> %d (%s)", r.Method, r.URL.RequestURI(), sw.code, time.Since(start).Round(time.Millisecond))
 	}
@@ -60,6 +99,17 @@ type statusWriter struct {
 
 func (w *statusWriter) WriteHeader(code int) {
 	w.code = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+// hookWriter 在真正写出状态码之前回调一次，用于补上「只有看到状态码才知道该不该加」的响应头。
+type hookWriter struct {
+	http.ResponseWriter
+	hook func(code int)
+}
+
+func (w *hookWriter) WriteHeader(code int) {
+	w.hook(code)
 	w.ResponseWriter.WriteHeader(code)
 }
 
@@ -129,7 +179,9 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("GET /api/export", h(s.exportJSON))
 	s.mux.HandleFunc("GET /api/export/csv", h(s.exportCSV))
+	s.mux.HandleFunc("GET /api/export/zip", h(s.exportZIP))
 	s.mux.HandleFunc("POST /api/import", h(s.importBackup))
+	s.mux.HandleFunc("POST /api/import/file", h(s.importBackupFile))
 
 	s.mux.HandleFunc("GET /api/stats", h(s.stats))
 	s.mux.HandleFunc("GET /api/reviews", h(s.listReviews))
@@ -142,6 +194,35 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/reminders/ack", h(s.ackReminder))
 	s.mux.HandleFunc("POST /api/reminders/reset", h(s.resetReminders))
 	s.mux.HandleFunc("GET /api/meta/repeat", h(s.repeatMeta))
+
+	// 附件
+	s.mux.HandleFunc("GET /api/tasks/{id}/attachments", h(s.listAttachments))
+	s.mux.HandleFunc("POST /api/tasks/{id}/attachments", h(s.uploadAttachment))
+	s.mux.HandleFunc("GET /api/attachments/{id}", h(s.downloadAttachment))
+	s.mux.HandleFunc("DELETE /api/attachments/{id}", h(s.deleteAttachment))
+
+	// 出站 Webhook
+	s.mux.HandleFunc("GET /api/webhooks", h(s.listWebhooks))
+	s.mux.HandleFunc("POST /api/webhooks", h(s.createWebhook))
+	s.mux.HandleFunc("PATCH /api/webhooks/{id}", h(s.updateWebhook))
+	s.mux.HandleFunc("DELETE /api/webhooks/{id}", h(s.deleteWebhook))
+	s.mux.HandleFunc("POST /api/webhooks/{id}/test", h(s.testWebhookHandler))
+	s.mux.HandleFunc("GET /api/webhooks/{id}/deliveries", h(s.listDeliveries))
+
+	// 模板任务
+	s.mux.HandleFunc("GET /api/templates", h(s.listTemplates))
+	s.mux.HandleFunc("POST /api/templates", h(s.createTemplate))
+	s.mux.HandleFunc("PATCH /api/templates/{id}", h(s.updateTemplate))
+	s.mux.HandleFunc("DELETE /api/templates/{id}", h(s.deleteTemplate))
+	s.mux.HandleFunc("POST /api/templates/{id}/instantiate", h(s.instantiateTemplate))
+
+	// 自动备份
+	s.mux.HandleFunc("GET /api/backups", h(s.backupStatus))
+	s.mux.HandleFunc("POST /api/backups/run", h(s.runBackup))
+
+	// CalDAV：交给独立处理器，错误格式是 XML 而不是 JSON，不走 h() 包装。
+	s.mux.HandleFunc("/.well-known/caldav", shenshicaldav.WellKnown)
+	s.mux.Handle("/caldav/", s.caldav)
 }
 
 // ---------- 响应辅助 ----------

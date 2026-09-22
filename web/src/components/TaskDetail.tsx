@@ -1,23 +1,29 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { api } from '../api/client'
 import { addDays, addMonths, fullDate, relativeTime, todayStr, weekday } from '../lib/date'
+import { renderMarkdown } from '../lib/markdown'
 import { describeRepeat } from '../lib/nlp'
 import { useStore } from '../store/AppStore'
-import type { Priority, Task } from '../types'
+import type { Attachment, Priority, Task } from '../types'
 import {
   IconBell,
   IconCalendar,
   IconCheck,
   IconClock,
+  IconDownload,
+  IconEye,
   IconFlag,
   IconList,
   IconMore,
   IconNote,
+  IconPaperclip,
   IconPlus,
   IconRepeat,
   IconSparkle,
   IconSubtask,
   IconTag,
+  IconTemplate,
   IconTimer,
   IconTrash,
   IconX,
@@ -72,11 +78,21 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
   const [datePopover, setDatePopover] = useState(false)
   const [listPopover, setListPopover] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
+  // 备注默认就是编辑态；有 Markdown 语法时进详情直接看到渲染结果更有用。
+  const [notesMode, setNotesMode] = useState<'edit' | 'preview'>('edit')
+  const [attachments, setAttachments] = useState<Attachment[]>(task?.attachments ?? [])
+  const [uploading, setUploading] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     setTitle(task?.title ?? '')
     setNotes(task?.notes ?? '')
   }, [task?.id, task?.title, task?.notes])
+
+  // 附件以服务端为准：任务被刷新（对账、改别的字段）时同步回来。
+  useEffect(() => {
+    setAttachments(task?.attachments ?? [])
+  }, [task?.attachments])
 
   const notesRef = useAutoGrow(notes, 360)
 
@@ -132,6 +148,63 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
     const has = task.reminders.includes(value)
     const next = has ? task.reminders.filter((r) => r !== value) : [...task.reminders, value].sort((a, b) => a - b)
     await updateTask(task.id, { reminders: next })
+  }
+
+  const uploadFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    setUploading(true)
+    let ok = 0
+    try {
+      for (const file of Array.from(files)) {
+        const a = await api.uploadAttachment(task.id, file)
+        setAttachments((prev) => (prev.some((x) => x.id === a.id) ? prev : [...prev, a]))
+        ok++
+      }
+      if (ok > 0) toast(ok > 1 ? `已添加 ${ok} 个附件` : '附件已添加')
+    } catch (err) {
+      toast(err instanceof Error ? err.message : '上传失败', 'error')
+    } finally {
+      setUploading(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  const removeAttachment = async (a: Attachment) => {
+    const confirmed = await confirm({
+      title: '删除附件',
+      message: `将删除「${a.name}」，文件会从服务端移除，此操作不可撤销。`,
+      confirmText: '删除',
+      danger: true,
+    })
+    if (!confirmed) return
+    try {
+      await api.deleteAttachment(a.id)
+      setAttachments((prev) => prev.filter((x) => x.id !== a.id))
+    } catch (err) {
+      toast(err instanceof Error ? err.message : '删除失败', 'error')
+    }
+  }
+
+  /** 存为模板：把当前任务的结构抄一份底稿，日后一键铺开。 */
+  const saveAsTemplate = async () => {
+    try {
+      await api.createTemplate({
+        name: task.title,
+        title: task.title,
+        notes: task.notes,
+        listId: task.listId,
+        priority: task.priority,
+        reminders: task.reminders,
+        repeatRule: task.repeatRule,
+        important: task.important,
+        urgent: task.urgent,
+        tagIds: task.tags.map((t) => t.id),
+        subtasks: task.subtasks.map((s) => s.title),
+      })
+      toast('已存为模板，可在「集成与自动化」里调整')
+    } catch (err) {
+      toast(err instanceof Error ? err.message : '保存模板失败', 'error')
+    }
   }
 
   return (
@@ -621,23 +694,125 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
           </div>
         </div>
 
-        {/* 备注 */}
+        {/* 备注：支持 Markdown，编辑与预览两态 */}
         <div className="mt-5 border-t border-line pt-4">
           <div className="mb-1.5 flex items-center gap-2 text-[11.5px] font-medium tracking-wide text-ink-3">
             <IconNote size={13} />
             备注
+            <span className="ml-auto flex items-center gap-0.5">
+              <button
+                type="button"
+                data-notes-mode="edit"
+                onClick={() => setNotesMode('edit')}
+                className={cx(
+                  'rounded px-1.5 py-0.5 text-[11px] transition-colors',
+                  notesMode === 'edit' ? 'bg-surface-2 text-ink' : 'text-ink-3 hover:text-ink-2',
+                )}
+              >
+                编辑
+              </button>
+              <button
+                type="button"
+                data-notes-mode="preview"
+                onClick={() => setNotesMode('preview')}
+                className={cx(
+                  'flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-colors',
+                  notesMode === 'preview' ? 'bg-surface-2 text-ink' : 'text-ink-3 hover:text-ink-2',
+                )}
+              >
+                <IconEye size={11} />
+                预览
+              </button>
+            </span>
           </div>
-          <textarea
-            ref={notesRef}
-            value={notes}
-            onChange={(e) => {
-              setNotes(e.target.value)
-              commitNotes(e.target.value)
-            }}
-            placeholder="补充背景、链接、验收标准…"
-            className="w-full resize-none rounded-lg border border-line bg-surface-2/50 px-2.5 py-2 text-[13px] leading-6 outline-none transition-colors placeholder:text-ink-3 focus:border-seal/50 focus:bg-surface"
-            rows={3}
+          {notesMode === 'edit' ? (
+            <textarea
+              ref={notesRef}
+              value={notes}
+              data-notes-input
+              onChange={(e) => {
+                setNotes(e.target.value)
+                commitNotes(e.target.value)
+              }}
+              placeholder="补充背景、链接、验收标准… 支持 Markdown：# 标题、- 列表、**重点**、`代码`"
+              className="w-full resize-none rounded-lg border border-line bg-surface-2/50 px-2.5 py-2 text-[13px] leading-6 outline-none transition-colors placeholder:text-ink-3 focus:border-seal/50 focus:bg-surface"
+              rows={3}
+            />
+          ) : (
+            <div
+              data-notes-preview
+              className="markdown min-h-[68px] rounded-lg border border-line bg-surface-2/40 px-2.5 py-2 text-[13px] leading-6"
+            >
+              {notes.trim() ? (
+                <div dangerouslySetInnerHTML={{ __html: renderMarkdown(notes) }} />
+              ) : (
+                <span className="text-ink-3">还没有备注。</span>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 附件 */}
+        <div className="mt-5 border-t border-line pt-4">
+          <div className="mb-1.5 flex items-center gap-2 text-[11.5px] font-medium tracking-wide text-ink-3">
+            <IconPaperclip size={13} />
+            附件
+            {attachments.length > 0 ? <span className="tabular-nums">{attachments.length}</span> : null}
+            <button
+              type="button"
+              data-attachment-add
+              onClick={() => fileRef.current?.click()}
+              disabled={uploading}
+              className="ml-auto rounded px-1.5 py-0.5 text-[11px] text-seal transition-colors hover:bg-seal/10 disabled:opacity-50"
+            >
+              {uploading ? '上传中…' : '添加'}
+            </button>
+          </div>
+          <input
+            ref={fileRef}
+            type="file"
+            multiple
+            data-attachment-input
+            className="hidden"
+            onChange={(e) => void uploadFiles(e.target.files)}
           />
+          {attachments.length === 0 ? (
+            <p className="text-[11.5px] leading-relaxed text-ink-3">
+              可附上截图、单据或资料，单个文件最大 32MB。
+            </p>
+          ) : (
+            <ul className="space-y-1">
+              {attachments.map((a) => (
+                <li
+                  key={a.id}
+                  data-attachment-row={a.id}
+                  className="flex items-center gap-2 rounded-lg border border-line bg-surface-2/50 px-2.5 py-1.5"
+                >
+                  <IconPaperclip size={12} className="shrink-0 text-ink-3" />
+                  <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink" title={a.name}>
+                    {a.name}
+                  </span>
+                  <span className="shrink-0 text-[11px] tabular-nums text-ink-3">{formatSize(a.size)}</span>
+                  <a
+                    href={api.attachmentURL(a.id)}
+                    download={a.name}
+                    title="下载"
+                    className="shrink-0 rounded p-0.5 text-ink-3 transition-colors hover:text-seal"
+                  >
+                    <IconDownload size={13} />
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => void removeAttachment(a)}
+                    title="删除附件"
+                    className="shrink-0 rounded p-0.5 text-ink-3 transition-colors hover:text-p-high"
+                  >
+                    <IconTrash size={13} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
 
         {/* 完成度 */}
@@ -657,13 +832,31 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
           </div>
         ) : null}
 
-        <div className="mt-5 space-y-0.5 text-[11px] text-ink-3">
-          <div>更新于 {relativeTime(task.updatedAt)}</div>
-          {task.dueDate ? <div>计划：{fullDate(task.dueDate)}</div> : null}
+        <div className="mt-5 flex items-end justify-between gap-3">
+          <div className="space-y-0.5 text-[11px] text-ink-3">
+            <div>更新于 {relativeTime(task.updatedAt)}</div>
+            {task.dueDate ? <div>计划：{fullDate(task.dueDate)}</div> : null}
+          </div>
+          <button
+            type="button"
+            data-save-template
+            onClick={() => void saveAsTemplate()}
+            title="把这条任务的结构存成模板"
+            className="flex shrink-0 items-center gap-1 rounded-lg border border-line px-2 py-1 text-[11px] text-ink-2 transition-colors hover:border-seal/40 hover:text-seal"
+          >
+            <IconTemplate size={12} />
+            存为模板
+          </button>
         </div>
       </div>
     </aside>
   )
+}
+
+function formatSize(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
 function Row({

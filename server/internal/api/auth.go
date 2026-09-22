@@ -111,6 +111,11 @@ func credential(r *http.Request) string {
 	if c, err := r.Cookie(authCookie); err == nil && c.Value != "" {
 		return c.Value
 	}
+	// HTTP Basic：Apple 的日历与提醒事项只认这一种，账户设置界面里根本没有
+	// 填自定义请求头的地方，因此把 password 字段当口令、忽略 username。
+	if _, pass, ok := r.BasicAuth(); ok && pass != "" {
+		return pass
+	}
 	if h := r.Header.Get("Authorization"); h != "" {
 		if after, ok := strings.CutPrefix(h, "Bearer "); ok {
 			return strings.TrimSpace(after)

@@ -231,6 +231,10 @@ func (s *Store) ListTasks(f TaskFilter) ([]model.Task, error) {
 	if err := s.attachTags(tasks); err != nil {
 		return nil, err
 	}
+	// 附件只在列表接口上带数量级很小的一条 SQL，不必为此再开一个端点。
+	if err := s.attachAttachments(tasks); err != nil {
+		return nil, err
+	}
 	return tasks, nil
 }
 
@@ -254,6 +258,9 @@ func (s *Store) GetTask(id int64) (*model.Task, error) {
 		return nil, err
 	}
 	if err := s.attachTags(list); err != nil {
+		return nil, err
+	}
+	if err := s.attachAttachments(list); err != nil {
 		return nil, err
 	}
 	return &list[0], nil
@@ -469,7 +476,12 @@ func (s *Store) CreateTask(in model.TaskInput, defaultListID int64) (*model.Task
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	return s.GetTask(id)
+	t, err := s.GetTask(id)
+	if err != nil {
+		return nil, err
+	}
+	s.emit(model.EventTaskCreated, t)
+	return t, nil
 }
 
 // UpdateTask 按 PATCH 语义更新任务。
@@ -575,17 +587,38 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 			return nil, err
 		}
 	}
-	return s.GetTask(id)
+	t, err := s.GetTask(id)
+	if err != nil {
+		return nil, err
+	}
+	// 完成与恢复比「改了某个字段」更值得单独订阅，因此拆成独立事件。
+	switch {
+	case cur.Status != t.Status && t.Status == model.StatusDone:
+		s.emit(model.EventTaskCompleted, t)
+	case cur.Status != t.Status && t.Status == model.StatusTodo:
+		s.emit(model.EventTaskReopened, t)
+	default:
+		s.emit(model.EventTaskUpdated, t)
+	}
+	return t, nil
 }
 
-// DeleteTask 删除任务。
+// DeleteTask 删除任务，连同它的附件。
 func (s *Store) DeleteTask(id int64) error {
+	// 先取一份快照供事件消费（Webhook 与 CalDAV 都需要 id），取不到也继续删。
+	cur, _ := s.GetTask(id)
+	if err := s.deleteTaskAttachments(id); err != nil {
+		return err
+	}
 	res, err := s.db.Exec(`DELETE FROM tasks WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
+	}
+	if cur != nil {
+		s.emit(model.EventTaskDeleted, cur)
 	}
 	return nil
 }
@@ -648,6 +681,7 @@ func (s *Store) ToggleTask(id int64) (*ToggleResult, error) {
 		if err != nil {
 			return nil, err
 		}
+		s.emit(model.EventTaskCompleted, res.Task)
 		return res, nil
 	}
 	if _, err := s.db.Exec(`UPDATE tasks SET status='todo', completed_at=NULL, updated_at=? WHERE id=?`, ts, id); err != nil {
@@ -657,6 +691,7 @@ func (s *Store) ToggleTask(id int64) (*ToggleResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.emit(model.EventTaskReopened, t)
 	return &ToggleResult{Task: t, Completed: false}, nil
 }
 
