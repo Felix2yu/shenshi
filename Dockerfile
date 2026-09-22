@@ -5,7 +5,7 @@
 
 # ---------- 1. 前端 ----------
 # 与本地开发同版本：Node 24（见根目录 .nvmrc 与 web/package.json 的 engines）。
-FROM node:24-alpine AS web
+FROM node:26-alpine AS web
 
 WORKDIR /app/web
 
