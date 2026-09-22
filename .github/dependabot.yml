@@ -29,6 +29,17 @@ updates:
       time: "00:00"
       timezone: "UTC"
     open-pull-requests-limit: 10
+    ignore:
+      # Node 与 Go 的大版本是**刻意钉住**的：Dockerfile 的基镜像属于工具链声明的
+      # 四处之一（另三处是 .nvmrc、web/package.json 的 engines、server/go.mod）。
+      # 自动跨大版本会让这四处失同步 —— 例如把镜像提到 node:26-alpine 之后，
+      # 本地 nvm 用的还是 24，CI 与开发环境就悄悄分叉了。
+      # tag 形如 `24-alpine` / `1.27-alpine` 本身已跟随各自的小版本补丁，
+      # 所以这里只挡大版本，安全更新照常进得来。升级工具链请四处一起改。
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "golang"
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions 工作流里用到的 action 版本
   - package-ecosystem: "github-actions"
