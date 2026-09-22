@@ -2,9 +2,9 @@ name: Release
 
 # 在 GitHub 上发布 release 时，交叉编译各平台二进制并挂到该 release 上。
 #
-# 与 mujian 的 release 工作流最大的不同：它要为每个平台开一个 runner
-# （CGO 让二进制与编译机绑定），「慎始」全部目标都能在同一个 Linux runner 上
-# 用 GOOS/GOARCH 交叉编译出来 —— CGO_ENABLED=0，产物是完全静态的。
+# 四个目标平台都在同一个 Linux runner 上交叉编译：SQLite 驱动是纯 Go 实现，
+# 构建期 CGO_ENABLED=0，产物完全静态、与编译机的 glibc 无关，
+# 所以不需要为每个平台单开 runner，也就没有 glibc 版本那一类麻烦。
 
 on:
   release:
@@ -20,17 +20,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # 版本同样不在这里写死：与 build.yml 一致，读声明文件。
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: web/package-lock.json
 
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.27"
+          go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
 
       - name: 安装前端依赖
