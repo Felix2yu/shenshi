@@ -1,9 +1,12 @@
-# 「慎始」单机部署。
+# 「慎始」单机部署：直接拉取 CI 构建好的镜像，不在服务器上本地构建。
 #
 # 用法：
 #   cp .env.example .env      # 然后在 .env 里填一个口令
-#   docker compose up -d --build
+#   docker compose pull && docker compose up -d
 #   浏览器打开 http://<服务器地址>:8787
+#
+# 镜像由 GitHub Actions 在推送到 main 后构建并发布到 GHCR，amd64 / arm64 已合成
+# 多架构 manifest，服务器是什么架构都拉同一个 tag；公开仓库的镜像可匿名拉取。
 #
 # 数据放在具名卷里而不是绑定挂载：镜像里的 /data 属于容器内的 shenshi 用户（非 root），
 # 若改成 ./data:/data 这类绑定挂载，宿主目录的属主与容器内 uid 不一致会导致写入失败。
@@ -11,11 +14,16 @@
 
 services:
   shenshi:
-    build:
-      context: .
-    image: shenshi:latest
+    # 默认跟随 latest。要钉住某个版本就把 .env 里的 SHENSHI_TAG 设成对应的 commit sha。
+    image: ghcr.io/felix2yu/shenshi:${SHENSHI_TAG:-latest}
     container_name: shenshi
     restart: unless-stopped
+
+    # 想在服务器上自己构建时，注释掉上面的 image，改用下面两行（同目录 Dockerfile，三阶段构建）。
+    # 注意这会要求服务器上具备完整的 Node / Go 构建环境，代价比拉镜像大得多。
+    # build:
+    #   context: .
+    # image: shenshi:local
 
     ports:
       # 默认只监听所有网卡的 8787。若前面已有反向代理，改成 "127.0.0.1:8787:8787" 更稳妥。

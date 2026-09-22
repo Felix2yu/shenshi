@@ -3,7 +3,7 @@
 > 慎始而敬终，行稳致远。 —— 《礼记》义疏
 
 一个专注「规划与善始善终」的任务管理应用。名字取自《礼记》「慎始而敬终」：开始要慎重，收尾同样要敬重。
-复刻滴答清单一类的成熟任务管理器的核心能力，但把「规划 → 执行 → 复盘」的闭环做成主线，而不是堆功能。
+成熟任务管理器的核心能力基本都有，但主线是「规划 → 执行 → 复盘」的闭环，而不是堆功能。
 
 技术栈：**Go 1.27 标准库 + 内嵌 SQLite（纯 Go，无 cgo） + React 19 / Vite 8 / TypeScript 7 / Tailwind v4**。
 构建产物是**单个可执行文件**（前端经 `go:embed` 打进二进制），运行时只需要它和一个 `.db` 文件。
@@ -58,7 +58,8 @@ cd web && npm run dev                    # 前端热更新，/api 自动代理�
 
 ```bash
 cp .env.example .env        # 在 .env 里填一个访问口令
-docker compose up -d --build
+docker compose pull         # 拉取 CI 构建好的镜像，不在服务器上编译
+docker compose up -d
 ```
 
 然后多端（电脑 / 手机 / 平板）打开 `http://<服务器地址>:8787` 即可，数据由服务端统一维护。
@@ -89,21 +90,26 @@ docker run --rm -v shenshi-data:/data -v "$PWD:/backup" alpine \
 **时区很要紧**：`TZ` 直接决定「今天」「逾期」「习惯打卡」算在哪一天。
 镜像里已装 tzdata 并默认 `Asia/Shanghai`，换时区改 `.env` 的 `TZ` 即可。
 
-镜像用三阶段构建（`node:24-alpine` 构建前端 → `golang:1.27-alpine` 编译 → `alpine:3.24` 运行），
-最终约 20MB，只含一个静态链接的二进制、tzdata 与根证书；编译工具链与 `node_modules` 都不进最终镜像。
-由于 SQLite 驱动是纯 Go 实现，构建期 `CGO_ENABLED=0`，可交叉编译到 `amd64` / `arm64`。
+镜像不在服务器上构建：推送到 `main` 后 CI 会构建并发布到 GitHub 容器仓库 `ghcr.io/felix2yu/shenshi`，
+`amd64` / `arm64` 已合成多架构 manifest，服务器是什么架构都拉同一个 tag。公开仓库的镜像可匿名拉取。
 
-推送到 `main` 后，CI 会把多架构镜像发布到 GitHub 容器仓库，服务器上可以直接拉现成的：
+- `latest` —— 跟随 `main` 的最新构建。
+- `<commit sha>` —— 每次构建同时打上；需要钉住版本或回滚时，把 `.env` 里的 `SHENSHI_TAG` 指过去即可。
 
 ```bash
-docker pull ghcr.io/felix2yu/shenshi:latest
+docker pull ghcr.io/felix2yu/shenshi:latest    # 只拉镜像，不启动
 ```
+
+镜像本身用三阶段 Dockerfile 构建（`node:24-alpine` 构建前端 → `golang:1.27-alpine` 编译 → `alpine:3.24` 运行），
+最终约 20MB，只含一个静态链接的二进制、tzdata 与根证书；编译工具链与 `node_modules` 都不进最终镜像。
+由于 SQLite 驱动是纯 Go 实现，构建期 `CGO_ENABLED=0`，可交叉编译到 `amd64` / `arm64`。
+确实想在服务器上本地出镜像时，`docker build -t shenshi:local .`（`docker-compose.yml` 里留了改法注释）。
 
 ---
 
 ## 持续集成
 
-`.github/workflows/` 下两个工作流（结构参考 [Felix2yu/mujian](https://github.com/Felix2yu/mujian/tree/main/.github)）。
+`.github/workflows/` 下两个工作流。
 
 **`build.yml`** —— 推送 / PR / 手动 / **每周一 03:00 UTC 定时**触发：
 

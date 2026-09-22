@@ -2,7 +2,7 @@
   "name": "shenshi-web",
   "private": true,
   "version": "1.0.0",
-  "description": "慎始 · 复刻滴答清单核心功能的任务管理应用前端",
+  "description": "慎始 · 专注规划与善始善终的任务管理应用前端",
   "type": "module",
   "engines": {
     "node": ">=24"
