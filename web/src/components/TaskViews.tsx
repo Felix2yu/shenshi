@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { dayDiff, dueLabel, isOverdue, relativeTime, todayStr, addDays } from '../lib/date'
 import { QUOTES } from '../lib/quotes'
 import { parseQuickAdd, describeRepeat, type Chip } from '../lib/nlp'
+import { useIMEGuard } from '../lib/ime'
 import { useStore } from '../store/AppStore'
 import type { Priority, Selection, Task } from '../types'
 import {
@@ -58,7 +59,7 @@ export function DuePill({ task, className }: { task: Task; className?: string })
   return (
     <span
       className={cx(
-        'inline-flex items-center gap-1 whitespace-nowrap text-[11.5px] tabular-nums',
+        'inline-flex items-center gap-1 whitespace-nowrap text-[0.71875rem] tabular-nums',
         overdue ? 'font-medium text-p-high' : today ? 'text-seal' : 'text-ink-3',
         className,
       )}
@@ -79,15 +80,15 @@ export function TaskMeta({ task }: { task: Task }) {
         </span>
       ) : null}
       {task.dueDate ? <DuePill task={task} /> : null}
-      {task.endTime ? <span className="text-[11.5px] text-ink-3 tabular-nums">→ {task.endTime}</span> : null}
+      {task.endTime ? <span className="text-[0.71875rem] text-ink-3 tabular-nums">→ {task.endTime}</span> : null}
       {task.repeatRule ? (
-        <span title={repeatLabel} className="inline-flex items-center gap-1 text-[11.5px] text-ink-3">
+        <span title={repeatLabel} className="inline-flex items-center gap-1 text-[0.71875rem] text-ink-3">
           <IconRepeat size={11.5} />
           <span className="hidden sm:inline">{repeatLabel}</span>
         </span>
       ) : null}
       {task.reminders.length > 0 && task.dueDate ? (
-        <span title="已设提醒" className="inline-flex items-center gap-1 text-[11.5px] text-ink-3">
+        <span title="已设提醒" className="inline-flex items-center gap-1 text-[0.71875rem] text-ink-3">
           <IconBell size={11.5} />
           {task.reminders.some((r) => r > 0) ? task.reminders.filter((r) => r > 0).map((r) => (r >= 60 ? `${r / 60}时` : `${r}分`)).join('/') : '准点'}
         </span>
@@ -96,7 +97,7 @@ export function TaskMeta({ task }: { task: Task }) {
         <span
           title="子任务进度"
           className={cx(
-            'inline-flex items-center gap-1 text-[11.5px] tabular-nums',
+            'inline-flex items-center gap-1 text-[0.71875rem] tabular-nums',
             task.subtaskOpen === 0 ? 'text-jade' : 'text-ink-3',
           )}
         >
@@ -105,7 +106,7 @@ export function TaskMeta({ task }: { task: Task }) {
         </span>
       ) : null}
       {task.tags.map((t) => (
-        <span key={t.id} className="inline-flex items-center gap-1 text-[11.5px]" style={{ color: t.color }}>
+        <span key={t.id} className="inline-flex items-center gap-1 text-[0.71875rem]" style={{ color: t.color }}>
           <IconTag size={11} />#{t.name}
         </span>
       ))}
@@ -136,6 +137,7 @@ export function TaskRow({
   onSortEnd?: () => void
 }) {
   const { toggleTask, updateTask, deleteTask, multiSelect, selectedIds, toggleSelected, selectedTaskId } = useStore()
+  const { compositionProps, isComposing } = useIMEGuard()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(task.title)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -226,18 +228,20 @@ export function TaskRow({
             {editing ? (
               <input
                 ref={inputRef}
+                {...compositionProps}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onBlur={() => void commit()}
                 onClick={(e) => e.stopPropagation()}
                 onKeyDown={(e) => {
+                  if (isComposing(e)) return
                   if (e.key === 'Enter') void commit()
                   if (e.key === 'Escape') {
                     setDraft(task.title)
                     setEditing(false)
                   }
                 }}
-                className="min-w-0 flex-1 rounded border border-seal/40 bg-surface px-1.5 py-0.5 text-[13.5px] outline-none"
+                className="min-w-0 flex-1 rounded border border-seal/40 bg-surface px-1.5 py-0.5 text-[0.84375rem] outline-none"
               />
             ) : (
               <span
@@ -246,7 +250,7 @@ export function TaskRow({
                   setEditing(true)
                 }}
                 className={cx(
-                  'min-w-0 break-words text-[13.5px] leading-6',
+                  'min-w-0 break-words text-[0.84375rem] leading-6',
                   done ? 'text-ink-3 line-through decoration-ink-3/50' : 'text-ink',
                 )}
               >
@@ -301,11 +305,11 @@ export function TaskRow({
         </div>
 
         {showList && task.listName ? (
-          <div className="mt-0.5 text-[11.5px] text-ink-3">{task.listName}</div>
+          <div className="mt-0.5 text-[0.71875rem] text-ink-3">{task.listName}</div>
         ) : null}
 
         {done ? (
-          <div className="mt-0.5 text-[11.5px] text-ink-3">完成于 {relativeTime(task.completedAt)}</div>
+          <div className="mt-0.5 text-[0.71875rem] text-ink-3">完成于 {relativeTime(task.completedAt)}</div>
         ) : (
           <TaskMeta task={task} />
         )}
@@ -330,7 +334,7 @@ function RowMenuItems({
 
   return (
     <>
-      <div className="px-2.5 py-1.5 text-[12px] text-ink-3">优先级</div>
+      <div className="px-2.5 py-1.5 text-[0.75rem] text-ink-3">优先级</div>
       <div className="flex gap-1 px-1.5 pb-1.5">
         {([0, 1, 2, 3] as Priority[]).map((p) => (
           <button
@@ -341,7 +345,7 @@ function RowMenuItems({
               onClose()
             }}
             className={cx(
-              'flex-1 rounded-md py-1 text-[12px] transition-colors',
+              'flex-1 rounded-md py-1 text-[0.75rem] transition-colors',
               task.priority === p ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:bg-surface-2',
             )}
           >
@@ -464,7 +468,7 @@ function RowAction({
         onClick()
       }}
       className={cx(
-        'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] transition-colors',
+        'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[0.78125rem] transition-colors',
         danger ? 'text-p-high hover:bg-p-high/10' : 'text-ink hover:bg-surface-2',
       )}
     >
@@ -525,6 +529,7 @@ export function bucketize(tasks: Task[]): Bucket[] {
 
 export function QuickAdd({ autoFocus, placeholder }: { autoFocus?: boolean; placeholder?: string }) {
   const { createTask, ensureTags, lists, selection } = useStore()
+  const { compositionProps, isComposing } = useIMEGuard()
   const [text, setText] = useState('')
   const [expanded, setExpanded] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -582,11 +587,14 @@ export function QuickAdd({ autoFocus, placeholder }: { autoFocus?: boolean; plac
           ref={inputRef}
           id="shenshi-quickadd"
           autoFocus={autoFocus}
+          {...compositionProps}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onFocus={() => setExpanded(true)}
           onBlur={() => window.setTimeout(() => setExpanded(false), 160)}
           onKeyDown={(e) => {
+            // 输入法组合期间（选词/取消候选），Enter 与 Esc 属于 IME，不触发提交或清空。
+            if (isComposing(e)) return
             if (e.key === 'Enter') {
               e.preventDefault()
               void submit()
@@ -597,7 +605,7 @@ export function QuickAdd({ autoFocus, placeholder }: { autoFocus?: boolean; plac
             }
           }}
           placeholder={placeholder ?? '记下一件事… 试试「明天下午3点交材料 #工作 !高」'}
-          className="min-w-0 flex-1 bg-transparent text-[13.5px] outline-none placeholder:text-ink-3"
+          className="min-w-0 flex-1 bg-transparent text-[0.84375rem] outline-none placeholder:text-ink-3"
         />
         {text ? (
           <button
@@ -609,7 +617,7 @@ export function QuickAdd({ autoFocus, placeholder }: { autoFocus?: boolean; plac
             <IconX size={14} />
           </button>
         ) : (
-          <kbd className="hidden shrink-0 rounded border border-line bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-ink-3 sm:block">
+          <kbd className="hidden shrink-0 rounded border border-line bg-surface-2 px-1.5 py-0.5 font-mono text-[0.625rem] text-ink-3 sm:block">
             Enter
           </kbd>
         )}
@@ -623,7 +631,7 @@ export function QuickAdd({ autoFocus, placeholder }: { autoFocus?: boolean; plac
             return (
               <span
                 key={`${c.kind}-${i}`}
-                className="inline-flex items-center gap-1 rounded-md border border-seal/30 bg-seal/8 px-1.5 py-0.5 text-[11.5px] text-seal"
+                className="inline-flex items-center gap-1 rounded-md border border-seal/30 bg-seal/8 px-1.5 py-0.5 text-[0.71875rem] text-seal"
               >
                 <Icon size={11} />
                 {c.label}
@@ -631,13 +639,13 @@ export function QuickAdd({ autoFocus, placeholder }: { autoFocus?: boolean; plac
             )
           })}
           {parsed.title ? (
-            <span className="text-[11.5px] text-ink-3">
+            <span className="text-[0.71875rem] text-ink-3">
               标题：{parsed.title}
             </span>
           ) : (
-            <span className="text-[11.5px] text-ink-3">还差一个标题</span>
+            <span className="text-[0.71875rem] text-ink-3">还差一个标题</span>
           )}
-          <span className="ml-auto hidden text-[11px] text-ink-3 sm:block">归入「{targetName}」</span>
+          <span className="ml-auto hidden text-[0.6875rem] text-ink-3 sm:block">归入「{targetName}」</span>
         </div>
       ) : null}
     </div>
@@ -728,15 +736,15 @@ export function TaskListView({
                 >
                   <span
                     className={cx(
-                      'text-[12px] font-semibold tracking-wide',
+                      'text-[0.75rem] font-semibold tracking-wide',
                       b.tone === 'danger' ? 'text-p-high' : b.tone === 'accent' ? 'text-seal' : 'text-ink-2',
                     )}
                   >
                     {b.label}
                   </span>
-                  <span className="text-[11px] text-ink-3 tabular-nums">{b.tasks.length}</span>
+                  <span className="text-[0.6875rem] text-ink-3 tabular-nums">{b.tasks.length}</span>
                   {b.tone === 'danger' ? (
-                    <span className="text-[11px] text-ink-3">· 慎终如始，则无败事</span>
+                    <span className="text-[0.6875rem] text-ink-3">· 慎终如始，则无败事</span>
                   ) : null}
                 </button>
                 {b.key === 'done' ? (
@@ -745,7 +753,7 @@ export function TaskListView({
                     data-purge-completed
                     onClick={() => void purgeDone()}
                     title="删除已完成任务，只留下历史记录"
-                    className="rounded-md px-1.5 py-0.5 text-[11px] text-ink-3 transition-colors hover:bg-p-high/10 hover:text-p-high"
+                    className="rounded-md px-1.5 py-0.5 text-[0.6875rem] text-ink-3 transition-colors hover:bg-p-high/10 hover:text-p-high"
                   >
                     清空
                   </button>
@@ -811,7 +819,7 @@ export function TaskListView({
       {multiSelect && selectedIds.length > 0 ? (
         <div className="pointer-events-none fixed bottom-6 left-1/2 z-30 -translate-x-1/2">
           <div className="pointer-events-auto flex items-center gap-2 rounded-2xl border border-line bg-surface/95 px-3 py-2 shadow-[var(--shadow-lg)] backdrop-blur">
-            <span className="px-1 text-[12.5px] text-ink-2">已选 {selectedIds.length} 项</span>
+            <span className="px-1 text-[0.78125rem] text-ink-2">已选 {selectedIds.length} 项</span>
             <Button variant="primary" size="sm" icon={IconCheck} onClick={() => void batch('complete')}>
               完成
             </Button>
@@ -830,7 +838,7 @@ export function TaskListView({
               移到今天
             </Button>
             <select
-              className="h-7 rounded-lg border border-line bg-surface px-1.5 text-[12px]"
+              className="h-7 rounded-lg border border-line bg-surface px-1.5 text-[0.75rem]"
               defaultValue=""
               onChange={(e) => {
                 if (!e.target.value) return
@@ -914,21 +922,24 @@ export function EmptyForView({ emptyKey }: { emptyKey: keyof typeof QUOTES | str
 
 export function SearchBar() {
   const { keyword, setKeyword, refreshTasks } = useStore()
+  const { compositionProps, isComposing } = useIMEGuard()
   return (
     <div className="relative flex h-8 items-center gap-2 rounded-lg border border-line bg-surface px-2.5 focus-within:border-seal/50">
       <IconSearch size={14} className="text-ink-3" />
       <input
         id="shenshi-search"
+        {...compositionProps}
         value={keyword}
         onChange={(e) => setKeyword(e.target.value)}
         onKeyDown={(e) => {
+          if (isComposing(e)) return
           if (e.key === 'Escape') {
             setKeyword('')
             e.currentTarget.blur()
           }
         }}
         placeholder="搜索任务与备注"
-        className="w-40 bg-transparent text-[13px] outline-none transition-all placeholder:text-ink-3 focus:w-56"
+        className="w-40 bg-transparent text-[0.8125rem] outline-none transition-all placeholder:text-ink-3 focus:w-56"
       />
       {keyword ? (
         <button

@@ -257,8 +257,8 @@ export function HabitsView() {
     <div className="flex h-full flex-col">
       {/* 工具条：标题由上层工具栏给出，这里只放区间与统计。 */}
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-2.5">
-        {loading ? <span className="text-[11.5px] text-ink-3">载入中…</span> : null}
-        <span className="text-[12px] text-ink-3">
+        {loading ? <span className="text-[0.71875rem] text-ink-3">载入中…</span> : null}
+        <span className="text-[0.75rem] text-ink-3">
           今日已打卡 <span className="tabular-nums text-ink-2">{summary.hit}</span> / {habits.length}
           {summary.due > 0 ? (
             <>
@@ -275,7 +275,7 @@ export function HabitsView() {
                 type="button"
                 onClick={() => setWeeks(r.weeks)}
                 className={cx(
-                  'rounded-md px-2.5 py-1 text-[12.5px] transition-colors',
+                  'rounded-md px-2.5 py-1 text-[0.78125rem] transition-colors',
                   weeks === r.weeks ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:text-ink',
                 )}
               >
@@ -307,9 +307,9 @@ export function HabitsView() {
             {/* 今日 */}
             <section>
               <div className="mb-2 flex items-center gap-2">
-                <span className="text-[10.5px] font-semibold tracking-[0.14em] text-ink-3">今日</span>
-                <span className="text-[11px] text-ink-3">{weekdayName(today)}</span>
-                <span className="ml-auto text-[11px] text-ink-3">右侧「+1」用于分次记录</span>
+                <span className="text-[0.65625rem] font-semibold tracking-[0.14em] text-ink-3">今日</span>
+                <span className="text-[0.6875rem] text-ink-3">{weekdayName(today)}</span>
+                <span className="ml-auto text-[0.6875rem] text-ink-3">右侧「+1」用于分次记录</span>
               </div>
               <div className="flex flex-col gap-1.5">
                 {habits.map((h) => (
@@ -336,11 +336,11 @@ export function HabitsView() {
             {/* 热力图 */}
             <section>
               <div className="mb-2 flex items-center gap-2">
-                <span className="text-[10.5px] font-semibold tracking-[0.14em] text-ink-3">坚持轨迹</span>
-                <span className="text-[11px] tabular-nums text-ink-3">
+                <span className="text-[0.65625rem] font-semibold tracking-[0.14em] text-ink-3">坚持轨迹</span>
+                <span className="text-[0.6875rem] tabular-nums text-ink-3">
                   {grid.start} 至 {grid.end}
                 </span>
-                <span className="ml-auto text-[11px] text-ink-3">点格子可补记或撤销那一天</span>
+                <span className="ml-auto text-[0.6875rem] text-ink-3">点格子可补记或撤销那一天</span>
               </div>
               <div className="overflow-x-auto pb-1">
                 <div className="inline-flex flex-col rounded-xl border border-line bg-surface p-3">
@@ -351,7 +351,7 @@ export function HabitsView() {
                       return (
                         <span
                           key={d}
-                          className="shrink-0 text-[9.5px] whitespace-nowrap text-ink-3"
+                          className="shrink-0 text-[0.59375rem] whitespace-nowrap text-ink-3"
                           style={{ width: CELL }}
                         >
                           {prev !== d.slice(0, 7) ? `${Number(d.slice(5, 7))}月` : ''}
@@ -362,7 +362,7 @@ export function HabitsView() {
                   {habits.map((h) => (
                     <div key={h.id} className="flex items-center" style={{ gap: CELL_GAP }}>
                       <span
-                        className="shrink-0 truncate pr-2 text-right text-[11.5px] text-ink-2"
+                        className="shrink-0 truncate pr-2 text-right text-[0.71875rem] text-ink-2"
                         style={{ width: NAME_COL }}
                         title={h.name}
                       >
@@ -392,7 +392,7 @@ export function HabitsView() {
                   ))}
                 </div>
               </div>
-              <div className="mt-2 flex items-center gap-3 text-[10.5px] text-ink-3">
+              <div className="mt-2 flex items-center gap-3 text-[0.65625rem] text-ink-3">
                 <span className="flex items-center gap-1">
                   <span className="h-[11px] w-[11px] rounded-[3px] bg-surface-2 ring-1 ring-line ring-inset" />
                   未达标
@@ -421,7 +421,6 @@ export function HabitsView() {
         onClose={() => setDraft(null)}
         title={draft?.id ? '编辑习惯' : '立一个习惯'}
         subtitle="慎始而敬终：先定下节奏与目标，再谈坚持。"
-        size="lg"
         footer={
           <>
             <Button onClick={() => setDraft(null)}>取消</Button>
@@ -487,19 +486,19 @@ function HabitRow({
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className={cx('truncate text-[13.5px] font-medium', done ? 'text-ink-2' : 'text-ink')}>
+          <span className={cx('truncate text-[0.84375rem] font-medium', done ? 'text-ink-2' : 'text-ink')}>
             {habit.name}
           </span>
           {habit.target > 1 ? (
             <span
               data-habit-progress={habit.id}
-              className="shrink-0 rounded border border-line px-1 text-[10.5px] tabular-nums text-ink-3"
+              className="shrink-0 rounded border border-line px-1 text-[0.65625rem] tabular-nums text-ink-3"
             >
               {at}/{habit.target}
             </span>
           ) : null}
         </div>
-        <div className="mt-0.5 flex items-center gap-2 text-[11px] text-ink-3">
+        <div className="mt-0.5 flex items-center gap-2 text-[0.6875rem] text-ink-3">
           <span>{cadence}</span>
           {habit.note ? <span className="truncate">· {habit.note}</span> : null}
         </div>
@@ -511,7 +510,7 @@ function HabitRow({
           onClick={onBump}
           disabled={busy}
           title="再记一次"
-          className="shrink-0 rounded-md border border-line px-1.5 py-0.5 text-[11px] text-ink-2 transition-colors hover:border-seal/40 hover:text-seal disabled:opacity-50"
+          className="shrink-0 rounded-md border border-line px-1.5 py-0.5 text-[0.6875rem] text-ink-2 transition-colors hover:border-seal/40 hover:text-seal disabled:opacity-50"
         >
           +1
         </button>
@@ -519,14 +518,14 @@ function HabitRow({
 
       {stat && stat.streak > 0 ? (
         <span
-          className="flex shrink-0 items-center gap-1 rounded-md border border-p-high/25 bg-p-high/8 px-1.5 py-0.5 text-[11px] tabular-nums text-p-high"
+          className="flex shrink-0 items-center gap-1 rounded-md border border-p-high/25 bg-p-high/8 px-1.5 py-0.5 text-[0.6875rem] tabular-nums text-p-high"
           title={`当前连续 ${stat.streak} · 历史最长 ${stat.best}`}
         >
           <IconFlame size={12} />
           {stat.streak} 天
         </span>
       ) : (
-        <span className="shrink-0 text-[11px] text-ink-3" title={stat ? `历史最长 ${stat.best}` : ''}>
+        <span className="shrink-0 text-[0.6875rem] text-ink-3" title={stat ? `历史最长 ${stat.best}` : ''}>
           尚未连成
         </span>
       )}
@@ -626,7 +625,7 @@ function HabitForm({ draft, onChange }: { draft: HabitDraft; onChange: (d: Habit
                 type="button"
                 onClick={() => set('cadence', c)}
                 className={cx(
-                  'rounded-md px-2.5 py-1 text-[12.5px] transition-colors',
+                  'rounded-md px-2.5 py-1 text-[0.78125rem] transition-colors',
                   draft.cadence === c ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:text-ink',
                 )}
               >
@@ -640,7 +639,7 @@ function HabitForm({ draft, onChange }: { draft: HabitDraft; onChange: (d: Habit
                   key={p.label}
                   type="button"
                   onClick={() => set('weekdays', p.days)}
-                  className="rounded-md border border-line px-2 py-0.5 text-[11.5px] text-ink-2 transition-colors hover:border-seal/40 hover:text-seal"
+                  className="rounded-md border border-line px-2 py-0.5 text-[0.71875rem] text-ink-2 transition-colors hover:border-seal/40 hover:text-seal"
                 >
                   {p.label}
                 </button>
@@ -657,7 +656,7 @@ function HabitForm({ draft, onChange }: { draft: HabitDraft; onChange: (d: Habit
                   type="button"
                   onClick={() => toggleDay(wd)}
                   className={cx(
-                    'grid h-8 w-8 place-items-center rounded-lg border text-[12px] transition-colors',
+                    'grid h-8 w-8 place-items-center rounded-lg border text-[0.75rem] transition-colors',
                     on ? 'border-seal/45 bg-seal/12 font-medium text-seal' : 'border-line text-ink-2 hover:text-ink',
                   )}
                 >
@@ -718,7 +717,7 @@ function HabitForm({ draft, onChange }: { draft: HabitDraft; onChange: (d: Habit
         </div>
       </Field>
 
-      <p className="flex items-center gap-1.5 rounded-lg border border-line bg-surface-2/60 px-3 py-2 text-[11.5px] text-ink-3">
+      <p className="flex items-center gap-1.5 rounded-lg border border-line bg-surface-2/60 px-3 py-2 text-[0.71875rem] text-ink-3">
         <IconSeedling size={13} className="shrink-0" />
         习惯与任务分开记：任务做完就结束，习惯只在时间里长出来。
       </p>

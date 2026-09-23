@@ -16,6 +16,7 @@ import {
   weekdayHeaders,
 } from '../lib/date'
 import { applyFilter, type TaskFilter } from '../lib/filter'
+import { useIMEGuard } from '../lib/ime'
 import { useStore } from '../store/AppStore'
 import type { Task } from '../types'
 import { IconChevronLeft, IconChevronRight, IconClock, IconPlus, IconRepeat, IconX } from './icons'
@@ -185,16 +186,16 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
           <button
             type="button"
             onClick={() => setAnchor(todayStr())}
-            className="rounded-lg border border-line px-2.5 py-1 text-[12.5px] text-ink-2 transition-colors hover:bg-surface-2"
+            className="rounded-lg border border-line px-2.5 py-1 text-[0.78125rem] text-ink-2 transition-colors hover:bg-surface-2"
           >
             回到今天
           </button>
           <IconButton icon={IconChevronRight} label="下一段" onClick={() => shift(1)} />
         </div>
-        <h2 className="brand-serif ml-1 text-[15px] font-semibold text-ink">{label}</h2>
-        {loading ? <span className="text-[11.5px] text-ink-3">载入中…</span> : null}
+        <h2 className="brand-serif ml-1 text-[0.9375rem] font-semibold text-ink">{label}</h2>
+        {loading ? <span className="text-[0.71875rem] text-ink-3">载入中…</span> : null}
         <div className="ml-auto flex items-center gap-2">
-          <span className="hidden text-[11.5px] text-ink-3 lg:block">
+          <span className="hidden text-[0.71875rem] text-ink-3 lg:block">
             {mode === 'day' ? '拖动任务到时间轴即可改时间，点空白处新建' : '拖动任务卡片可直接改期'}
           </span>
           <div className="flex rounded-lg border border-line p-0.5">
@@ -210,7 +211,7 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
                   setDraft('')
                 }}
                 className={cx(
-                  'rounded-md px-2.5 py-1 text-[12.5px] transition-colors',
+                  'rounded-md px-2.5 py-1 text-[0.78125rem] transition-colors',
                   mode === m ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:text-ink',
                 )}
               >
@@ -222,7 +223,7 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
             <button
               type="button"
               onClick={() => setWeekStart(weekStart === 1 ? 0 : 1)}
-              className="rounded-lg border border-line px-2.5 py-1 text-[12px] text-ink-2 transition-colors hover:bg-surface-2"
+              className="rounded-lg border border-line px-2.5 py-1 text-[0.75rem] text-ink-2 transition-colors hover:bg-surface-2"
               title="切换每周起始日"
             >
               周始：{weekStart === 1 ? '周一' : '周日'}
@@ -234,7 +235,7 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
       {/* 无日期抽屉 */}
       {noDate.length > 0 ? (
         <div className="flex items-center gap-2 overflow-x-auto border-b border-line bg-surface-2/50 px-5 py-2">
-          <span className="shrink-0 text-[11.5px] text-ink-3">未排期 {noDate.length} 项，可直接拖到日历上：</span>
+          <span className="shrink-0 text-[0.71875rem] text-ink-3">未排期 {noDate.length} 项，可直接拖到日历上：</span>
           {noDate.slice(0, 12).map((t) => (
             <span
               key={t.id}
@@ -244,7 +245,7 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
                 e.dataTransfer.effectAllowed = 'move'
               }}
               onClick={() => onOpen(t)}
-              className="shrink-0 cursor-grab rounded-lg border border-line bg-surface px-2 py-0.5 text-[12px] text-ink-2 transition-colors hover:border-seal/40 hover:text-seal"
+              className="shrink-0 cursor-grab rounded-lg border border-line bg-surface px-2 py-0.5 text-[0.75rem] text-ink-2 transition-colors hover:border-seal/40 hover:text-seal"
             >
               {t.title}
             </span>
@@ -375,7 +376,7 @@ function DayCell({
       <div className="flex items-center gap-1">
         <span
           className={cx(
-            'grid h-5 min-w-5 place-items-center rounded-full px-1 text-[11.5px] tabular-nums',
+            'grid h-5 min-w-5 place-items-center rounded-full px-1 text-[0.71875rem] tabular-nums',
             isToday ? 'bg-seal font-semibold text-seal-contrast' : isCurrentMonth ? 'text-ink-2' : 'text-ink-3',
             overdue && !isToday && 'text-p-high',
           )}
@@ -383,7 +384,7 @@ function DayCell({
           {Number(day.slice(8, 10))}
         </span>
         {overdue && tasks.some((t) => t.status === 'todo') ? (
-          <span className="text-[9.5px] text-p-high">逾期</span>
+          <span className="text-[0.59375rem] text-p-high">逾期</span>
         ) : null}
         <span
           role="button"
@@ -407,7 +408,7 @@ function DayCell({
           }}
           onClick={() => onOpen(t)}
           className={cx(
-            'flex w-full cursor-grab items-center gap-1 truncate rounded-md border px-1.5 py-0.5 text-left text-[11.5px] transition-colors',
+            'flex w-full cursor-grab items-center gap-1 truncate rounded-md border px-1.5 py-0.5 text-left text-[0.71875rem] transition-colors',
             t.status === 'done'
               ? 'border-line bg-surface-2/60 text-ink-3 line-through'
               : t.priority === 3
@@ -429,7 +430,7 @@ function DayCell({
         <button
           type="button"
           onClick={() => onOpen(tasks[visible.length])}
-          className="px-1 text-left text-[10.5px] text-ink-3 hover:text-seal"
+          className="px-1 text-left text-[0.65625rem] text-ink-3 hover:text-seal"
         >
           还有 {rest} 项
         </button>
@@ -449,7 +450,7 @@ function DayCell({
             onChange={(e) => setDraft(e.target.value)}
             onBlur={() => !draft.trim() && setAdding(null)}
             placeholder="标题，回车即存"
-            className="min-w-0 flex-1 bg-transparent text-[11.5px] outline-none placeholder:text-ink-3"
+            className="min-w-0 flex-1 bg-transparent text-[0.71875rem] outline-none placeholder:text-ink-3"
           />
           <IconX size={11} className="shrink-0 cursor-pointer text-ink-3" onClick={() => setAdding(null)} />
         </form>
@@ -465,7 +466,7 @@ function MonthGrid(props: GridProps) {
     <div className="overflow-hidden rounded-xl border-l border-t border-line">
       <div className="grid grid-cols-7">
         {weekdayHeaders(props.weekStart).map((w) => (
-          <div key={w} className="border-b border-r border-line bg-surface-2 px-2 py-1.5 text-[11.5px] text-ink-3">
+          <div key={w} className="border-b border-r border-line bg-surface-2 px-2 py-1.5 text-[0.71875rem] text-ink-3">
             {w}
           </div>
         ))}
@@ -501,7 +502,7 @@ function WeekGrid(props: GridProps) {
           <div
             key={day}
             className={cx(
-              'flex items-center justify-center gap-1.5 border-b border-r border-line bg-surface-2 px-2 py-1.5 text-[11.5px]',
+              'flex items-center justify-center gap-1.5 border-b border-r border-line bg-surface-2 px-2 py-1.5 text-[0.71875rem]',
               day === props.today ? 'text-seal' : 'text-ink-3',
             )}
           >
@@ -529,7 +530,7 @@ function WeekGrid(props: GridProps) {
           />
         ))}
       </div>
-      <div className="flex items-center gap-2 border-r border-b border-line bg-surface-2/40 px-3 py-2 text-[11.5px] text-ink-3">
+      <div className="flex items-center gap-2 border-r border-b border-line bg-surface-2/40 px-3 py-2 text-[0.71875rem] text-ink-3">
         <IconClock size={12} />
         周视图按时间顺序列出当天事项；点击日期右上角的 + 可快速添加。
       </div>
@@ -554,6 +555,7 @@ interface DayProps {
 /** 日视图：24 小时时间轴，任务按时段成块排布，可拖动改时间、点空白处新建。 */
 function DayView(props: DayProps) {
   const { day, today, tasks, onOpen, onMoveToTime, onCreateAt, adding, setAdding, draft, setDraft, onDropDay } = props
+  const { compositionProps, isComposing } = useIMEGuard()
   const scroller = useRef<HTMLDivElement>(null)
   const [dragTime, setDragTime] = useState<string | null>(null)
   const [nowMin, setNowMin] = useState(() => toMinutes(nowHM()))
@@ -638,10 +640,10 @@ function DayView(props: DayProps) {
         className="flex items-start gap-2 border-b border-line bg-surface-2/60 px-3 py-1.5"
         data-day-allday
       >
-        <span className="mt-0.5 shrink-0 text-[11px] text-ink-3">全天</span>
+        <span className="mt-0.5 shrink-0 text-[0.6875rem] text-ink-3">全天</span>
         <div className="flex flex-1 flex-wrap items-center gap-1.5">
           {allDay.length === 0 ? (
-            <span className="text-[11.5px] text-ink-3">无排定时刻的事项，拖到下方时间轴即可定下时刻</span>
+            <span className="text-[0.71875rem] text-ink-3">无排定时刻的事项，拖到下方时间轴即可定下时刻</span>
           ) : (
             allDay.map((t) => (
               <button
@@ -654,7 +656,7 @@ function DayView(props: DayProps) {
                 }}
                 onClick={() => onOpen(t)}
                 className={cx(
-                  'max-w-[220px] cursor-grab truncate rounded-md border px-2 py-0.5 text-[11.5px] transition-colors',
+                  'max-w-[220px] cursor-grab truncate rounded-md border px-2 py-0.5 text-[0.71875rem] transition-colors',
                   t.status === 'done'
                     ? 'border-line bg-surface text-ink-3 line-through'
                     : 'border-line bg-surface text-ink hover:border-seal/35 hover:text-seal',
@@ -671,7 +673,7 @@ function DayView(props: DayProps) {
       {/* 时间轴 */}
       <div ref={scroller} className="relative flex-1 overflow-y-auto">
         {empty ? (
-          <div className="pointer-events-none absolute inset-x-0 top-24 z-10 text-center text-[12px] text-ink-3">
+          <div className="pointer-events-none absolute inset-x-0 top-24 z-10 text-center text-[0.75rem] text-ink-3">
             这一天还是空白 —— 点时间轴的任意位置即可落下一件事
           </div>
         ) : null}
@@ -681,7 +683,7 @@ function DayView(props: DayProps) {
           {HOURS.map((h) => (
             <span
               key={h}
-              className="-mt-1.5 absolute w-[52px] pr-2.5 text-right text-[11px] tabular-nums text-ink-3"
+              className="-mt-1.5 absolute w-[52px] pr-2.5 text-right text-[0.6875rem] tabular-nums text-ink-3"
               style={{ top: yOf(h * 60), left: 0 }}
             >
               {pad2(h)}:00
@@ -712,7 +714,7 @@ function DayView(props: DayProps) {
               <div className="absolute right-0 left-0 z-20 flex items-center" style={{ top: yOf(nowMin) }}>
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-seal" />
                 <div className="h-px flex-1 bg-seal/70" />
-                <span className="shrink-0 px-1 text-[10px] tabular-nums text-seal">{minutesToHM(nowMin)}</span>
+                <span className="shrink-0 px-1 text-[0.625rem] tabular-nums text-seal">{minutesToHM(nowMin)}</span>
               </div>
             ) : null}
 
@@ -720,7 +722,7 @@ function DayView(props: DayProps) {
             {dragTime ? (
               <div className="absolute right-0 left-0 z-30" style={{ top: yOf(toMinutes(dragTime)) }}>
                 <div className="flex items-center gap-1">
-                  <span className="rounded-sm bg-seal px-1 text-[10px] tabular-nums text-seal-contrast">{dragTime}</span>
+                  <span className="rounded-sm bg-seal px-1 text-[0.625rem] tabular-nums text-seal-contrast">{dragTime}</span>
                   <div className="h-px flex-1 bg-seal" />
                 </div>
               </div>
@@ -762,10 +764,10 @@ function DayView(props: DayProps) {
               >
                 <span className="flex items-center gap-1">
                   <PriorityFlag priority={p.task.priority} size={10} />
-                  <span className="truncate text-[12px] font-medium">{p.task.title}</span>
+                  <span className="truncate text-[0.75rem] font-medium">{p.task.title}</span>
                   {p.task.repeatRule ? <IconRepeat size={10} className="ml-auto shrink-0 text-ink-3" /> : null}
                 </span>
-                <span className="block truncate text-[10.5px] tabular-nums text-ink-3">
+                <span className="block truncate text-[0.65625rem] tabular-nums text-ink-3">
                   {minutesToHM(p.start)} – {minutesToHM(p.end)}
                   {p.task.endTime ? '' : '（默认 45 分）'}
                 </span>
@@ -784,15 +786,16 @@ function DayView(props: DayProps) {
                 data-day-add={adding}
                 className="absolute right-2 left-1 z-40 flex items-center gap-1 rounded-lg border border-seal/50 bg-surface px-2 py-1 shadow-sm"
               >
-                <span className="shrink-0 text-[11px] tabular-nums text-seal">{adding}</span>
+                <span className="shrink-0 text-[0.6875rem] tabular-nums text-seal">{adding}</span>
                 <input
                   autoFocus
+                  {...compositionProps}
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Escape' && setAdding(null)}
+                  onKeyDown={(e) => !isComposing(e) && e.key === 'Escape' && setAdding(null)}
                   onBlur={() => !draft.trim() && setAdding(null)}
                   placeholder="标题，回车即存"
-                  className="min-w-0 flex-1 bg-transparent text-[12px] outline-none placeholder:text-ink-3"
+                  className="min-w-0 flex-1 bg-transparent text-[0.75rem] outline-none placeholder:text-ink-3"
                 />
                 <IconX size={12} className="shrink-0 cursor-pointer text-ink-3" onClick={() => setAdding(null)} />
               </form>
@@ -802,7 +805,7 @@ function DayView(props: DayProps) {
       </div>
 
       {/* 底部提示：拖回全天区可撤销时刻 */}
-      <div className="flex items-center gap-2 border-t border-line bg-surface-2/40 px-3 py-1.5 text-[11.5px] text-ink-3">
+      <div className="flex items-center gap-2 border-t border-line bg-surface-2/40 px-3 py-1.5 text-[0.71875rem] text-ink-3">
         <IconClock size={12} />
         共 {placed.length} 项排定时刻、{allDay.length} 项全天；把块拖到顶部「全天」区可去掉时刻。
       </div>

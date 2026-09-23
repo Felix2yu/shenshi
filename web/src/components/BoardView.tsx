@@ -126,8 +126,8 @@ export function BoardView({ onOpen, filter }: { onOpen: (t: Task) => void; filte
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b border-line px-5 py-2.5">
         <IconColumns size={15} className="text-seal" />
-        <h2 className="brand-serif text-[15px] font-semibold text-ink">看板</h2>
-        <span className="hidden text-[11.5px] text-ink-3 sm:block">拖动卡片可跨列调整</span>
+        <h2 className="brand-serif text-[0.9375rem] font-semibold text-ink">看板</h2>
+        <span className="hidden text-[0.71875rem] text-ink-3 sm:block">拖动卡片可跨列调整</span>
         <div className="ml-auto flex rounded-lg border border-line p-0.5">
           {GROUPS.map((g) => (
             <button
@@ -135,7 +135,7 @@ export function BoardView({ onOpen, filter }: { onOpen: (t: Task) => void; filte
               type="button"
               onClick={() => setGroupBy(g.key)}
               className={cx(
-                'rounded-md px-2.5 py-1 text-[12.5px] transition-colors',
+                'rounded-md px-2.5 py-1 text-[0.78125rem] transition-colors',
                 groupBy === g.key ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:text-ink',
               )}
             >
@@ -166,15 +166,15 @@ export function BoardView({ onOpen, filter }: { onOpen: (t: Task) => void; filte
                   className="h-2 w-2 rounded-full"
                   style={{ background: col.color ?? 'var(--ink-3)' }}
                 />
-                <span className="text-[13px] font-medium text-ink">{col.label}</span>
-                <span className="rounded-full bg-surface-2 px-1.5 text-[11px] text-ink-3 tabular-nums">
+                <span className="text-[0.8125rem] font-medium text-ink">{col.label}</span>
+                <span className="rounded-full bg-surface-2 px-1.5 text-[0.6875rem] text-ink-3 tabular-nums">
                   {col.tasks.length}
                 </span>
               </div>
               <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
                 {col.tasks.length === 0 ? (
                   <div className="grid h-24 place-items-center rounded-xl border border-dashed border-line">
-                    <span className="text-[11.5px] text-ink-3">拖到此处</span>
+                    <span className="text-[0.71875rem] text-ink-3">拖到此处</span>
                   </div>
                 ) : (
                   col.tasks.map((t) => <TaskRow key={t.id} task={t} onOpen={onOpen} dense showList />)
@@ -188,9 +188,9 @@ export function BoardView({ onOpen, filter }: { onOpen: (t: Task) => void; filte
       {tasks.filter((t) => t.status === 'todo').length === 0 ? (
         <div className="pb-12">
           <div className="text-center">
-            <p className="brand-serif text-[14px] text-ink-2">{QUOTES.board.text}</p>
-            <p className="mt-1 text-[11.5px] text-ink-3">{QUOTES.board.source}</p>
-            <p className="mt-3 text-[12.5px] text-ink-3">当前范围内没有未完成的任务。</p>
+            <p className="brand-serif text-[0.875rem] text-ink-2">{QUOTES.board.text}</p>
+            <p className="mt-1 text-[0.71875rem] text-ink-3">{QUOTES.board.source}</p>
+            <p className="mt-3 text-[0.78125rem] text-ink-3">当前范围内没有未完成的任务。</p>
           </div>
         </div>
       ) : null}

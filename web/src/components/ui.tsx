@@ -49,7 +49,7 @@ export function Button({
       className={cx(
         'inline-flex items-center justify-center gap-1.5 rounded-lg font-medium transition-all duration-150',
         'disabled:cursor-not-allowed disabled:opacity-45',
-        size === 'sm' ? 'h-7 px-2.5 text-[12.5px]' : 'h-8.5 px-3 text-[13px]',
+        size === 'sm' ? 'h-7 px-2.5 text-[0.78125rem]' : 'h-8.5 px-3 text-[0.8125rem]',
         VARIANTS[variant],
         className,
       )}
@@ -152,7 +152,7 @@ export function Checkbox({
         e.stopPropagation()
         onChange(!checked)
       }}
-      className="inline-flex items-center gap-2 text-[13px] text-ink-2"
+      className="inline-flex items-center gap-2 text-[0.8125rem] text-ink-2"
     >
       <span
         className={cx(
@@ -177,7 +177,6 @@ export function Modal({
   children,
   footer,
   width = 520,
-  size = 'md',
 }: {
   open: boolean
   onClose: () => void
@@ -186,7 +185,6 @@ export function Modal({
   children: ReactNode
   footer?: ReactNode
   width?: number
-  size?: 'md' | 'lg'
 }) {
   useEffect(() => {
     if (!open) return
@@ -202,7 +200,7 @@ export function Modal({
 
   if (!open) return null
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 py-[8vh]">
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 py-[5vh]">
       <div
         className="fixed inset-0 bg-black/28 backdrop-blur-[2px] animate-fade-in"
         onClick={onClose}
@@ -211,18 +209,24 @@ export function Modal({
       <div
         role="dialog"
         aria-modal="true"
-        className="relative w-full animate-pop overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-lg)]"
-        style={{ maxWidth: width }}
+        className="relative flex max-h-full w-full animate-pop flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-lg)]"
+        style={{ maxWidth: `min(${width}px, calc(100vw - 2rem))` }}
       >
-        <header className="flex items-start justify-between gap-4 border-b border-line px-5 py-4">
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-line px-5 py-4">
           <div>
-            <h2 className="brand-serif text-[17px] font-semibold tracking-wide text-ink">{title}</h2>
-            {subtitle ? <p className="mt-0.5 text-[12.5px] text-ink-3">{subtitle}</p> : null}
+            <h2 className="brand-serif text-[1.0625rem] font-semibold tracking-wide text-ink">{title}</h2>
+            {subtitle ? <p className="mt-0.5 text-[0.78125rem] text-ink-3">{subtitle}</p> : null}
           </div>
           <IconButton icon={IconX} label="关闭" onClick={onClose} />
         </header>
-        <div className={cx('px-5 py-4', size === 'lg' && 'max-h-[62vh] overflow-y-auto')}>{children}</div>
-        {footer ? <footer className="flex items-center justify-end gap-2 border-t border-line bg-surface-2/60 px-5 py-3">{footer}</footer> : null}
+        {/* 正文区随内容自适应：内容少时保持紧凑，内容多时撑满可用高度再滚动。
+            整个弹窗最高占满视口（减去上下留白），不再用固定 vh 卡死内容。 */}
+        <div className="min-h-0 flex-auto overflow-y-auto px-5 py-4">{children}</div>
+        {footer ? (
+          <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-line bg-surface-2/60 px-5 py-3">
+            {footer}
+          </footer>
+        ) : null}
       </div>
     </div>
   )
@@ -309,7 +313,7 @@ export function MenuItem({
       disabled={disabled}
       onClick={onClick}
       className={cx(
-        'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors',
+        'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[0.8125rem] transition-colors',
         disabled && 'cursor-not-allowed opacity-45',
         danger ? 'text-p-high hover:bg-p-high/10' : 'text-ink hover:bg-surface-2',
       )}
@@ -323,7 +327,7 @@ export function MenuItem({
 
 export function Kbd({ children }: { children: ReactNode }) {
   return (
-    <kbd className="rounded border border-line bg-surface-2 px-1.5 py-0.5 font-mono text-[10.5px] leading-4 text-ink-3">
+    <kbd className="rounded border border-line bg-surface-2 px-1.5 py-0.5 font-mono text-[0.65625rem] leading-4 text-ink-3">
       {children}
     </kbd>
   )
@@ -347,11 +351,11 @@ export function EmptyState({
   return (
     <div className={cx('flex flex-col items-center justify-center text-center', compact ? 'py-10' : 'py-20')}>
       <div className="mb-3 grid h-11 w-11 place-items-center rounded-full border border-line bg-surface-2">
-        <span className="brand-serif text-[15px] text-ink-3">慎</span>
+        <span className="brand-serif text-[0.9375rem] text-ink-3">慎</span>
       </div>
-      <p className="brand-serif max-w-[19rem] text-[14px] leading-relaxed text-ink-2">{text}</p>
-      {source ? <p className="mt-1 text-[11.5px] tracking-wide text-ink-3">{source}</p> : null}
-      {hint ? <p className="mt-3 text-[12.5px] text-ink-3">{hint}</p> : null}
+      <p className="brand-serif max-w-[19rem] text-[0.875rem] leading-relaxed text-ink-2">{text}</p>
+      {source ? <p className="mt-1 text-[0.71875rem] tracking-wide text-ink-3">{source}</p> : null}
+      {hint ? <p className="mt-3 text-[0.78125rem] text-ink-3">{hint}</p> : null}
       {action ? <div className="mt-4">{action}</div> : null}
     </div>
   )
@@ -370,15 +374,15 @@ export function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-[11.5px] font-medium tracking-wide text-ink-3">{label}</span>
+      <span className="mb-1.5 block text-[0.71875rem] font-medium tracking-wide text-ink-3">{label}</span>
       {children}
-      {hint ? <span className="mt-1 block text-[11.5px] text-ink-3">{hint}</span> : null}
+      {hint ? <span className="mt-1 block text-[0.71875rem] text-ink-3">{hint}</span> : null}
     </label>
   )
 }
 
 export const inputClass =
-  'w-full rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-3 focus:border-seal/60'
+  'w-full rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[0.8125rem] text-ink outline-none transition-colors placeholder:text-ink-3 focus:border-seal/60'
 
 export function ColorDot({ color, size = 8 }: { color?: string; size?: number }) {
   return (
@@ -408,7 +412,7 @@ export function Chip({
       title={title}
       onClick={onClick}
       className={cx(
-        'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11.5px] transition-colors',
+        'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[0.71875rem] transition-colors',
         active ? 'border-seal/45 bg-seal/10 text-seal' : 'border-line text-ink-2 hover:border-line-strong',
         !onClick && 'cursor-default',
       )}
@@ -422,7 +426,7 @@ export function Chip({
 export function SectionLabel({ children, right }: { children: ReactNode; right?: ReactNode }) {
   return (
     <div className="group/label flex items-center justify-between px-2 pb-1 pt-4">
-      <span className="text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink-3">{children}</span>
+      <span className="text-[0.65625rem] font-semibold uppercase tracking-[0.14em] text-ink-3">{children}</span>
       {right}
     </div>
   )

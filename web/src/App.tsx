@@ -115,8 +115,8 @@ export default function App() {
     return (
       <div className="flex h-dvh w-full flex-col items-center justify-center gap-4 bg-paper text-ink">
         <SealLogo size={52} />
-        <p className="brand-serif text-[15px] tracking-[0.14em] text-ink-2">慎始而敬终</p>
-        <p className="text-[12px] text-ink-3">正在整理今日的案头…</p>
+        <p className="brand-serif text-[0.9375rem] tracking-[0.14em] text-ink-2">慎始而敬终</p>
+        <p className="text-[0.75rem] text-ink-3">正在整理今日的案头…</p>
       </div>
     )
   }
@@ -143,7 +143,7 @@ export default function App() {
         <div className="flex items-center gap-2 border-b border-line bg-paper/90 px-3 py-2 md:hidden">
           <IconButton icon={IconList} label="清单" onClick={() => setNavOpen(true)} />
           <SealLogo size={22} />
-          <span className="brand-serif text-[14.5px] font-medium">慎始</span>
+          <span className="brand-serif text-[0.90625rem] font-medium">慎始</span>
           {selectedTaskId !== null ? (
             <IconButton icon={IconX} label="关闭详情" onClick={closeTask} className="ml-auto" />
           ) : null}
@@ -173,7 +173,7 @@ export default function App() {
           )}
         </div>
 
-        <footer className="hidden shrink-0 items-center gap-3 border-t border-line px-5 py-1.5 text-[10.5px] text-ink-3 md:flex">
+        <footer className="hidden shrink-0 items-center gap-3 border-t border-line px-5 py-1.5 text-[0.65625rem] text-ink-3 md:flex">
           <span>{boot?.app ?? '慎始'} · {boot?.motto ?? '慎始而敬终，行稳致远'}</span>
           <span className="ml-auto tabular-nums">
             {visible.filter((t) => t.status === 'todo').length} 待办 / 共 {visible.length} 项
@@ -230,10 +230,10 @@ function LockScreen() {
         <div className="mb-4 flex justify-center">
           <SealLogo size={44} />
         </div>
-        <h1 className="brand-serif text-center text-[17px] font-semibold tracking-[0.14em]">慎始而敬终</h1>
-        <p className="mt-1.5 mb-5 text-center text-[12.5px] text-ink-3">访问口令已失效，请重新输入</p>
+        <h1 className="brand-serif text-center text-[1.0625rem] font-semibold tracking-[0.14em]">慎始而敬终</h1>
+        <p className="mt-1.5 mb-5 text-center text-[0.78125rem] text-ink-3">访问口令已失效，请重新输入</p>
 
-        <label className="mb-1.5 block text-[11.5px] font-medium tracking-wide text-ink-3" htmlFor="shenshi-token">
+        <label className="mb-1.5 block text-[0.71875rem] font-medium tracking-wide text-ink-3" htmlFor="shenshi-token">
           访问口令
         </label>
         <input
@@ -243,14 +243,14 @@ function LockScreen() {
           autoComplete="current-password"
           value={token}
           onChange={(e) => setToken(e.target.value)}
-          className="w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-[14px] text-ink outline-none transition-colors focus:border-seal/60"
+          className="w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-[0.875rem] text-ink outline-none transition-colors focus:border-seal/60"
         />
 
         <Button type="submit" variant="primary" disabled={busy || !token.trim()} className="mt-3 w-full">
           {busy ? '正在验证…' : '进入'}
         </Button>
-        <p className="mt-2 min-h-[1.2rem] text-center text-[12px] text-p-high">{error}</p>
-        <p className="mt-4 text-center text-[11px] text-ink-3">口令由服务端环境变量 SHENSHI_TOKEN 设定</p>
+        <p className="mt-2 min-h-[1.2rem] text-center text-[0.75rem] text-p-high">{error}</p>
+        <p className="mt-4 text-center text-[0.6875rem] text-ink-3">口令由服务端环境变量 SHENSHI_TOKEN 设定</p>
       </form>
     </div>
   )

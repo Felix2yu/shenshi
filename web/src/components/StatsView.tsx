@@ -44,7 +44,7 @@ export function StatsView() {
 
   if (!stats) {
     return (
-      <div className="grid h-full place-items-center text-[13px] text-ink-3">
+      <div className="grid h-full place-items-center text-[0.8125rem] text-ink-3">
         <span>正在统计…</span>
       </div>
     )
@@ -79,17 +79,17 @@ export function StatsView() {
       {/* 完成率与结语 */}
       <div className="mt-3 flex flex-col gap-3 rounded-2xl border border-line bg-surface/60 p-4 sm:flex-row sm:items-center">
         <ProgressRing value={stats.completion / 100} size={72} stroke={5}>
-          <span className="text-[13px] font-medium tabular-nums text-ink">{stats.completion.toFixed(0)}%</span>
+          <span className="text-[0.8125rem] font-medium tabular-nums text-ink">{stats.completion.toFixed(0)}%</span>
         </ProgressRing>
         <div className="min-w-0 flex-1">
-          <div className="brand-serif text-[14px] text-ink">全部完成率</div>
-          <p className="mt-1 text-[12.5px] leading-relaxed text-ink-2">{reviewLine(todayDone, Math.max(0, openToday))}</p>
-          <p className="mt-1 text-[11.5px] text-ink-3">
+          <div className="brand-serif text-[0.875rem] text-ink">全部完成率</div>
+          <p className="mt-1 text-[0.78125rem] leading-relaxed text-ink-2">{reviewLine(todayDone, Math.max(0, openToday))}</p>
+          <p className="mt-1 text-[0.71875rem] text-ink-3">
             累计 {stats.totalAll} 件 · 已完成 {stats.totalDone} 件 · 逾期 {stats.overdue} 件
           </p>
         </div>
         {stats.overdue > 0 ? (
-          <div className="rounded-xl border border-p-high/25 bg-p-high/8 px-3 py-2 text-[12px] text-ink-2 sm:max-w-[220px]">
+          <div className="rounded-xl border border-p-high/25 bg-p-high/8 px-3 py-2 text-[0.75rem] text-ink-2 sm:max-w-[220px]">
             <span className="font-medium text-p-high">有 {stats.overdue} 件逾期</span>
             <span className="mt-0.5 block leading-relaxed">先安顿它们，再向前排新的计划。</span>
           </div>
@@ -100,7 +100,7 @@ export function StatsView() {
       <section className="mt-4 rounded-2xl border border-line bg-surface/60 p-4">
         <header className="mb-3 flex flex-wrap items-center gap-2">
           <IconChart size={15} className="text-seal" />
-          <h3 className="brand-serif text-[14px] font-semibold text-ink">新建与完成趋势</h3>
+          <h3 className="brand-serif text-[0.875rem] font-semibold text-ink">新建与完成趋势</h3>
           <div className="ml-auto flex rounded-lg border border-line p-0.5">
             {RANGES.map((r) => (
               <button
@@ -108,7 +108,7 @@ export function StatsView() {
                 type="button"
                 onClick={() => setDays(r.days)}
                 className={cx(
-                  'rounded-md px-2.5 py-1 text-[12px] transition-colors',
+                  'rounded-md px-2.5 py-1 text-[0.75rem] transition-colors',
                   days === r.days ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:text-ink',
                 )}
               >
@@ -118,7 +118,7 @@ export function StatsView() {
           </div>
         </header>
 
-        <div className="flex items-center gap-4 text-[11.5px] text-ink-3">
+        <div className="flex items-center gap-4 text-[0.71875rem] text-ink-3">
           <span className="inline-flex items-center gap-1.5">
             <span className="h-2.5 w-2.5 rounded-sm" style={{ background: 'var(--seal)' }} />
             完成
@@ -149,14 +149,14 @@ export function StatsView() {
                     style={{ height: `${Math.max(createdH, r.created ? 3 : 0)}%` }}
                   />
                 </div>
-                <span className="truncate text-[9px] tabular-nums text-ink-3">
+                <span className="truncate text-[0.5625rem] tabular-nums text-ink-3">
                   {days <= 30 ? r.date.slice(8) : ''}
                 </span>
               </div>
             )
           })}
         </div>
-        <p className="mt-2 text-[11px] text-ink-3">横轴为日期，纵轴为条数；悬停可看当日明细。</p>
+        <p className="mt-2 text-[0.6875rem] text-ink-3">横轴为日期，纵轴为条数；悬停可看当日明细。</p>
       </section>
 
       {/* 分布 */}
@@ -170,19 +170,19 @@ export function StatsView() {
       <section className="mt-4 mb-8 rounded-2xl border border-line bg-surface/60 p-4">
         <header className="mb-3 flex items-center gap-2">
           <IconBook size={15} className="text-seal" />
-          <h3 className="brand-serif text-[14px] font-semibold text-ink">日省记录</h3>
-          <span className="text-[11.5px] text-ink-3">{QUOTES.review.text}</span>
+          <h3 className="brand-serif text-[0.875rem] font-semibold text-ink">日省记录</h3>
+          <span className="text-[0.71875rem] text-ink-3">{QUOTES.review.text}</span>
           <button
             type="button"
             onClick={() => window.dispatchEvent(new CustomEvent('shenshi:review'))}
-            className="ml-auto rounded-lg border border-line px-2.5 py-1 text-[12px] text-ink-2 transition-colors hover:bg-surface-2"
+            className="ml-auto rounded-lg border border-line px-2.5 py-1 text-[0.75rem] text-ink-2 transition-colors hover:bg-surface-2"
           >
             写今日复盘
           </button>
         </header>
 
         {reviews.length === 0 ? (
-          <p className="py-6 text-center text-[12.5px] text-ink-3">
+          <p className="py-6 text-center text-[0.78125rem] text-ink-3">
             还没有复盘记录。每天晚上花两分钟回看今天，是「敬终」最轻的一种练习。
           </p>
         ) : (
@@ -190,13 +190,13 @@ export function StatsView() {
             {reviews.map((r) => (
               <li key={r.id} className="rounded-xl border border-line bg-surface-2/40 px-3 py-2.5">
                 <div className="flex items-center gap-2">
-                  <span className="text-[12.5px] font-medium text-ink tabular-nums">{r.date}</span>
+                  <span className="text-[0.78125rem] font-medium text-ink tabular-nums">{r.date}</span>
                   {r.mood ? (
-                    <span className="rounded-md bg-seal/10 px-1.5 py-0.5 text-[11.5px] text-seal">{r.mood}</span>
+                    <span className="rounded-md bg-seal/10 px-1.5 py-0.5 text-[0.71875rem] text-seal">{r.mood}</span>
                   ) : null}
-                  {r.date === todayStr() ? <span className="text-[11px] text-ink-3">今日</span> : null}
+                  {r.date === todayStr() ? <span className="text-[0.6875rem] text-ink-3">今日</span> : null}
                 </div>
-                <div className="mt-1 space-y-0.5 text-[12.5px] leading-relaxed text-ink-2">
+                <div className="mt-1 space-y-0.5 text-[0.78125rem] leading-relaxed text-ink-2">
                   {r.wins ? <p>成：{r.wins}</p> : null}
                   {r.blockers ? <p>阻：{r.blockers}</p> : null}
                   {r.tomorrow ? <p>明日首要：{r.tomorrow}</p> : null}
@@ -207,7 +207,7 @@ export function StatsView() {
         )}
       </section>
 
-      <div className="pointer-events-none fixed bottom-3 right-4 flex items-center gap-1 text-[10.5px] text-ink-3/70">
+      <div className="pointer-events-none fixed bottom-3 right-4 flex items-center gap-1 text-[0.65625rem] text-ink-3/70">
         <IconTimer size={11} />
         {stats.focusMinutes} 分钟专注 · 近 {days} 天
         <IconRepeat size={11} className="ml-2" />
@@ -230,16 +230,16 @@ function Kpi({
 }) {
   return (
     <div className="rounded-2xl border border-line bg-surface/60 px-3.5 py-3">
-      <div className="text-[11.5px] tracking-wide text-ink-3">{label}</div>
+      <div className="text-[0.71875rem] tracking-wide text-ink-3">{label}</div>
       <div
         className={cx(
-          'mt-0.5 text-[22px] font-semibold leading-8 tabular-nums',
+          'mt-0.5 text-[1.375rem] font-semibold leading-8 tabular-nums',
           tone === 'danger' ? 'text-p-high' : tone === 'accent' ? 'text-seal' : 'text-ink',
         )}
       >
         {value}
       </div>
-      {hint ? <div className="text-[11.5px] text-ink-3">{hint}</div> : null}
+      {hint ? <div className="text-[0.71875rem] text-ink-3">{hint}</div> : null}
     </div>
   )
 }
@@ -260,22 +260,22 @@ function Distribution({
     <section className="rounded-2xl border border-line bg-surface/60 p-4">
       <header className="mb-3 flex items-center gap-2">
         <Icon size={14} className="text-ink-3" />
-        <h3 className="text-[13px] font-medium text-ink">{title}</h3>
+        <h3 className="text-[0.8125rem] font-medium text-ink">{title}</h3>
       </header>
       {rows.length === 0 ? (
-        <p className="py-4 text-[12px] text-ink-3">{emptyText}</p>
+        <p className="py-4 text-[0.75rem] text-ink-3">{emptyText}</p>
       ) : (
         <ul className="space-y-2">
           {rows.map((r) => (
             <li key={r.key} className="flex items-center gap-2.5">
-              <span className="w-[76px] shrink-0 truncate text-[12px] text-ink-2">{r.label}</span>
+              <span className="w-[76px] shrink-0 truncate text-[0.75rem] text-ink-2">{r.label}</span>
               <span className="h-2 flex-1 overflow-hidden rounded-full bg-surface-2">
                 <span
                   className="block h-full rounded-full bg-seal/70"
                   style={{ width: `${(r.count / max) * 100}%` }}
                 />
               </span>
-              <span className="w-6 shrink-0 text-right text-[11.5px] tabular-nums text-ink-3">{r.count}</span>
+              <span className="w-6 shrink-0 text-right text-[0.71875rem] tabular-nums text-ink-3">{r.count}</span>
             </li>
           ))}
         </ul>

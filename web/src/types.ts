@@ -453,9 +453,27 @@ export type BatchAction =
   | 'star'
   | 'unstar'
 
+/** 明暗模式。auto 表示跟随系统外观，由 AppStore 解析成实际生效的 light / dark。 */
+export type ThemeMode = 'light' | 'dark' | 'auto'
+
+/** 界面字号档位：作用于根元素 font-size，正文、间距随之等比缩放。 */
+export const FONT_SCALES = [
+  { value: '0.9', label: '紧凑', percent: '90%' },
+  { value: '1', label: '标准', percent: '100%' },
+  { value: '1.1', label: '舒适', percent: '110%' },
+  { value: '1.2', label: '大号', percent: '120%' },
+] as const
+
+/** 把设置里的字号取值收敛到安全区间，非法值一律按标准（1）处理。 */
+export function fontScaleOf(value?: string): number {
+  const n = Number(value)
+  return Number.isFinite(n) && n >= 0.75 && n <= 1.5 ? n : 1
+}
+
 export interface Settings {
-  theme?: 'light' | 'dark'
+  theme?: ThemeMode
   accent?: string
+  fontScale?: string
   weekStart?: '0' | '1'
   showCompleted?: '0' | '1'
   soundOn?: '0' | '1'

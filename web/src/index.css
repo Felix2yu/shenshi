@@ -140,9 +140,12 @@ body {
   background: var(--paper);
   color: var(--ink);
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: 0.875rem;
   line-height: 1.6;
-  -webkit-font-smoothing: antialiased;
+  /* macOS 上不要把 antialiased 写死：它会强制灰度抗锯齿，让文字比系统默认更细更淡、
+     在普通（非视网膜）外接屏上尤其发虚。交给浏览器用 macOS 默认渲染（更重更清晰）。 */
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
   text-rendering: optimizeLegibility;
   overscroll-behavior: none;
 }
@@ -272,18 +275,18 @@ textarea {
 }
 
 .markdown h1 {
-  font-size: 15px;
+  font-size: 0.9375rem;
 }
 .markdown h2 {
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 .markdown h3 {
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 .markdown h4,
 .markdown h5,
 .markdown h6 {
-  font-size: 12.5px;
+  font-size: 0.78125rem;
   color: var(--ink-2);
 }
 
@@ -325,7 +328,7 @@ textarea {
 .markdown pre code {
   padding: 0;
   background: none;
-  font-size: 12px;
+  font-size: 0.75rem;
   line-height: 1.6;
 }
 
@@ -360,13 +363,13 @@ textarea {
 
 .markdown .md-box {
   flex: none;
-  width: 12px;
-  height: 12px;
+  width: 0.75rem;
+  height: 0.75rem;
   margin-top: 0.28em;
   border: 1px solid var(--line-strong, var(--ink-3));
   border-radius: 3px;
-  font-size: 9px;
-  line-height: 11px;
+  font-size: 0.5625rem;
+  line-height: 0.6875rem;
   text-align: center;
   color: var(--jade, var(--seal));
 }

@@ -47,9 +47,9 @@ export function TableView({ tasks, onOpen }: { tasks: Task[]; onOpen: (t: Task) 
 
   return (
     <div className="min-h-full overflow-x-auto">
-      <table data-table className="w-full min-w-[860px] border-collapse text-[12.5px]">
+      <table data-table className="w-full min-w-[860px] border-collapse text-[0.78125rem]">
         <thead className="sticky top-0 z-10 bg-paper/95 backdrop-blur">
-          <tr className="border-b border-line text-left text-[11px] text-ink-3">
+          <tr className="border-b border-line text-left text-[0.6875rem] text-ink-3">
             <th className="w-9 px-2 py-2 font-normal" />
             <Th col="title" label="任务" sortBy={sortBy} onSort={setSortBy} className="min-w-[240px]" />
             <th className="w-[132px] px-2 py-2 font-normal">清单</th>
@@ -91,7 +91,7 @@ export function TableView({ tasks, onOpen }: { tasks: Task[]; onOpen: (t: Task) 
                     {t.url ? <IconLink size={11} className="shrink-0 text-ink-3" /> : null}
                     {t.repeatRule ? <IconClock size={11} className="shrink-0 text-ink-3" /> : null}
                     {t.subtasks.length ? (
-                      <span className="shrink-0 text-[10.5px] text-ink-3">
+                      <span className="shrink-0 text-[0.65625rem] text-ink-3">
                         子 {t.subtasks.filter((s) => s.done).length}/{t.subtasks.length}
                       </span>
                     ) : null}
@@ -104,7 +104,7 @@ export function TableView({ tasks, onOpen }: { tasks: Task[]; onOpen: (t: Task) 
                   </span>
                 </td>
                 <td className="px-2 py-1.5 align-middle">
-                  <span className={cx('rounded px-1.5 py-0.5 text-[11px]', PRIORITY_TONE[t.priority])}>
+                  <span className={cx('rounded px-1.5 py-0.5 text-[0.6875rem]', PRIORITY_TONE[t.priority])}>
                     {PRIORITY_LABEL[t.priority]}
                   </span>
                 </td>
@@ -123,7 +123,7 @@ export function TableView({ tasks, onOpen }: { tasks: Task[]; onOpen: (t: Task) 
                   <span className={cx('tabular-nums', overdue ? 'text-p-high' : 'text-ink-2')}>
                     {t.dueDate ? `${t.dueDate}${t.dueTime ? ` ${t.dueTime}` : ''}` : '—'}
                   </span>
-                  {t.dueDate ? <span className="ml-1 text-[10.5px] text-ink-3">{dueLabel(t.dueDate)}</span> : null}
+                  {t.dueDate ? <span className="ml-1 text-[0.65625rem] text-ink-3">{dueLabel(t.dueDate)}</span> : null}
                 </td>
                 <td className="px-2 py-1.5 align-middle">
                   <span className="flex flex-wrap gap-1">
@@ -133,7 +133,7 @@ export function TableView({ tasks, onOpen }: { tasks: Task[]; onOpen: (t: Task) 
                       t.tags.map((g) => (
                         <span
                           key={g.id}
-                          className="rounded px-1.5 py-0.5 text-[10.5px]"
+                          className="rounded px-1.5 py-0.5 text-[0.65625rem]"
                           style={{ background: `${g.color}1f`, color: g.color }}
                         >
                           {g.name}
@@ -142,13 +142,13 @@ export function TableView({ tasks, onOpen }: { tasks: Task[]; onOpen: (t: Task) 
                     )}
                   </span>
                 </td>
-                <td className="px-2 py-1.5 align-middle text-[11.5px] text-ink-3">{relativeTime(t.updatedAt)}</td>
+                <td className="px-2 py-1.5 align-middle text-[0.71875rem] text-ink-3">{relativeTime(t.updatedAt)}</td>
               </tr>
             )
           })}
         </tbody>
       </table>
-      <p className="px-3 py-2 text-[11px] text-ink-3">
+      <p className="px-3 py-2 text-[0.6875rem] text-ink-3">
         共 {tasks.length} 行 · 点列头可换排序，点任意一行打开详情
       </p>
     </div>

@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api/client'
 import { addDays, fullDate, todayStr } from '../lib/date'
 import { QUOTES, morningLine, reviewLine } from '../lib/quotes'
-import { permissionState, requestPermission } from '../lib/notify'
+import { useNotifyDiagnosis } from '../lib/notify'
 import { useStore } from '../store/AppStore'
 import type { Task } from '../types'
 import {
@@ -58,7 +58,9 @@ export function AppOverlays() {
 
 /* ---------------- 自动触发 ---------------- */
 
-/** 每日首次打开时引导晨省；晚间首次打开时引导日省。各自每天只出现一次。 */
+/** 每日首次打开时引导晨省；晚间首次打开时引导日省。各自每天只出现一次。
+ *  判定以服务端 settings 为准，另用 localStorage 记「今天已弹过」作兜底：
+ *  即便保存接口失败（后端未起、断网等），也不会在当天反复打扰。 */
 function AutoRituals({ onMorning, onReview }: { onMorning: () => void; onReview: () => void }) {
   const { settings, saveSettings, loading } = useStore()
 
@@ -67,13 +69,33 @@ function AutoRituals({ onMorning, onReview }: { onMorning: () => void; onReview:
     const today = todayStr()
     // 延后一拍再弹，避免与首屏数据加载抢占注意力。
     const timer = window.setTimeout(() => {
-      if (settings.morningPlanDone !== today) {
+      const shownToday = (key: string) => {
+        try {
+          return localStorage.getItem(key) === today
+        } catch {
+          return false
+        }
+      }
+      const markShown = (key: string) => {
+        try {
+          localStorage.setItem(key, today)
+        } catch {
+          /* 隐私模式等场景下静默跳过，仅依赖服务端记录 */
+        }
+      }
+      if (settings.morningPlanDone !== today && !shownToday('shenshi.morningPlanShown')) {
         onMorning()
+        markShown('shenshi.morningPlanShown')
         void saveSettings({ morningPlanDone: today })
         return
       }
-      if (settings.reviewDone !== today && new Date().getHours() >= 20) {
+      if (
+        settings.reviewDone !== today &&
+        !shownToday('shenshi.reviewShown') &&
+        new Date().getHours() >= 20
+      ) {
         onReview()
+        markShown('shenshi.reviewShown')
       }
     }, 900)
     return () => window.clearTimeout(timer)
@@ -145,10 +167,9 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
       }
       subtitle="先定今日之重，再谈其余"
       width={620}
-      size="lg"
       footer={
         <>
-          <span className="mr-auto text-[11.5px] text-ink-3">
+          <span className="mr-auto text-[0.71875rem] text-ink-3">
             已选 {picked.length}/3 件为今日重点
           </span>
           <Button variant="ghost" onClick={onClose}>
@@ -162,8 +183,8 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
     >
       <div className="space-y-5">
         <div className="rounded-xl border border-seal/25 bg-seal/6 px-3.5 py-3">
-          <p className="brand-serif text-[13.5px] leading-relaxed text-ink">{line}</p>
-          <p className="mt-1 text-[11.5px] text-ink-3">
+          <p className="brand-serif text-[0.84375rem] leading-relaxed text-ink">{line}</p>
+          <p className="mt-1 text-[0.71875rem] text-ink-3">
             {QUOTES.morning.text} —— {QUOTES.morning.source}
           </p>
         </div>
@@ -198,7 +219,7 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
         {/* 今日 */}
         <Section title="今日到期" count={today.filter((t) => t.status === 'todo').length} tone="accent">
           {today.filter((t) => t.status === 'todo').length === 0 ? (
-            <p className="px-1 py-2 text-[12.5px] text-ink-3">今天没有排定的事项，或可挑一件真正要紧的来做。</p>
+            <p className="px-1 py-2 text-[0.78125rem] text-ink-3">今天没有排定的事项，或可挑一件真正要紧的来做。</p>
           ) : (
             today
               .filter((t) => t.status === 'todo')
@@ -237,7 +258,7 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
                     <MiniButton onClick={() => void moveTask(t.id, { dueDate: todayStr() })}>今天</MiniButton>
                     <MiniButton onClick={() => void moveTask(t.id, { dueDate: addDays(todayStr(), 1) })}>明天</MiniButton>
                     <select
-                      className="h-6 rounded-md border border-line bg-surface px-1 text-[11.5px]"
+                      className="h-6 rounded-md border border-line bg-surface px-1 text-[0.71875rem]"
                       defaultValue=""
                       onChange={(e) => {
                         if (!e.target.value) return
@@ -257,13 +278,13 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
               />
             ))}
             {inbox.length > 6 ? (
-              <p className="px-1 pt-1 text-[11.5px] text-ink-3">另有 {inbox.length - 6} 项，稍后处理。</p>
+              <p className="px-1 pt-1 text-[0.71875rem] text-ink-3">另有 {inbox.length - 6} 项，稍后处理。</p>
             ) : null}
           </Section>
         ) : null}
 
         {overdue.length === 0 && pending === 0 && inbox.length === 0 ? (
-          <p className="py-6 text-center text-[12.5px] text-ink-3">
+          <p className="py-6 text-center text-[0.78125rem] text-ink-3">
             今日一片空白。空白也是一种安排 —— 若真要添一件，现在就是最好的时机。
           </p>
         ) : null}
@@ -290,17 +311,17 @@ function Section({
       <div className="mb-1.5 flex items-center gap-2">
         <h3
           className={cx(
-            'text-[13px] font-semibold',
+            'text-[0.8125rem] font-semibold',
             tone === 'danger' ? 'text-p-high' : tone === 'accent' ? 'text-seal' : 'text-ink',
           )}
         >
           {title}
         </h3>
         {count !== undefined ? (
-          <span className="rounded-full bg-surface-2 px-1.5 text-[11px] text-ink-3 tabular-nums">{count}</span>
+          <span className="rounded-full bg-surface-2 px-1.5 text-[0.6875rem] text-ink-3 tabular-nums">{count}</span>
         ) : null}
       </div>
-      {note ? <p className="mb-1.5 text-[11.5px] text-ink-3">{note}</p> : null}
+      {note ? <p className="mb-1.5 text-[0.71875rem] text-ink-3">{note}</p> : null}
       <div className="space-y-1">{children}</div>
     </section>
   )
@@ -328,8 +349,8 @@ function PlanRow({
     >
       <RoundCheck checked={picked} onChange={onPick} color="var(--seal)" />
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[13px] text-ink">{task.title}</div>
-        <div className="text-[11px] text-ink-3">
+        <div className="truncate text-[0.8125rem] text-ink">{task.title}</div>
+        <div className="text-[0.6875rem] text-ink-3">
           {listName}
           {task.dueDate ? ` · ${task.dueDate}` : ''}
           {task.dueTime ? ` ${task.dueTime}` : ''}
@@ -346,7 +367,7 @@ function MiniButton({ children, onClick }: { children: React.ReactNode; onClick:
     <button
       type="button"
       onClick={onClick}
-      className="rounded-md border border-line px-1.5 py-0.5 text-[11.5px] text-ink-2 transition-colors hover:border-seal/40 hover:text-seal"
+      className="rounded-md border border-line px-1.5 py-0.5 text-[0.71875rem] text-ink-2 transition-colors hover:border-seal/40 hover:text-seal"
     >
       {children}
     </button>
@@ -408,10 +429,9 @@ function DailyReview({ open, onClose }: { open: boolean; onClose: () => void }) 
       }
       subtitle="善始者众，克终者寡 —— 花两分钟把今天收好"
       width={560}
-      size="lg"
       footer={
         <>
-          <span className="mr-auto text-[11.5px] text-ink-3">复盘只对自己可见，可随时补写或修改</span>
+          <span className="mr-auto text-[0.71875rem] text-ink-3">复盘只对自己可见，可随时补写或修改</span>
           <Button variant="ghost" onClick={onClose}>
             稍后
           </Button>
@@ -428,12 +448,12 @@ function DailyReview({ open, onClose }: { open: boolean; onClose: () => void }) 
           <Stat label="连续完成" value={`${stats?.streakDays ?? 0} 天`} />
         </div>
 
-        <p className="brand-serif rounded-xl border border-line bg-surface-2/50 px-3.5 py-2.5 text-[13px] leading-relaxed text-ink-2">
+        <p className="brand-serif rounded-xl border border-line bg-surface-2/50 px-3.5 py-2.5 text-[0.8125rem] leading-relaxed text-ink-2">
           {reviewLine(done, Math.max(0, open_))}
         </p>
 
         <div>
-          <span className="mb-1.5 block text-[11.5px] font-medium tracking-wide text-ink-3">今日状态</span>
+          <span className="mb-1.5 block text-[0.71875rem] font-medium tracking-wide text-ink-3">今日状态</span>
           <div className="flex flex-wrap gap-1.5">
             {MOODS.map((m) => (
               <button
@@ -441,7 +461,7 @@ function DailyReview({ open, onClose }: { open: boolean; onClose: () => void }) 
                 type="button"
                 onClick={() => setMood(mood === m ? '' : m)}
                 className={cx(
-                  'brand-serif h-9 w-9 rounded-lg border text-[14px] transition-colors',
+                  'brand-serif h-9 w-9 rounded-lg border text-[0.875rem] transition-colors',
                   mood === m ? 'border-seal bg-seal/10 text-seal' : 'border-line text-ink-2 hover:bg-surface-2',
                 )}
               >
@@ -477,8 +497,8 @@ function DailyReview({ open, onClose }: { open: boolean; onClose: () => void }) 
 function Stat({ label, value, tone }: { label: string; value: string | number; tone?: 'accent' }) {
   return (
     <div className="rounded-xl border border-line bg-surface px-3 py-2">
-      <div className="text-[11px] text-ink-3">{label}</div>
-      <div className={cx('text-[18px] font-semibold tabular-nums', tone === 'accent' ? 'text-seal' : 'text-ink')}>
+      <div className="text-[0.6875rem] text-ink-3">{label}</div>
+      <div className={cx('text-[1.125rem] font-semibold tabular-nums', tone === 'accent' ? 'text-seal' : 'text-ink')}>
         {value}
       </div>
     </div>
@@ -498,7 +518,7 @@ function ReviewField({
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-[11.5px] font-medium tracking-wide text-ink-3">{label}</span>
+      <span className="mb-1.5 block text-[0.71875rem] font-medium tracking-wide text-ink-3">{label}</span>
       <textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -575,21 +595,21 @@ function FocusPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
         <div className="flex flex-col items-center gap-3 py-2">
           <ProgressRing value={progress} size={148} stroke={8}>
             <div className="text-center">
-              <div className="brand-serif text-[30px] font-semibold tabular-nums leading-none text-ink">
+              <div className="brand-serif text-[1.875rem] font-semibold tabular-nums leading-none text-ink">
                 {mm}:{ss}
               </div>
-              <div className="mt-1 text-[11px] text-ink-3">共 {focus.minutes} 分钟</div>
+              <div className="mt-1 text-[0.6875rem] text-ink-3">共 {focus.minutes} 分钟</div>
             </div>
           </ProgressRing>
-          <p className="max-w-[16rem] text-center text-[12.5px] leading-relaxed text-ink-2">
+          <p className="max-w-[16rem] text-center text-[0.78125rem] leading-relaxed text-ink-2">
             {current ? `正在专注：${current.title}` : '未关联任务，专注时间仍会记录。'}
           </p>
-          <p className="text-[11.5px] text-ink-3">倒计时结束会自动记录时长并提示。</p>
+          <p className="text-[0.71875rem] text-ink-3">倒计时结束会自动记录时长并提示。</p>
         </div>
       ) : (
         <div className="space-y-4">
           <div>
-            <span className="mb-1.5 block text-[11.5px] font-medium tracking-wide text-ink-3">专注时长</span>
+            <span className="mb-1.5 block text-[0.71875rem] font-medium tracking-wide text-ink-3">专注时长</span>
             <div className="space-y-1.5">
               {FOCUS_PRESETS.map((p) => (
                 <button
@@ -597,7 +617,7 @@ function FocusPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
                   type="button"
                   onClick={() => setMinutes(p.minutes)}
                   className={cx(
-                    'flex w-full items-center justify-between rounded-lg border px-3 py-2 text-[13px] transition-colors',
+                    'flex w-full items-center justify-between rounded-lg border px-3 py-2 text-[0.8125rem] transition-colors',
                     minutes === p.minutes ? 'border-seal bg-seal/10 text-seal' : 'border-line text-ink-2 hover:bg-surface-2',
                   )}
                 >
@@ -608,7 +628,7 @@ function FocusPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
             </div>
           </div>
           <div>
-            <span className="mb-1.5 block text-[11.5px] font-medium tracking-wide text-ink-3">
+            <span className="mb-1.5 block text-[0.71875rem] font-medium tracking-wide text-ink-3">
               关联任务（可选）
             </span>
             <select
@@ -637,6 +657,8 @@ function FocusPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
 
 function ReminderCenter() {
   const { reminders, dismissReminder, snoozeReminder, toggleTask, setSelectedTask, setView, select } = useStore()
+  // 权限状态跟着浏览器实时走：用户在站点设置里改过之后，这里的文案不会再停留在旧值。
+  const { diag, request } = useNotifyDiagnosis()
   const [collapsed, setCollapsed] = useState(false)
 
   if (reminders.length === 0) return null
@@ -646,11 +668,11 @@ function ReminderCenter() {
       <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-lg)]">
         <header className="flex items-center gap-2 border-b border-line bg-seal/8 px-3 py-2">
           <IconBell size={15} className="text-seal" />
-          <span className="brand-serif flex-1 text-[13px] font-semibold text-ink">提醒 · {reminders.length} 条</span>
+          <span className="brand-serif flex-1 text-[0.8125rem] font-semibold text-ink">提醒 · {reminders.length} 条</span>
           <button
             type="button"
             onClick={() => setCollapsed((v) => !v)}
-            className="text-[11.5px] text-ink-3 transition-colors hover:text-ink"
+            className="text-[0.71875rem] text-ink-3 transition-colors hover:text-ink"
           >
             {collapsed ? '展开' : '收起'}
           </button>
@@ -668,8 +690,8 @@ function ReminderCenter() {
                       dismissReminder(key)
                     }} />
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13px] text-ink">{h.task.title}</div>
-                      <div className="flex items-center gap-1.5 text-[11px] text-ink-3">
+                      <div className="truncate text-[0.8125rem] text-ink">{h.task.title}</div>
+                      <div className="flex items-center gap-1.5 text-[0.6875rem] text-ink-3">
                         <IconClock size={10.5} />
                         {h.dueLabel}
                         {h.overdue ? <span className="text-p-high">· 已过时</span> : null}
@@ -704,21 +726,19 @@ function ReminderCenter() {
           </div>
         ) : null}
 
-        {permissionState() !== 'granted' ? (
+        {diag.state !== 'granted' ? (
           <div className="flex items-center gap-2 border-t border-line px-3 py-2">
             <IconInfo size={12} className="shrink-0 text-ink-3" />
-            <span className="flex-1 text-[11px] leading-relaxed text-ink-3">
-              开启桌面通知后，即使切到其他窗口也不会错过提醒。
+            <span className="flex-1 text-[0.6875rem] leading-relaxed text-ink-3">
+              {diag.state === 'default'
+                ? '开启桌面通知后，即使切到其他窗口也不会错过提醒。'
+                : `桌面通知未开启：${diag.label}`}
             </span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={async () => {
-                await requestPermission()
-              }}
-            >
-              开启
-            </Button>
+            {diag.state === 'default' ? (
+              <Button variant="outline" size="sm" onClick={() => void request()}>
+                开启
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -751,7 +771,7 @@ function ConfirmHost() {
         </>
       }
     >
-      <p className="text-[13px] leading-relaxed text-ink-2">{confirmState.message}</p>
+      <p className="text-[0.8125rem] leading-relaxed text-ink-2">{confirmState.message}</p>
     </Modal>
   )
 }
@@ -769,7 +789,7 @@ function ToastHost() {
           type="button"
           onClick={() => dismissToast(t.id)}
           className={cx(
-            'pointer-events-auto flex max-w-[420px] animate-rise items-center gap-2 rounded-xl border px-3 py-2 text-left text-[12.5px] shadow-[var(--shadow-md)] backdrop-blur',
+            'pointer-events-auto flex max-w-[420px] animate-rise items-center gap-2 rounded-xl border px-3 py-2 text-left text-[0.78125rem] shadow-[var(--shadow-md)] backdrop-blur',
             t.kind === 'error'
               ? 'border-p-high/30 bg-p-high/10 text-ink'
               : t.kind === 'info'

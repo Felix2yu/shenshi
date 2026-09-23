@@ -3,10 +3,20 @@ import { useMemo, useRef, useState, type ChangeEvent, type DragEvent, type React
 import { EXPORT_URLS, api, type ImportMode } from '../api/client'
 import { humanDay, relativeTime, todayStr } from '../lib/date'
 import { describeFilter, filterFromQuery, isFilterActive } from '../lib/filter'
-import { requestPermission } from '../lib/notify'
+import { diagnoseNotifications, pushNotification, useNotifyDiagnosis, type NotifyState } from '../lib/notify'
+import { useIMEGuard } from '../lib/ime'
 import { ACCENTS, PALETTE } from '../lib/palette'
 import { useStore } from '../store/AppStore'
-import { ACTIVITY_LABEL, type Folder, type List, type SmartKey, type Tag } from '../types'
+import {
+  ACTIVITY_LABEL,
+  FONT_SCALES,
+  fontScaleOf,
+  type Folder,
+  type List,
+  type SmartKey,
+  type Tag,
+  type ThemeMode,
+} from '../types'
 import { SORT_MIME } from './TaskViews'
 import {
   IconArchive,
@@ -190,6 +200,7 @@ function EntityDialog({ draft, onClose }: { draft: EntityDraft | null; onClose: 
     folders,
     confirm,
   } = useStore()
+  const { compositionProps, isComposing } = useIMEGuard()
 
   const [name, setName] = useState(draft?.name ?? '')
   const [color, setColor] = useState(draft?.color ?? PALETTE[0])
@@ -286,11 +297,13 @@ function EntityDialog({ draft, onClose }: { draft: EntityDraft | null; onClose: 
         <Field label="名称">
           <input
             autoFocus
+            {...compositionProps}
             className={inputClass}
             value={name}
             placeholder={draft.kind === 'folder' ? '如：工作' : draft.kind === 'list' ? '如：项目推进' : '如：深度工作'}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => {
+              if (isComposing(e)) return
               if (e.key === 'Enter') void submit()
             }}
           />
@@ -368,6 +381,7 @@ export function Sidebar() {
     folders,
     tags,
     settings,
+    resolvedTheme,
     saveSettings,
     updateFolder,
     updateList,
@@ -445,7 +459,7 @@ export function Sidebar() {
     setMenu(null)
   }
 
-  const theme = settings.theme ?? 'light'
+  const theme = resolvedTheme
 
   return (
     <>
@@ -454,8 +468,8 @@ export function Sidebar() {
         <div className="flex items-center gap-2.5 px-4 pb-3 pt-4">
           <SealLogo size={32} />
           <div className="min-w-0 flex-1">
-            <div className="brand-serif text-[17px] font-semibold leading-none text-ink">慎始</div>
-            <div className="mt-1 truncate text-[10.5px] tracking-wide text-ink-3">慎始而敬终 · 行稳致远</div>
+            <div className="brand-serif text-[1.0625rem] font-semibold leading-none text-ink">慎始</div>
+            <div className="mt-1 truncate text-[0.65625rem] tracking-wide text-ink-3">慎始而敬终 · 行稳致远</div>
           </div>
           <IconButton icon={IconSettings} label="外观与设置" onClick={() => setAppearanceOpen(true)} />
         </div>
@@ -469,8 +483,8 @@ export function Sidebar() {
           >
             <IconSunrise size={16} className="text-seal" />
             <span className="min-w-0 flex-1">
-              <span className="brand-serif block text-[13px] font-medium text-ink">晨省 · 规划今日</span>
-              <span className="block truncate text-[10.5px] text-ink-3">凡事豫则立，不豫则废</span>
+              <span className="brand-serif block text-[0.8125rem] font-medium text-ink">晨省 · 规划今日</span>
+              <span className="block truncate text-[0.65625rem] text-ink-3">凡事豫则立，不豫则废</span>
             </span>
             <IconChevronRight size={14} className="shrink-0 text-seal/60 transition-transform group-hover:translate-x-0.5" />
           </button>
@@ -489,17 +503,17 @@ export function Sidebar() {
                   type="button"
                   onClick={() => selectSmart(s.key)}
                   className={cx(
-                    'group flex w-full items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-left text-[13px] transition-colors',
+                    'group flex w-full items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-left text-[0.8125rem] transition-colors',
                     active ? 'bg-seal/10 font-medium text-seal' : 'text-ink-2 hover:bg-surface-2 hover:text-ink',
                   )}
                 >
                   <s.icon size={15} className={cx('shrink-0', active ? 'text-seal' : 'text-ink-3')} />
                   <span className="flex-1 truncate">{s.label}</span>
-                  {s.key === 'today' ? <span className="text-[10.5px] text-ink-3">{humanDay(todayStr())}</span> : null}
+                  {s.key === 'today' ? <span className="text-[0.65625rem] text-ink-3">{humanDay(todayStr())}</span> : null}
                   {n > 0 ? (
                     <span
                       className={cx(
-                        'min-w-4 rounded-full px-1.5 text-center text-[10.5px] tabular-nums',
+                        'min-w-4 rounded-full px-1.5 text-center text-[0.65625rem] tabular-nums',
                         s.ember ? 'bg-p-high/12 text-p-high' : active ? 'bg-seal/15 text-seal' : 'text-ink-3',
                       )}
                     >
@@ -529,7 +543,7 @@ export function Sidebar() {
                     }
                   }}
                   className={cx(
-                    'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-left text-[13px] transition-colors',
+                    'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-left text-[0.8125rem] transition-colors',
                     active ? 'bg-seal/10 font-medium text-seal' : 'text-ink-2 hover:bg-surface-2 hover:text-ink',
                   )}
                 >
@@ -543,7 +557,7 @@ export function Sidebar() {
           {/* 收藏的清单 */}
           {starredLists.length > 0 ? (
             <div className="mt-1 border-t border-line pt-1">
-              <div className="px-2 pb-1 pt-3 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink-3">
+              <div className="px-2 pb-1 pt-3 text-[0.65625rem] font-semibold uppercase tracking-[0.14em] text-ink-3">
                 收藏的清单
               </div>
               {starredLists.map((l) => (
@@ -565,11 +579,11 @@ export function Sidebar() {
           {savedFilters.length > 0 ? (
             <div className="mt-1 border-t border-line pt-1">
               <div className="flex items-center gap-1 px-2 pb-1 pt-3">
-                <span className="flex-1 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink-3">
+                <span className="flex-1 text-[0.65625rem] font-semibold uppercase tracking-[0.14em] text-ink-3">
                   保存的筛选
                 </span>
                 {isFilterActive(filters) ? (
-                  <span className="text-[10px] text-ink-3" title="当前工具栏已有筛选条件">
+                  <span className="text-[0.625rem] text-ink-3" title="当前工具栏已有筛选条件">
                     筛选中
                   </span>
                 ) : null}
@@ -584,8 +598,8 @@ export function Sidebar() {
                   >
                     <IconFilter size={13} className="mt-[3px] shrink-0 text-ink-3" />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] text-ink-2">{f.name}</span>
-                      <span className="block truncate text-[10.5px] text-ink-3">
+                      <span className="block truncate text-[0.8125rem] text-ink-2">{f.name}</span>
+                      <span className="block truncate text-[0.65625rem] text-ink-3">
                         {describeFilter(filterFromQuery(f.query), tags) || '无条件'}
                       </span>
                     </span>
@@ -663,7 +677,7 @@ export function Sidebar() {
               </div>
             ))}
             {rootLists.length === 0 && liveFolders.length === 0 ? (
-              <p className="px-2.5 py-1 text-[11.5px] text-ink-3">还没有清单，点标题右侧的 + 开始。</p>
+              <p className="px-2.5 py-1 text-[0.71875rem] text-ink-3">还没有清单，点标题右侧的 + 开始。</p>
             ) : null}
           </div>
 
@@ -687,7 +701,7 @@ export function Sidebar() {
               >
                 <input
                   autoFocus
-                  className="min-w-0 flex-1 rounded-md border border-line bg-surface px-2 py-1 text-[12.5px] outline-none focus:border-seal/60"
+                  className="min-w-0 flex-1 rounded-md border border-line bg-surface px-2 py-1 text-[0.78125rem] outline-none focus:border-seal/60"
                   placeholder="标签名"
                   value={newTagName}
                   onChange={(e) => setNewTagName(e.target.value)}
@@ -711,13 +725,13 @@ export function Sidebar() {
                       type="button"
                       onClick={() => select({ kind: 'tag', id: t.id })}
                       className={cx(
-                        'flex min-w-0 flex-1 items-center gap-2.5 py-[7px] pl-2.5 text-left text-[13px]',
+                        'flex min-w-0 flex-1 items-center gap-2.5 py-[7px] pl-2.5 text-left text-[0.8125rem]',
                         active ? 'font-medium text-seal' : 'text-ink-2 hover:text-ink',
                       )}
                     >
                       <IconTag size={14} className="shrink-0" style={{ color: t.color }} />
                       <span className="truncate">{t.name}</span>
-                      {t.taskCount ? <span className="text-[10.5px] text-ink-3 tabular-nums">{t.taskCount}</span> : null}
+                      {t.taskCount ? <span className="text-[0.65625rem] text-ink-3 tabular-nums">{t.taskCount}</span> : null}
                     </button>
                     <span
                       role="button"
@@ -769,7 +783,7 @@ export function Sidebar() {
               )
             })}
             {tags.length === 0 && !addingTag ? (
-              <p className="px-2.5 py-1 text-[11.5px] leading-relaxed text-ink-3">
+              <p className="px-2.5 py-1 text-[0.71875rem] leading-relaxed text-ink-3">
                 在任务标题里输入 <span className="text-seal">#标签</span> 即可自动创建。
               </p>
             ) : null}
@@ -781,11 +795,11 @@ export function Sidebar() {
               <button
                 type="button"
                 onClick={() => setArchivedOpen((v) => !v)}
-                className="flex w-full items-center gap-2 px-2.5 py-1 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink-3 transition-colors hover:text-ink-2"
+                className="flex w-full items-center gap-2 px-2.5 py-1 text-[0.65625rem] font-semibold uppercase tracking-[0.14em] text-ink-3 transition-colors hover:text-ink-2"
               >
                 <IconChevronRight size={12} className={cx('transition-transform', archivedOpen && 'rotate-90')} />
                 已归档
-                <span className="text-[10px] font-normal normal-case tracking-normal">
+                <span className="text-[0.625rem] font-normal normal-case tracking-normal">
                   {archivedFolders.length + archivedLists.length}
                 </span>
               </button>
@@ -796,11 +810,11 @@ export function Sidebar() {
                       key={f.id}
                       type="button"
                       onClick={() => void updateFolder(f.id, { archived: false })}
-                      className="group/arc flex w-full items-center gap-2 rounded-lg px-2.5 py-[6px] text-left text-[12.5px] text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
+                      className="group/arc flex w-full items-center gap-2 rounded-lg px-2.5 py-[6px] text-left text-[0.78125rem] text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
                     >
                       <IconArchive size={12} className="shrink-0" />
                       <span className="flex-1 truncate">{f.name}</span>
-                      <span className="text-[10px] opacity-0 transition-opacity group-hover/arc:opacity-100">恢复</span>
+                      <span className="text-[0.625rem] opacity-0 transition-opacity group-hover/arc:opacity-100">恢复</span>
                     </button>
                   ))}
                   {archivedLists.map((l) => (
@@ -808,11 +822,11 @@ export function Sidebar() {
                       key={l.id}
                       type="button"
                       onClick={() => void updateList(l.id, { archived: false })}
-                      className="group/arc flex w-full items-center gap-2 rounded-lg px-2.5 py-[6px] text-left text-[12.5px] text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
+                      className="group/arc flex w-full items-center gap-2 rounded-lg px-2.5 py-[6px] text-left text-[0.78125rem] text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
                     >
                       <IconArchive size={12} className="shrink-0" />
                       <span className="flex-1 truncate">{l.name}</span>
-                      <span className="text-[10px] opacity-0 transition-opacity group-hover/arc:opacity-100">恢复</span>
+                      <span className="text-[0.625rem] opacity-0 transition-opacity group-hover/arc:opacity-100">恢复</span>
                     </button>
                   ))}
                 </div>
@@ -827,7 +841,7 @@ export function Sidebar() {
             <button
               type="button"
               onClick={() => window.dispatchEvent(new CustomEvent('shenshi:review'))}
-              className="flex flex-1 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+              className="flex flex-1 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[0.78125rem] text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
             >
               <IconBook size={14} className="text-ink-3" />
               日省 · 今日复盘
@@ -858,7 +872,7 @@ export function Sidebar() {
               onClick={() => window.dispatchEvent(new CustomEvent('shenshi:focus'))}
             />
           </div>
-          <div className="mt-1 flex items-center gap-1.5 px-2.5 text-[10.5px] text-ink-3">
+          <div className="mt-1 flex items-center gap-1.5 px-2.5 text-[0.65625rem] text-ink-3">
             <IconBell size={12} />
             <span className="truncate">{reminders.length > 0 ? `${reminders.length} 条提醒待处理` : '提醒已就绪'}</span>
             <span className="ml-auto shrink-0 tabular-nums">{viewTitle}</span>
@@ -878,7 +892,7 @@ export function Sidebar() {
 function SideHeader({ label, onAdd, addLabel }: { label: string; onAdd: () => void; addLabel: string }) {
   return (
     <div className="flex items-center justify-between px-2 pb-1 pt-3">
-      <span className="text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink-3">{label}</span>
+      <span className="text-[0.65625rem] font-semibold uppercase tracking-[0.14em] text-ink-3">{label}</span>
       <IconButton icon={IconPlus} label={addLabel} size={13} onClick={onAdd} />
     </div>
   )
@@ -943,14 +957,14 @@ function FolderNode({
           type="button"
           onClick={() => onSelectFolder(folder.id)}
           className={cx(
-            'flex min-w-0 flex-1 items-center gap-2 py-[7px] text-left text-[13px]',
+            'flex min-w-0 flex-1 items-center gap-2 py-[7px] text-left text-[0.8125rem]',
             active ? 'font-medium text-seal' : 'text-ink',
           )}
         >
           <ColorDot color={folder.color} />
           <span className="truncate">{folder.name}</span>
           {folder.archived ? <IconArchive size={12} className="shrink-0 text-ink-3" aria-label="已归档" /> : null}
-          <span className="text-[10.5px] text-ink-3 tabular-nums">{lists.length || ''}</span>
+          <span className="text-[0.65625rem] text-ink-3 tabular-nums">{lists.length || ''}</span>
         </button>
         <span className="opacity-0 transition-opacity group-hover/folder:opacity-100">
           <IconGrip size={12} className="text-ink-3/50" />
@@ -1047,7 +1061,7 @@ function FolderNode({
             <button
               type="button"
               onClick={onAddList}
-              className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-[12px] text-ink-3 transition-colors hover:bg-surface-2 hover:text-seal"
+              className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-[0.75rem] text-ink-3 transition-colors hover:bg-surface-2 hover:text-seal"
             >
               <IconPlus size={12} />
               新建清单
@@ -1087,13 +1101,13 @@ function ListRow({
           type="button"
           onClick={onSelect}
           className={cx(
-            'flex min-w-0 flex-1 items-center gap-2.5 py-[7px] pl-2.5 text-left text-[13px]',
+            'flex min-w-0 flex-1 items-center gap-2.5 py-[7px] pl-2.5 text-left text-[0.8125rem]',
             active ? 'font-medium text-seal' : 'text-ink-2 hover:text-ink',
           )}
         >
           <ColorDot color={list.color} />
           <span className="truncate">{list.name}</span>
-          {list.taskCount ? <span className="text-[10.5px] text-ink-3 tabular-nums">{list.taskCount}</span> : null}
+          {list.taskCount ? <span className="text-[0.65625rem] text-ink-3 tabular-nums">{list.taskCount}</span> : null}
         </button>
         <span className="opacity-0 transition-opacity group-hover/list:opacity-100">
           <IconGrip size={12} className="text-ink-3/50" />
@@ -1141,7 +1155,7 @@ function ListRow({
         {folders && folders.length > 0 ? (
           <>
             <div className="my-1 border-t border-line" />
-            <div className="px-2.5 py-1 text-[10.5px] tracking-wide text-ink-3">移动到分组</div>
+            <div className="px-2.5 py-1 text-[0.65625rem] tracking-wide text-ink-3">移动到分组</div>
             <MenuItem
               onClick={() => {
                 void updateList(list.id, { moveToRoot: true })
@@ -1171,13 +1185,44 @@ function ListRow({
 
 /* ---------------- 外观 ---------------- */
 
+const THEME_CHOICES: { value: ThemeMode; label: string }[] = [
+  { value: 'light', label: '素笺 · 浅色' },
+  { value: 'dark', label: '夜砚 · 深色' },
+  { value: 'auto', label: '随系统 · 自动' },
+]
+
+/** 通知状态的口语说法，和后台的真实 Permission 值一一对应。 */
+const NOTIFY_LABEL: Record<NotifyState, string> = {
+  granted: '已允许',
+  denied: '已被拒绝',
+  default: '未授权',
+  unsupported: '不支持',
+  insecure: '非安全上下文',
+  framed: '被框架限制',
+}
+
 function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { settings, saveSettings, toast, confirm } = useStore()
-  const theme = settings.theme ?? 'light'
+  const { settings, saveSettings, toast, confirm, themeMode, resolvedTheme } = useStore()
+  const { diag, request } = useNotifyDiagnosis()
+  const scale = fontScaleOf(settings.fontScale)
   const fileRef = useRef<HTMLInputElement>(null)
   const [integrationsOpen, setIntegrationsOpen] = useState(false)
   // 文件选择框无法回传「用户点了哪个按钮」，用 ref 记住本次导入的意图。
   const pendingMode = useRef<ImportMode>('merge')
+
+  /** 申请通知权限。授权成功后顺手发一条测试通知——它能一次性暴露「浏览器给了权限但系统级别拦着」的情况。 */
+  const askNotification = async () => {
+    const r = await request()
+    if (r === 'granted') {
+      const shown = pushNotification(
+        '慎始 · 通知已开启',
+        '这是一条测试通知。若它没有出现在 macOS 通知中心，请检查「系统设置 → 通知」里该浏览器是否被允许。',
+      )
+      toast(shown ? '桌面通知已开启，并发送了一条测试通知' : '已授权，但通知未能发出，请检查系统通知设置', shown ? 'ok' : 'info')
+    } else {
+      toast(`未能开启桌面通知：${diagnoseNotifications().label}`, 'info')
+    }
+  }
 
   const pickFile = (mode: ImportMode) => {
     pendingMode.current = mode
@@ -1233,84 +1278,121 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="外观与设置" width={460} size="lg">
-      <div className="space-y-5">
-        <Field label="明暗">
-          <div className="flex gap-2">
-            {(['light', 'dark'] as const).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => void saveSettings({ theme: t })}
-                className={cx(
-                  'flex-1 rounded-lg border px-3 py-2 text-[13px] transition-colors',
-                  theme === t ? 'border-seal bg-seal/10 text-seal' : 'border-line text-ink-2 hover:bg-surface-2',
-                )}
-              >
-                {t === 'light' ? '素笺 · 浅色' : '夜砚 · 深色'}
-              </button>
-            ))}
-          </div>
-        </Field>
+    <Modal open={open} onClose={onClose} title="外观与设置" width={900}>
+      <div className="space-y-4">
+        {/* 两栏排布：常用项并排，弹窗本身也能占满可用高度，多数情况下不必滚动。 */}
+        <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
+          <div className="space-y-4">
+            <Field
+              label="明暗"
+              hint={themeMode === 'auto' ? `跟随系统，当前为${resolvedTheme === 'dark' ? '深色' : '浅色'}` : undefined}
+            >
+              <div className="grid grid-cols-3 gap-2">
+                {THEME_CHOICES.map((t) => (
+                  <button
+                    key={t.value}
+                    type="button"
+                    data-theme-choice={t.value}
+                    onClick={() => void saveSettings({ theme: t.value })}
+                    className={cx(
+                      'rounded-lg border px-2 py-2 text-[0.8125rem] transition-colors',
+                      themeMode === t.value
+                        ? 'border-seal bg-seal/10 text-seal'
+                        : 'border-line text-ink-2 hover:bg-surface-2',
+                    )}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </Field>
 
-        <Field label="印章色" hint="影响按钮、选中态与强调色，不改动结构。">
-          <div className="flex flex-wrap gap-2">
-            {ACCENTS.map((a) => (
-              <button
-                key={a.value}
-                type="button"
-                onClick={() => void saveSettings({ accent: a.value })}
-                className={cx(
-                  'flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[12.5px] transition-colors',
-                  (settings.accent ?? 'seal') === a.value
-                    ? 'border-seal bg-seal/10 text-ink'
-                    : 'border-line text-ink-2 hover:bg-surface-2',
-                )}
-              >
-                <span className="h-3.5 w-3.5 rounded-full" style={{ background: a.color }} />
-                {a.label}
-              </button>
-            ))}
+            <Field label="界面字号" hint="正文与间距一起缩放，立即生效。">
+              <div className="grid grid-cols-4 gap-2">
+                {FONT_SCALES.map((s) => (
+                  <button
+                    key={s.value}
+                    type="button"
+                    data-font-scale={s.value}
+                    onClick={() => void saveSettings({ fontScale: s.value })}
+                    className={cx(
+                      'rounded-lg border px-1 py-1.5 transition-colors',
+                      scale === fontScaleOf(s.value)
+                        ? 'border-seal bg-seal/10 text-seal'
+                        : 'border-line text-ink-2 hover:bg-surface-2',
+                    )}
+                  >
+                    <span className="block text-[0.78125rem]">{s.label}</span>
+                    <span className="block text-[0.65625rem] text-ink-3">{s.percent}</span>
+                  </button>
+                ))}
+              </div>
+            </Field>
           </div>
-        </Field>
 
-        <Field label="提醒与提示音">
-          <div className="space-y-2">
-            <label className="flex items-center gap-2 text-[12.5px] text-ink-2">
-              <input
-                type="checkbox"
-                className="h-3.5 w-3.5 accent-[var(--seal)]"
-                checked={settings.soundOn !== '0'}
-                onChange={(e) => void saveSettings({ soundOn: e.target.checked ? '1' : '0' })}
-              />
-              提醒时播放提示音
-            </label>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={async () => {
-                  const r = await requestPermission()
-                  toast(
-                    r === 'granted'
-                      ? '桌面通知已开启'
-                      : r === 'denied'
-                        ? '桌面通知被拒绝，可在浏览器站点设置中重新允许'
-                        : '当前浏览器不支持桌面通知，将只使用应用内提醒',
-                    r === 'granted' ? 'ok' : 'info',
-                  )
-                }}
-              >
-                申请桌面通知权限
-              </Button>
-              <span className="text-[11.5px] text-ink-3">
-                {typeof Notification === 'undefined' ? '当前环境不支持' : `当前：${Notification.permission}`}
-              </span>
-            </div>
+          <div className="space-y-4">
+            <Field label="印章色" hint="影响按钮、选中态与强调色，不改动结构。">
+              <div className="flex flex-wrap gap-2">
+                {ACCENTS.map((a) => (
+                  <button
+                    key={a.value}
+                    type="button"
+                    onClick={() => void saveSettings({ accent: a.value })}
+                    className={cx(
+                      'flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[0.78125rem] transition-colors',
+                      (settings.accent ?? 'seal') === a.value
+                        ? 'border-seal bg-seal/10 text-ink'
+                        : 'border-line text-ink-2 hover:bg-surface-2',
+                    )}
+                  >
+                    <span className="h-3.5 w-3.5 rounded-full" style={{ background: a.color }} />
+                    {a.label}
+                  </button>
+                ))}
+              </div>
+            </Field>
+
+            <Field label="提醒与提示音">
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-[0.78125rem] text-ink-2">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 accent-[var(--seal)]"
+                    checked={settings.soundOn !== '0'}
+                    onChange={(e) => void saveSettings({ soundOn: e.target.checked ? '1' : '0' })}
+                  />
+                  提醒时播放提示音
+                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button variant="outline" size="sm" disabled={diag.state === 'granted'} onClick={() => void askNotification()}>
+                    {diag.state === 'granted' ? '桌面通知已开启' : '申请桌面通知权限'}
+                  </Button>
+                  <span className={cx('text-[0.71875rem]', diag.state === 'granted' ? 'text-jade' : 'text-ink-3')}>
+                    当前：{NOTIFY_LABEL[diag.state]}
+                  </span>
+                  {diag.state === 'framed' ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => window.open(window.location.href, '_blank', 'noopener')}
+                    >
+                      在新窗口打开
+                    </Button>
+                  ) : null}
+                </div>
+                {/* 权限一旦被浏览器记成拒绝，网页就再也弹不出授权框。把原因和改法写在面板上，别让用户反复点。 */}
+                <p className="text-[0.6875rem] leading-relaxed text-ink-3">
+                  {diag.state === 'granted' ? '提醒会同时出现在系统通知中心。' : diag.label}
+                  {diag.advice ? ` ${diag.advice}` : ''}
+                </p>
+              </div>
+            </Field>
           </div>
-        </Field>
+        </div>
 
-        <Field label="数据" hint="备份是自洽的：清单、标签、子任务、复盘、专注记录都在其中。">
+        {/* 底部四块两栏排布：数据｜集成 / 快捷键｜重置提醒，压缩整体高度。 */}
+        <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
+          <Field label="数据" hint="备份是自洽的：清单、标签、子任务、复盘、专注记录都在其中。">
           <div className="space-y-2">
             <div className="flex flex-wrap gap-2">
               <Button
@@ -1339,7 +1421,7 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
                 导入（覆盖）
               </Button>
             </div>
-            <p className="text-[11px] leading-relaxed text-ink-3">
+            <p className="text-[0.6875rem] leading-relaxed text-ink-3">
               ZIP 是完整备份：JSON 加上任务附件，一份就能还原全部。CSV 只含任务表，便于在表格软件里查阅。
               「追加」保留现有数据，「覆盖」会先清空再重建。
             </p>
@@ -1354,17 +1436,8 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
           />
         </Field>
 
-        <div className="flex items-center justify-between gap-4 border-t border-line pt-4">
-          <span className="text-[12px] leading-relaxed text-ink-3">
-            模板任务、Webhook、自动备份与 CalDAV 订阅。
-          </span>
-          <Button variant="outline" size="sm" data-open-integrations onClick={() => setIntegrationsOpen(true)}>
-            集成与自动化
-          </Button>
-        </div>
-
         <Field label="快捷键">
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[12px] text-ink-2">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[0.75rem] text-ink-2">
             {[
               ['N', '新建任务'],
               ['/', '搜索'],
@@ -1378,7 +1451,7 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
               ['Esc', '关闭面板 / 取消'],
             ].map(([k, v]) => (
               <div key={k} className="flex items-center gap-2">
-                <kbd className="rounded border border-line bg-surface-2 px-1.5 py-0.5 font-mono text-[10.5px] text-ink-3">
+                <kbd className="rounded border border-line bg-surface-2 px-1.5 py-0.5 font-mono text-[0.65625rem] text-ink-3">
                   {k}
                 </kbd>
                 <span>{v}</span>
@@ -1387,13 +1460,29 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
           </div>
         </Field>
 
-        <div className="flex items-center justify-between gap-4 border-t border-line pt-4">
-          <span className="text-[12px] leading-relaxed text-ink-3">
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-[0.75rem] leading-relaxed text-ink-3">
+            模板任务、Webhook、自动备份与 CalDAV 订阅。
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0 whitespace-nowrap"
+            data-open-integrations
+            onClick={() => setIntegrationsOpen(true)}
+          >
+            集成与自动化
+          </Button>
+        </div>
+
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-[0.75rem] leading-relaxed text-ink-3">
             清空提醒台账后，已提醒过的事项会重新参与提醒。
           </span>
           <Button
             variant="outline"
             size="sm"
+            className="shrink-0 whitespace-nowrap"
             onClick={async () => {
               await api.resetReminders()
               toast('提醒台账已重置')
@@ -1401,6 +1490,7 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
           >
             重置提醒
           </Button>
+        </div>
         </div>
 
         <IntegrationsDialog open={integrationsOpen} onClose={() => setIntegrationsOpen(false)} />
@@ -1429,25 +1519,25 @@ function HistoryDialog({ open, onClose }: { open: boolean; onClose: () => void }
     }
   }
   return (
-    <Modal open={open} onClose={onClose} title="操作历史" width={440} size="lg">
+    <Modal open={open} onClose={onClose} title="操作历史" width={440}>
       <div className="flex min-h-[200px] flex-col">
         {activities.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 py-10 text-center text-ink-3">
             <IconHistory size={28} className="opacity-50" />
-            <p className="text-[12.5px]">还没有记录。新建、完成、删除等动作会留在这里。</p>
+            <p className="text-[0.78125rem]">还没有记录。新建、完成、删除等动作会留在这里。</p>
           </div>
         ) : (
           <ul className="max-h-[60vh] space-y-0.5 overflow-y-auto pr-1">
             {activities.map((a) => (
-              <li key={a.id} className="flex items-start gap-2.5 rounded-lg px-2 py-1.5 text-[12.5px] hover:bg-surface-2">
-                <span className="mt-[2px] inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-surface-2 px-1.5 text-[10.5px] text-ink-2">
+              <li key={a.id} className="flex items-start gap-2.5 rounded-lg px-2 py-1.5 text-[0.78125rem] hover:bg-surface-2">
+                <span className="mt-[2px] inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-surface-2 px-1.5 text-[0.65625rem] text-ink-2">
                   {ACTIVITY_LABEL[a.kind] ?? a.kind}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-ink">{a.title}</span>
-                  {a.detail ? <span className="block truncate text-[11px] text-ink-3">{a.detail}</span> : null}
+                  {a.detail ? <span className="block truncate text-[0.6875rem] text-ink-3">{a.detail}</span> : null}
                 </span>
-                <span className="shrink-0 whitespace-nowrap text-[10.5px] text-ink-3 tabular-nums">
+                <span className="shrink-0 whitespace-nowrap text-[0.65625rem] text-ink-3 tabular-nums">
                   {relativeTime(a.createdAt)}
                 </span>
               </li>
@@ -1455,7 +1545,7 @@ function HistoryDialog({ open, onClose }: { open: boolean; onClose: () => void }
           </ul>
         )}
         <div className="mt-2 flex items-center justify-between border-t border-line pt-3">
-          <span className="text-[11px] text-ink-3">仅保留最近若干条，作为回顾之用</span>
+          <span className="text-[0.6875rem] text-ink-3">仅保留最近若干条，作为回顾之用</span>
           <Button variant="outline" size="sm" className="text-p-high" icon={IconTrash} onClick={clear} disabled={activities.length === 0}>
             清空历史
           </Button>

@@ -13,25 +13,27 @@ import { ApiError, api, setUnauthorizedHandler, type TaskQuery, type TaskSort } 
 import { todayStr } from '../lib/date'
 import { EMPTY_FILTER, filterFromQuery, filterToQuery, isFilterActive, type TaskFilter } from '../lib/filter'
 import { playChime, playTick, pushNotification } from '../lib/notify'
-import type {
-  Activity,
-  BatchAction,
-  Bootstrap,
-  DailyFocus,
-  Folder,
-  List,
-  ReminderHit,
-  RepeatMeta,
-  SavedFilter,
-  Selection,
-  Settings,
-  SmartKey,
-  Stats,
-  Tag,
-  Task,
-  TaskPatch,
-  UndoState,
-  ViewKind,
+import {
+  fontScaleOf,
+  type Activity,
+  type BatchAction,
+  type Bootstrap,
+  type DailyFocus,
+  type Folder,
+  type List,
+  type ReminderHit,
+  type RepeatMeta,
+  type SavedFilter,
+  type Selection,
+  type Settings,
+  type SmartKey,
+  type Stats,
+  type Tag,
+  type Task,
+  type TaskPatch,
+  type ThemeMode,
+  type UndoState,
+  type ViewKind,
 } from '../types'
 
 export interface Toast {
@@ -68,6 +70,10 @@ interface StoreShape {
   /** 工具栏筛选条件。收敛在 store 里，是为了让「保存的筛选」这类入口能直接改写它。 */
   filters: TaskFilter
   settings: Settings
+  /** 用户选择的明暗模式，含「自动」。 */
+  themeMode: ThemeMode
+  /** 实际生效的外观：把「自动」解析为跟随系统后的结果。 */
+  resolvedTheme: 'light' | 'dark'
   toasts: Toast[]
   reminders: ReminderHit[]
   stats: Stats | null
@@ -253,6 +259,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [keyword, setKeywordState] = useState('')
   const [filters, setFiltersState] = useState<TaskFilter>(EMPTY_FILTER)
   const [settings, setSettings] = useState<Settings>({})
+  // 系统外观偏好。「自动」档以它为准，并在运行期跟随系统切换（不用刷新页面）。
+  const [systemDark, setSystemDark] = useState(
+    () => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false,
+  )
+  const themeMode: ThemeMode = settings.theme ?? 'auto'
+  const resolvedTheme: 'light' | 'dark' = themeMode === 'auto' ? (systemDark ? 'dark' : 'light') : themeMode
   // 排序方式随设置持久化。默认「智能」，由到期日与优先级主导；
   // 只有切到「手动」时，用户拖拽出的 sort_order 才会真正决定顺序。
   const sortBy: TaskSort = (settings.sortBy as TaskSort) || 'smart'
@@ -375,14 +387,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setRepeatMeta(meta)
         setSavedFilters(b.savedFilters ?? [])
         setUndo(b.undo ?? null)
-        // 未设置过外观时，跟随系统偏好，避免第一次打开就与系统主题相逆。
+        // 未设置过外观时默认「跟随系统」，避免第一次打开就与系统主题相逆。
         const stored = b.settings ?? {}
-        const theme: 'light' | 'dark' =
-          stored.theme === 'dark' || stored.theme === 'light'
+        const theme: ThemeMode =
+          stored.theme === 'dark' || stored.theme === 'light' || stored.theme === 'auto'
             ? stored.theme
-            : window.matchMedia?.('(prefers-color-scheme: dark)').matches
-              ? 'dark'
-              : 'light'
+            : 'auto'
         setSettings({ ...stored, theme, accent: stored.accent || 'seal' })
       } catch (e) {
         if (alive) handleError(e, '无法连接到服务')
@@ -401,16 +411,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void refreshTasks()
   }, [loading, refreshTasks])
 
+  // 系统外观变化时实时同步（macOS 的「自动」切换日落模式、定时切换都走这里）。
+  useEffect(() => {
+    const mq = window.matchMedia?.('(prefers-color-scheme: dark)')
+    if (!mq) return
+    const onChange = (e: MediaQueryListEvent) => setSystemDark(e.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+
   // 主题与外观
   useEffect(() => {
     const root = document.documentElement
-    const theme = settings.theme ?? 'light'
-    root.dataset.theme = theme
+    root.dataset.theme = resolvedTheme
     root.dataset.accent = settings.accent || 'seal'
-    root.style.colorScheme = theme
+    root.style.colorScheme = resolvedTheme
     const meta = document.querySelector('meta[name="theme-color"]')
-    if (meta) meta.setAttribute('content', theme === 'dark' ? '#171513' : '#faf7f2')
-  }, [settings.theme, settings.accent])
+    if (meta) meta.setAttribute('content', resolvedTheme === 'dark' ? '#171513' : '#faf7f2')
+  }, [resolvedTheme, settings.accent])
+
+  // 界面字号：改根元素 font-size，正文与间距一起缩放。
+  // 用百分比而不是 px，这样浏览器自身的「默认字号」偏好仍然生效。
+  useEffect(() => {
+    const root = document.documentElement
+    const scale = fontScaleOf(settings.fontScale)
+    if (scale === 1) root.style.removeProperty('font-size')
+    else root.style.fontSize = `${Math.round(scale * 100)}%`
+  }, [settings.fontScale])
 
   // 周期刷新角标，让「今天 / 最近7天」的计数不因跨天而失真
   useEffect(() => {
@@ -1199,6 +1226,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     keyword,
     filters,
     settings,
+    themeMode,
+    resolvedTheme,
     toasts,
     reminders,
     stats,

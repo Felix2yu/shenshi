@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import { footnoteOfTheDay } from '../lib/quotes'
 import { fullDate, greeting, todayStr } from '../lib/date'
 import { describeFilter, isFilterActive, applyFilter, EMPTY_FILTER, type TaskFilter } from '../lib/filter'
+import { useIMEGuard } from '../lib/ime'
 import { useStore } from '../store/AppStore'
 import type { TaskSort } from '../api/client'
 import type { SmartKey, ViewKind } from '../types'
@@ -120,6 +121,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
     applySavedFilter,
     deleteSavedFilter,
   } = useStore()
+  const { compositionProps, isComposing } = useIMEGuard()
   const [filterOpen, setFilterOpen] = useState(false)
   const [sortOpen, setSortOpen] = useState(false)
   const [saveOpen, setSaveOpen] = useState(false)
@@ -173,8 +175,8 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
     <header className="relative z-30 shrink-0 border-b border-line bg-paper/85 px-5 pt-3.5 backdrop-blur">
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
-          <h1 className="brand-serif truncate text-[21px] font-semibold leading-7 text-ink">{title}</h1>
-          <p className="mt-0.5 flex flex-wrap items-center gap-2 text-[11.5px] text-ink-3">
+          <h1 className="brand-serif truncate text-[1.3125rem] font-semibold leading-7 text-ink">{title}</h1>
+          <p className="mt-0.5 flex flex-wrap items-center gap-2 text-[0.71875rem] text-ink-3">
             <span>{subtitle}</span>
             {view === 'list' || view === 'board' || view === 'table' ? (
               <span className="text-ink-3/80">
@@ -197,7 +199,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                 title={v.label}
                 onClick={() => setView(v.key)}
                 className={cx(
-                  'inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12.5px] transition-colors',
+                  'inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.78125rem] transition-colors',
                   view === v.key ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:text-ink',
                 )}
               >
@@ -216,7 +218,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
             />
             <Popover open={filterOpen} onClose={() => setFilterOpen(false)} align="right" width={272}>
               <div className="p-1.5">
-                <div className="px-1 pb-1 text-[11px] tracking-wide text-ink-3">完成状态</div>
+                <div className="px-1 pb-1 text-[0.6875rem] tracking-wide text-ink-3">完成状态</div>
                 <div className="flex gap-1">
                   {STATUS_OPTIONS.map((o) => (
                     <button
@@ -224,7 +226,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                       type="button"
                       onClick={() => set({ status: o.v })}
                       className={cx(
-                        'flex-1 rounded-md py-1 text-[12px] transition-colors',
+                        'flex-1 rounded-md py-1 text-[0.75rem] transition-colors',
                         filters.status === o.v ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:bg-surface-2',
                       )}
                     >
@@ -233,7 +235,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                   ))}
                 </div>
 
-                <div className="px-1 pb-1 pt-2.5 text-[11px] tracking-wide text-ink-3">优先级</div>
+                <div className="px-1 pb-1 pt-2.5 text-[0.6875rem] tracking-wide text-ink-3">优先级</div>
                 <div className="flex gap-1">
                   {[
                     { v: null, l: '全部' },
@@ -247,7 +249,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                       type="button"
                       onClick={() => set({ priority: o.v })}
                       className={cx(
-                        'flex-1 rounded-md py-1 text-[12px] transition-colors',
+                        'flex-1 rounded-md py-1 text-[0.75rem] transition-colors',
                         priority === o.v ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:bg-surface-2',
                       )}
                     >
@@ -256,7 +258,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                   ))}
                 </div>
 
-                <div className="px-1 pb-1 pt-2.5 text-[11px] tracking-wide text-ink-3">到期区间</div>
+                <div className="px-1 pb-1 pt-2.5 text-[0.6875rem] tracking-wide text-ink-3">到期区间</div>
                 <div className="flex gap-1">
                   {[
                     { l: '不限', p: null },
@@ -277,7 +279,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                         type="button"
                         onClick={() => (o.p === null ? set({ from: null, to: null }) : set(rangePreset(o.p)))}
                         className={cx(
-                          'flex-1 rounded-md py-1 text-[12px] transition-colors',
+                          'flex-1 rounded-md py-1 text-[0.75rem] transition-colors',
                           active ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:bg-surface-2',
                         )}
                       >
@@ -291,26 +293,26 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                     type="date"
                     value={filters.from ?? ''}
                     onChange={(e) => set({ from: e.target.value || null })}
-                    className="min-w-0 flex-1 rounded-md border border-line bg-surface px-1.5 py-1 text-[11.5px] text-ink outline-none focus:border-seal/60"
+                    className="min-w-0 flex-1 rounded-md border border-line bg-surface px-1.5 py-1 text-[0.71875rem] text-ink outline-none focus:border-seal/60"
                   />
-                  <span className="shrink-0 text-[11px] text-ink-3">→</span>
+                  <span className="shrink-0 text-[0.6875rem] text-ink-3">→</span>
                   <input
                     type="date"
                     value={filters.to ?? ''}
                     onChange={(e) => set({ to: e.target.value || null })}
-                    className="min-w-0 flex-1 rounded-md border border-line bg-surface px-1.5 py-1 text-[11.5px] text-ink outline-none focus:border-seal/60"
+                    className="min-w-0 flex-1 rounded-md border border-line bg-surface px-1.5 py-1 text-[0.71875rem] text-ink outline-none focus:border-seal/60"
                   />
                 </div>
 
                 {tags.length > 0 ? (
                   <>
                     <div className="flex items-center justify-between px-1 pb-1 pt-2.5">
-                      <span className="text-[11px] tracking-wide text-ink-3">标签</span>
+                      <span className="text-[0.6875rem] tracking-wide text-ink-3">标签</span>
                       {tagIds.length > 1 ? (
                         <button
                           type="button"
                           onClick={() => set({ tagMode: filters.tagMode === 'all' ? 'any' : 'all' })}
-                          className="rounded-md px-1.5 py-0.5 text-[10.5px] text-seal transition-colors hover:bg-seal/10"
+                          className="rounded-md px-1.5 py-0.5 text-[0.65625rem] text-seal transition-colors hover:bg-seal/10"
                           title="切换多标签的组合方式"
                         >
                           {filters.tagMode === 'all' ? '须全部命中' : '任一命中即可'}
@@ -326,7 +328,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                             type="button"
                             onClick={() => toggleTag(t.id)}
                             className={cx(
-                              'flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-[12.5px]',
+                              'flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-[0.78125rem]',
                               on ? 'bg-seal/10 text-seal' : 'text-ink-2 hover:bg-surface-2',
                             )}
                           >
@@ -345,7 +347,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                     type="button"
                     onClick={() => set({ pinned: !filters.pinned })}
                     className={cx(
-                      'inline-flex flex-1 items-center justify-center gap-1 rounded-md py-1 text-[12px] transition-colors',
+                      'inline-flex flex-1 items-center justify-center gap-1 rounded-md py-1 text-[0.75rem] transition-colors',
                       filters.pinned ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:bg-surface-2',
                     )}
                   >
@@ -356,7 +358,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                     type="button"
                     onClick={() => set({ starred: !filters.starred })}
                     className={cx(
-                      'inline-flex flex-1 items-center justify-center gap-1 rounded-md py-1 text-[12px] transition-colors',
+                      'inline-flex flex-1 items-center justify-center gap-1 rounded-md py-1 text-[0.75rem] transition-colors',
                       filters.starred ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:bg-surface-2',
                     )}
                   >
@@ -367,12 +369,12 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
 
                 <div className="mt-2 border-t border-line pt-2">
                   <div className="flex items-center justify-between px-1 pb-1">
-                    <span className="text-[11px] tracking-wide text-ink-3">保存的条件</span>
+                    <span className="text-[0.6875rem] tracking-wide text-ink-3">保存的条件</span>
                     {isFilterActive(filters) && !saveOpen ? (
                       <button
                         type="button"
                         onClick={() => setSaveOpen(true)}
-                        className="rounded-md px-1.5 py-0.5 text-[10.5px] text-seal transition-colors hover:bg-seal/10"
+                        className="rounded-md px-1.5 py-0.5 text-[0.65625rem] text-seal transition-colors hover:bg-seal/10"
                       >
                         保存当前
                       </button>
@@ -382,9 +384,11 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                     <div className="flex items-center gap-1 px-1 pb-1">
                       <input
                         autoFocus
+                        {...compositionProps}
                         value={saveName}
                         onChange={(e) => setSaveName(e.target.value)}
                         onKeyDown={(e) => {
+                          if (isComposing(e)) return
                           if (e.key === 'Enter') {
                             void saveFilter(saveName).then((f) => {
                               if (f) {
@@ -396,7 +400,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                           if (e.key === 'Escape') setSaveOpen(false)
                         }}
                         placeholder="给这组条件起个名字"
-                        className="min-w-0 flex-1 rounded-md border border-line bg-surface px-1.5 py-1 text-[12px] text-ink outline-none focus:border-seal/60"
+                        className="min-w-0 flex-1 rounded-md border border-line bg-surface px-1.5 py-1 text-[0.75rem] text-ink outline-none focus:border-seal/60"
                       />
                       <button
                         type="button"
@@ -408,13 +412,13 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                             }
                           })
                         }
-                        className="rounded-md bg-seal/12 px-2 py-1 text-[11.5px] font-medium text-seal"
+                        className="rounded-md bg-seal/12 px-2 py-1 text-[0.71875rem] font-medium text-seal"
                       >
                         保存
                       </button>
                     </div>
                   ) : savedFilters.length === 0 ? (
-                    <p className="px-2 pb-0.5 text-[11px] leading-relaxed text-ink-3">
+                    <p className="px-2 pb-0.5 text-[0.6875rem] leading-relaxed text-ink-3">
                       常用的组合可以存下来，下次一键套用。
                     </p>
                   ) : (
@@ -427,7 +431,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                               applySavedFilter(f)
                               setFilterOpen(false)
                             }}
-                            className="flex-1 truncate px-2 py-1 text-left text-[12.5px] text-ink-2"
+                            className="flex-1 truncate px-2 py-1 text-left text-[0.78125rem] text-ink-2"
                             title={f.name}
                           >
                             {f.name}
@@ -447,14 +451,14 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                 </div>
 
                 <div className="mt-1.5 flex items-center justify-between border-t border-line px-1 pt-2">
-                  <span className="text-[10.5px] text-ink-3">命中 {hitCount} 项</span>
+                  <span className="text-[0.65625rem] text-ink-3">命中 {hitCount} 项</span>
                   <button
                     type="button"
                     onClick={() => {
                       onFilters(EMPTY_FILTER)
                       setSaveOpen(false)
                     }}
-                    className="text-[11px] text-seal transition-colors hover:underline"
+                    className="text-[0.6875rem] text-seal transition-colors hover:underline"
                   >
                     全部清除
                   </button>
@@ -473,7 +477,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
               />
               <Popover open={sortOpen} onClose={() => setSortOpen(false)} align="right" width={232}>
                 <div className="p-1.5">
-                  <div className="px-1 pb-1 text-[11px] tracking-wide text-ink-3">排序方式</div>
+                  <div className="px-1 pb-1 text-[0.6875rem] tracking-wide text-ink-3">排序方式</div>
                   {SORT_OPTIONS.map((o) => (
                     <button
                       key={o.value}
@@ -483,17 +487,17 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                         setSortOpen(false)
                       }}
                       className={cx(
-                        'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] transition-colors',
+                        'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[0.78125rem] transition-colors',
                         sortBy === o.value ? 'bg-seal/10 text-seal' : 'text-ink hover:bg-surface-2',
                       )}
                     >
                       <span className="flex-1">{o.label}</span>
-                      <span className="text-[10.5px] text-ink-3">{o.hint}</span>
+                      <span className="text-[0.65625rem] text-ink-3">{o.hint}</span>
                       {sortBy === o.value ? <IconCheck size={12} /> : null}
                     </button>
                   ))}
                   {sortBy === 'manual' ? (
-                    <p className="border-t border-line px-2 pb-1 pt-2 text-[11px] leading-relaxed text-ink-3">
+                    <p className="border-t border-line px-2 pb-1 pt-2 text-[0.6875rem] leading-relaxed text-ink-3">
                       按住任务行左缘的手柄上下拖动即可调整顺序。
                     </p>
                   ) : null}
@@ -519,20 +523,20 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
       {/* 筛选生效提示 */}
       {isFilterActive(filters) ? (
         <div className="flex items-center gap-2 pb-2 pt-2">
-          <span className="text-[11.5px] text-ink-3">
+          <span className="text-[0.71875rem] text-ink-3">
             已筛选：{describeFilter(filters, tags)} · 命中 {hitCount} 项
           </span>
           <button
             type="button"
             onClick={() => onFilters(EMPTY_FILTER)}
-            className="inline-flex items-center gap-1 text-[11.5px] text-seal hover:underline"
+            className="inline-flex items-center gap-1 text-[0.71875rem] text-seal hover:underline"
           >
             <IconX size={11} />
             清除
           </button>
         </div>
       ) : (
-        <div className="flex items-center justify-end pb-1.5 pt-1 text-[10.5px] text-ink-3/70">
+        <div className="flex items-center justify-end pb-1.5 pt-1 text-[0.65625rem] text-ink-3/70">
           {footnote.text} · {footnote.source}
         </div>
       )}
@@ -548,7 +552,7 @@ function TodayFocusStrip() {
     return (
       <div className="mb-2 flex items-center gap-2 rounded-xl border border-dashed border-line px-3 py-2">
         <IconStar size={13} className="text-ink-3" />
-        <span className="text-[11.5px] text-ink-3">
+        <span className="text-[0.71875rem] text-ink-3">
           还没有选定今日重点。点左下「晨省 · 规划今日」挑出三件最要紧的事。
         </span>
       </div>
@@ -557,7 +561,7 @@ function TodayFocusStrip() {
   const done = focusTasks.filter((t) => t!.status === 'done').length
   return (
     <div className="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-seal/25 bg-seal/6 px-3 py-2">
-      <span className="brand-serif inline-flex items-center gap-1.5 text-[12.5px] font-medium text-seal">
+      <span className="brand-serif inline-flex items-center gap-1.5 text-[0.78125rem] font-medium text-seal">
         <IconStar size={13} />
         今日三件事
       </span>
@@ -567,7 +571,7 @@ function TodayFocusStrip() {
           type="button"
           onClick={() => void toggleTask(t!.id)}
           className={cx(
-            'inline-flex max-w-[220px] items-center gap-1.5 rounded-lg border px-2 py-0.5 text-[12px] transition-colors',
+            'inline-flex max-w-[220px] items-center gap-1.5 rounded-lg border px-2 py-0.5 text-[0.75rem] transition-colors',
             t!.status === 'done'
               ? 'border-jade/30 bg-jade/10 text-ink-3 line-through'
               : 'border-line bg-surface text-ink hover:border-seal/40',
@@ -577,13 +581,13 @@ function TodayFocusStrip() {
           <span className="truncate">{t!.title}</span>
         </button>
       ))}
-      <span className="ml-auto text-[11px] text-ink-3">
+      <span className="ml-auto text-[0.6875rem] text-ink-3">
         {done}/{focusTasks.length} 已了
       </span>
       <button
         type="button"
         onClick={() => void setTodayFocus([])}
-        className="text-[11px] text-ink-3 transition-colors hover:text-ink"
+        className="text-[0.6875rem] text-ink-3 transition-colors hover:text-ink"
       >
         清除
       </button>

@@ -28,7 +28,7 @@ export function IntegrationsDialog({ open, onClose }: { open: boolean; onClose: 
   const [tab, setTab] = useState<Tab>('templates')
 
   return (
-    <Modal open={open} onClose={onClose} title="集成与自动化" width={540} size="lg">
+    <Modal open={open} onClose={onClose} title="集成与自动化" width={820}>
       <div className="mb-4 flex flex-wrap gap-1 border-b border-line pb-2">
         {TABS.map((t) => (
           <button
@@ -37,7 +37,7 @@ export function IntegrationsDialog({ open, onClose }: { open: boolean; onClose: 
             data-integration-tab={t.key}
             onClick={() => setTab(t.key)}
             className={cx(
-              'rounded-lg px-2.5 py-1 text-[12.5px] transition-colors',
+              'rounded-lg px-2.5 py-1 text-[0.78125rem] transition-colors',
               tab === t.key ? 'bg-seal/10 text-seal' : 'text-ink-2 hover:bg-surface-2',
             )}
           >
@@ -102,12 +102,12 @@ function TemplatesPanel() {
 
   return (
     <div className="space-y-3" data-panel="templates">
-      <p className="text-[11.5px] leading-relaxed text-ink-3">
+      <p className="text-[0.71875rem] leading-relaxed text-ink-3">
         把反复要做的事存成底稿，需要时一键铺开成真正的任务。模板只在本地，改动不会影响已生成的任务。
       </p>
 
       {items.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-line px-3 py-6 text-center text-[12.5px] text-ink-3">
+        <div className="rounded-xl border border-dashed border-line px-3 py-6 text-center text-[0.78125rem] text-ink-3">
           还没有模板。可以在任务详情里点「存为模板」，或在这里新建。
         </div>
       ) : (
@@ -116,8 +116,8 @@ function TemplatesPanel() {
             <li key={t.id} data-template-row={t.id} className="rounded-xl border border-line bg-surface-2/40 p-3">
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[13px] text-ink">{t.name}</div>
-                  <div className="mt-0.5 truncate text-[11.5px] text-ink-3">
+                  <div className="truncate text-[0.8125rem] text-ink">{t.name}</div>
+                  <div className="mt-0.5 truncate text-[0.71875rem] text-ink-3">
                     {t.title}
                     {t.dueOffset !== null ? ` · ${dueOffsetLabel(t.dueOffset)}` : ''}
                     {t.subtasks.length > 0 ? ` · ${t.subtasks.length} 项子任务` : ''}
@@ -126,7 +126,7 @@ function TemplatesPanel() {
                 <select
                   value={targetList[t.id] ?? t.listId ?? ''}
                   onChange={(e) => setTargetList((prev) => ({ ...prev, [t.id]: Number(e.target.value) }))}
-                  className="shrink-0 rounded-lg border border-line bg-surface px-1.5 py-1 text-[11.5px] text-ink-2 outline-none"
+                  className="shrink-0 rounded-lg border border-line bg-surface px-1.5 py-1 text-[0.71875rem] text-ink-2 outline-none"
                   aria-label="生成到哪个清单"
                 >
                   <option value="">默认清单</option>
@@ -433,13 +433,13 @@ function WebhooksPanel() {
 
   return (
     <div className="space-y-3" data-panel="webhooks">
-      <p className="text-[11.5px] leading-relaxed text-ink-3">
+      <p className="text-[0.71875rem] leading-relaxed text-ink-3">
         任务变更时向外部地址推送一条 JSON。签名头 <code>X-Shenshi-Signature</code> 是
         请求体的 HMAC-SHA256（密钥即下面填的签名密钥）。
       </p>
 
       {items.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-line px-3 py-6 text-center text-[12.5px] text-ink-3">
+        <div className="rounded-xl border border-dashed border-line px-3 py-6 text-center text-[0.78125rem] text-ink-3">
           还没有 Webhook。
         </div>
       ) : (
@@ -448,11 +448,11 @@ function WebhooksPanel() {
             <li key={w.id} data-webhook-row={w.id} className="rounded-xl border border-line bg-surface-2/40 p-3">
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[13px] text-ink">{w.name || w.url}</div>
-                  <div className="mt-0.5 truncate text-[11.5px] text-ink-3">{w.url}</div>
+                  <div className="truncate text-[0.8125rem] text-ink">{w.name || w.url}</div>
+                  <div className="mt-0.5 truncate text-[0.71875rem] text-ink-3">{w.url}</div>
                   <div className="mt-1 flex flex-wrap gap-1">
                     {w.events.map((e) => (
-                      <span key={e} className="rounded bg-surface-2 px-1.5 py-0.5 text-[10.5px] text-ink-2">
+                      <span key={e} className="rounded bg-surface-2 px-1.5 py-0.5 text-[0.65625rem] text-ink-2">
                         {WEBHOOK_EVENT_LABEL[e] ?? e}
                       </span>
                     ))}
@@ -462,7 +462,7 @@ function WebhooksPanel() {
                   type="button"
                   onClick={() => void toggle(w)}
                   className={cx(
-                    'shrink-0 rounded-lg border px-2 py-1 text-[11px] transition-colors',
+                    'shrink-0 rounded-lg border px-2 py-1 text-[0.6875rem] transition-colors',
                     w.enabled ? 'border-jade/40 text-jade' : 'border-line text-ink-3',
                   )}
                 >
@@ -489,7 +489,7 @@ function WebhooksPanel() {
                 </button>
               </div>
 
-              <div className="mt-2 flex items-center gap-2 text-[11px] text-ink-3">
+              <div className="mt-2 flex items-center gap-2 text-[0.6875rem] text-ink-3">
                 <span>{w.hasSecret ? '已设签名密钥' : '未设签名密钥'}</span>
                 <button type="button" onClick={() => void showDeliveries(w)} className="text-seal hover:underline">
                   最近投递
@@ -499,7 +499,7 @@ function WebhooksPanel() {
               {deliveries[w.id] ? (
                 <ul className="mt-2 space-y-1 border-t border-line pt-2">
                   {deliveries[w.id]!.slice(0, 5).map((d) => (
-                    <li key={d.id} className="flex items-center gap-2 text-[11px]">
+                    <li key={d.id} className="flex items-center gap-2 text-[0.6875rem]">
                       <span className={cx('h-1.5 w-1.5 rounded-full', d.ok ? 'bg-jade' : 'bg-p-high')} />
                       <span className="text-ink-2">{WEBHOOK_EVENT_LABEL[d.event] ?? d.event}</span>
                       <span className="tabular-nums text-ink-3">{d.code === 0 ? '未送达' : d.code}</span>
@@ -596,7 +596,7 @@ function WebhookEditor({
       <Field label="订阅事件">
         <div className="flex flex-wrap gap-2">
           {WEBHOOK_EVENTS.map((e) => (
-            <label key={e} className="flex items-center gap-1.5 text-[12px] text-ink-2">
+            <label key={e} className="flex items-center gap-1.5 text-[0.75rem] text-ink-2">
               <input
                 type="checkbox"
                 className="h-3.5 w-3.5 accent-[var(--seal)]"
@@ -610,7 +610,7 @@ function WebhookEditor({
           ))}
         </div>
       </Field>
-      <label className="flex items-center gap-2 text-[12.5px] text-ink-2">
+      <label className="flex items-center gap-2 text-[0.78125rem] text-ink-2">
         <input
           type="checkbox"
           className="h-3.5 w-3.5 accent-[var(--seal)]"
@@ -669,12 +669,12 @@ function BackupPanel() {
 
   return (
     <div className="space-y-4" data-panel="backup">
-      <p className="text-[11.5px] leading-relaxed text-ink-3">
+      <p className="text-[0.71875rem] leading-relaxed text-ink-3">
         每天在设定的时点导出一份完整备份，内容与「导出完整备份 ZIP」一致：JSON 连同任务附件打包，
         单独一份就能还原全部。备份写在服务端数据目录，与数据库同盘——真要防灾还是把整个数据目录另存一份。
       </p>
 
-      <label className="flex items-center gap-2 text-[12.5px] text-ink-2">
+      <label className="flex items-center gap-2 text-[0.78125rem] text-ink-2">
         <input
           type="checkbox"
           className="h-3.5 w-3.5 accent-[var(--seal)]"
@@ -718,34 +718,34 @@ function BackupPanel() {
           {running ? '备份中…' : '立即备份一次'}
         </Button>
         {status?.lastAt ? (
-          <span className="text-[11.5px] text-ink-3">
+          <span className="text-[0.71875rem] text-ink-3">
             上次备份：{status.lastAt.slice(0, 16).replace('T', ' ')}
             {status.lastFile ? ` · ${status.lastFile}` : ''}
           </span>
         ) : (
-          <span className="text-[11.5px] text-ink-3">还没有自动备份过</span>
+          <span className="text-[0.71875rem] text-ink-3">还没有自动备份过</span>
         )}
       </div>
 
       {status?.lastError ? (
-        <div className="rounded-lg border border-p-high/30 bg-p-high/8 px-3 py-2 text-[11.5px] text-p-high">
+        <div className="rounded-lg border border-p-high/30 bg-p-high/8 px-3 py-2 text-[0.71875rem] text-p-high">
           上次备份失败：{status.lastError}
         </div>
       ) : null}
 
       {status && status.files.length > 0 ? (
         <div className="space-y-1">
-          <div className="text-[11.5px] font-medium tracking-wide text-ink-3">
+          <div className="text-[0.71875rem] font-medium tracking-wide text-ink-3">
             现有备份（{status.files.length} 份）
           </div>
           <ul className="max-h-40 space-y-1 overflow-auto">
             {status.files.map((f) => (
-              <li key={f} className="truncate text-[11.5px] text-ink-2" title={f}>
+              <li key={f} className="truncate text-[0.71875rem] text-ink-2" title={f}>
                 {f}
               </li>
             ))}
           </ul>
-          <p className="text-[11px] text-ink-3">目录：{status.dir}</p>
+          <p className="text-[0.6875rem] text-ink-3">目录：{status.dir}</p>
         </div>
       ) : null}
     </div>
@@ -795,7 +795,7 @@ function CaldavPanel() {
 
   return (
     <div className="space-y-4" data-panel="caldav">
-      <p className="text-[11.5px] leading-relaxed text-ink-3">
+      <p className="text-[0.71875rem] leading-relaxed text-ink-3">
         用系统自带的日历 / 提醒事项订阅「慎始」的日程与任务。日程集合是只读的；
         提醒事项集合里勾选完成会同步回服务端——方向反过来时，服务端始终是权威。
       </p>
@@ -805,25 +805,25 @@ function CaldavPanel() {
           <div key={r.key} className="rounded-xl border border-line bg-surface-2/40 p-3">
             <div className="flex items-center gap-2">
               <IconPlug size={13} className="shrink-0 text-ink-3" />
-              <span className="text-[12px] text-ink-2">{r.label}</span>
+              <span className="text-[0.75rem] text-ink-2">{r.label}</span>
               <button
                 type="button"
                 onClick={() => void copy(r.value, r.key)}
                 className={cx(
-                  'ml-auto shrink-0 rounded px-1.5 py-0.5 text-[11px] transition-colors',
+                  'ml-auto shrink-0 rounded px-1.5 py-0.5 text-[0.6875rem] transition-colors',
                   copied === r.key ? 'text-jade' : 'text-seal hover:bg-seal/10',
                 )}
               >
                 {copied === r.key ? '已复制' : '复制'}
               </button>
             </div>
-            <code className="mt-1 block break-all text-[11.5px] text-ink-3">{r.value}</code>
-            <div className="mt-0.5 text-[11px] text-ink-3">{r.hint}</div>
+            <code className="mt-1 block break-all text-[0.71875rem] text-ink-3">{r.value}</code>
+            <div className="mt-0.5 text-[0.6875rem] text-ink-3">{r.hint}</div>
           </div>
         ))}
       </div>
 
-      <div className="rounded-xl border border-line bg-surface-2/40 p-3 text-[11.5px] leading-relaxed text-ink-2">
+      <div className="rounded-xl border border-line bg-surface-2/40 p-3 text-[0.71875rem] leading-relaxed text-ink-2">
         <div className="mb-1 font-medium text-ink">在 Apple 设备上</div>
         系统设置 → 日历 → 账户 → 添加账户 → 其他 → 添加 CalDAV 账户。
         服务器填账户根地址，用户名任意，<strong>密码填访问口令</strong>（用户名会被忽略）。
@@ -832,7 +832,7 @@ function CaldavPanel() {
           : ' 当前服务未启用访问口令，连接时留空即可——只在可信内网里才该这样。'}
       </div>
 
-      <div className="space-y-1 text-[11.5px] leading-relaxed text-ink-3">
+      <div className="space-y-1 text-[0.71875rem] leading-relaxed text-ink-3">
         <div>· 勾选提醒事项会写回服务端；在客户端删除或改标题不会被接受。</div>
         <div>· 同步依赖服务端常驻运行，进程退出时系统日历会显示连接失败。</div>
         <div>· 已针对 Apple 客户端做过兼容：不支持的方法返回 403 而非 501。</div>

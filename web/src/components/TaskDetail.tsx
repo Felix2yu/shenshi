@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import { addDays, addMonths, dayDiff, fullDate, relativeTime, todayStr, weekday } from '../lib/date'
 import { renderMarkdown } from '../lib/markdown'
 import { describeRepeat } from '../lib/nlp'
+import { useIMEGuard } from '../lib/ime'
 import { useStore } from '../store/AppStore'
 import type { Attachment, Priority, Task } from '../types'
 import {
@@ -53,6 +54,7 @@ const PRIORITY_OPTIONS: { value: Priority; label: string; color: string }[] = [
 ]
 
 export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () => void }) {
+  const { compositionProps, isComposing } = useIMEGuard()
   const {
     tasks,
     updateTask,
@@ -124,7 +126,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
 
   if (!task) {
     return (
-      <div className="flex h-full w-[352px] shrink-0 items-center justify-center border-l border-line bg-surface text-[13px] text-ink-3">
+      <div className="flex h-full w-[352px] shrink-0 items-center justify-center border-l border-line bg-surface text-[0.8125rem] text-ink-3">
         任务已不存在
       </div>
     )
@@ -219,7 +221,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
       {/* 头部 */}
       <header className="flex items-center gap-1 border-b border-line px-3 py-2">
         <RoundCheck checked={done} onChange={() => void toggleTask(task.id)} size={18} />
-        <span className="ml-1 flex-1 truncate text-[12px] text-ink-3">
+        <span className="ml-1 flex-1 truncate text-[0.75rem] text-ink-3">
           {done ? `完成于 ${relativeTime(task.completedAt)}` : `创建于 ${relativeTime(task.createdAt)}`}
         </span>
         <IconButton
@@ -247,7 +249,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
           <Popover open={moreOpen} onClose={() => setMoreOpen(false)} align="right" width={190}>
             <button
               type="button"
-              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-ink hover:bg-surface-2"
+              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[0.78125rem] text-ink hover:bg-surface-2"
               onClick={async () => {
                 await updateTask(task.id, { important: !task.important, urgent: !task.urgent })
                 setMoreOpen(false)
@@ -258,7 +260,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
             </button>
             <button
               type="button"
-              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-ink hover:bg-surface-2"
+              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[0.78125rem] text-ink hover:bg-surface-2"
               onClick={async () => {
                 await updateTask(task.id, { status: done ? 'todo' : 'done' })
                 setMoreOpen(false)
@@ -270,7 +272,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
             {task.repeatRule && !done ? (
               <button
                 type="button"
-                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-ink hover:bg-surface-2"
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[0.78125rem] text-ink hover:bg-surface-2"
                 onClick={async () => {
                   setMoreOpen(false)
                   await skipTask(task.id)
@@ -282,7 +284,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
             ) : null}
             <button
               type="button"
-              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-ink hover:bg-surface-2"
+              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[0.78125rem] text-ink hover:bg-surface-2"
               onClick={async () => {
                 setMoreOpen(false)
                 const copy = await duplicateTask(task.id)
@@ -295,7 +297,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
             <div className="my-1 border-t border-line" />
             <button
               type="button"
-              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-p-high hover:bg-p-high/10"
+              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[0.78125rem] text-p-high hover:bg-p-high/10"
               onClick={async () => {
                 setMoreOpen(false)
                 const ok = await confirm({
@@ -329,14 +331,14 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
           rows={2}
           placeholder="任务标题"
           className={cx(
-            'w-full resize-none bg-transparent text-[15.5px] font-medium leading-6 outline-none placeholder:text-ink-3',
+            'w-full resize-none bg-transparent text-[0.96875rem] font-medium leading-6 outline-none placeholder:text-ink-3',
             done && 'text-ink-3 line-through',
           )}
         />
 
         {/* 子任务 */}
         <div className="mt-4">
-          <div className="mb-1.5 flex items-center gap-2 text-[11.5px] font-medium tracking-wide text-ink-3">
+          <div className="mb-1.5 flex items-center gap-2 text-[0.71875rem] font-medium tracking-wide text-ink-3">
             <IconSubtask size={13} />
             <span>子任务</span>
             {task.subtasks.length > 0 ? (
@@ -370,7 +372,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                     if (v && v !== s.title) void updateSubtask(s.id, { title: v })
                   }}
                   className={cx(
-                    'min-w-0 flex-1 bg-transparent text-[13px] outline-none',
+                    'min-w-0 flex-1 bg-transparent text-[0.8125rem] outline-none',
                     s.done ? 'text-ink-3 line-through' : 'text-ink',
                   )}
                 />
@@ -396,7 +398,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
               value={subInput}
               onChange={(e) => setSubInput(e.target.value)}
               placeholder="添加子任务"
-              className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-ink-3"
+              className="min-w-0 flex-1 bg-transparent text-[0.8125rem] outline-none placeholder:text-ink-3"
             />
           </form>
         </div>
@@ -414,19 +416,19 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
               />
               {task.startDate ? (
                 <>
-                  <span className="text-[11.5px] text-ink-3">
+                  <span className="text-[0.71875rem] text-ink-3">
                     {task.startDate <= todayStr() ? '已到动手日' : `还有 ${dayDiff(task.startDate, todayStr())} 天`}
                   </span>
                   <button
                     type="button"
                     onClick={() => void updateTask(task.id, { startDate: null })}
-                    className="rounded-md border border-line px-2 py-1 text-[12px] text-ink-2 transition-colors hover:border-p-high/40 hover:text-p-high"
+                    className="rounded-md border border-line px-2 py-1 text-[0.75rem] text-ink-2 transition-colors hover:border-p-high/40 hover:text-p-high"
                   >
                     清除
                   </button>
                 </>
               ) : (
-                <span className="text-[11.5px] text-ink-3">未定动手日</span>
+                <span className="text-[0.71875rem] text-ink-3">未定动手日</span>
               )}
             </div>
           </Row>
@@ -440,7 +442,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                   type="button"
                   onClick={() => setDatePopover((v) => !v)}
                   className={cx(
-                    'inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[12.5px] transition-colors',
+                    'inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[0.78125rem] transition-colors',
                     task.dueDate ? 'border-line-strong text-ink' : 'border-line text-ink-2 hover:bg-surface-2',
                   )}
                 >
@@ -464,11 +466,11 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                       onChange={(e) => void setDue(task.dueDate ?? todayStr(), e.target.value || null)}
                     />
                   </div>
-                  <div className="flex items-center justify-between text-[12px] text-ink-3">
+                  <div className="flex items-center justify-between text-[0.75rem] text-ink-3">
                     <span>结束时间</span>
                     <input
                       type="time"
-                      className="rounded-md border border-line bg-surface px-2 py-1 text-[12.5px]"
+                      className="rounded-md border border-line bg-surface px-2 py-1 text-[0.78125rem]"
                       value={task.endTime ?? ''}
                       onChange={(e) => void updateTask(task.id, { endTime: e.target.value || null })}
                     />
@@ -486,7 +488,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                         key={label}
                         type="button"
                         onClick={() => void setDue(date)}
-                        className="rounded-md border border-line px-2 py-1 text-[12px] text-ink-2 transition-colors hover:border-seal/40 hover:text-seal"
+                        className="rounded-md border border-line px-2 py-1 text-[0.75rem] text-ink-2 transition-colors hover:border-seal/40 hover:text-seal"
                       >
                         {label}
                       </button>
@@ -494,7 +496,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                     <button
                       type="button"
                       onClick={() => void setDue(null, null)}
-                      className="rounded-md border border-line px-2 py-1 text-[12px] text-ink-2 transition-colors hover:border-p-high/40 hover:text-p-high"
+                      className="rounded-md border border-line px-2 py-1 text-[0.75rem] text-ink-2 transition-colors hover:border-p-high/40 hover:text-p-high"
                     >
                       清除
                     </button>
@@ -517,7 +519,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                 disabled={!task.dueDate}
                 onClick={() => setRemindPopover((v) => !v)}
                 className={cx(
-                  'inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[12.5px] transition-colors',
+                  'inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[0.78125rem] transition-colors',
                   task.dueDate ? 'border-line-strong text-ink hover:bg-surface-2' : 'border-line text-ink-3',
                 )}
               >
@@ -534,7 +536,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                       key={o.value}
                       type="button"
                       onClick={() => void toggleReminder(o.value)}
-                      className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-ink hover:bg-surface-2"
+                      className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[0.78125rem] text-ink hover:bg-surface-2"
                     >
                       <span
                         className={cx(
@@ -547,7 +549,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                       {o.label}
                     </button>
                   ))}
-                  <p className="border-t border-line px-2.5 pb-1 pt-2 text-[11px] leading-relaxed text-ink-3">
+                  <p className="border-t border-line px-2.5 pb-1 pt-2 text-[0.6875rem] leading-relaxed text-ink-3">
                     未指定时间时按当天 09:00 起算。提醒需要保持页面打开。
                   </p>
                 </div>
@@ -561,7 +563,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
               <button
                 type="button"
                 onClick={() => setRepeatPopover((v) => !v)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-2 py-1 text-[12.5px] text-ink transition-colors hover:bg-surface-2"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-2 py-1 text-[0.78125rem] text-ink transition-colors hover:bg-surface-2"
               >
                 {describeRepeat(task.repeatRule)}
               </button>
@@ -576,18 +578,18 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                         setRepeatPopover(false)
                       }}
                       className={cx(
-                        'flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] transition-colors',
+                        'flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[0.78125rem] transition-colors',
                         (task.repeatRule ?? '') === o.value ? 'bg-seal/10 text-seal' : 'text-ink hover:bg-surface-2',
                       )}
                     >
                       <IconRepeat size={12} className="text-ink-3" />
                       <span className="flex-1">{o.label}</span>
-                      <span className="text-[10.5px] text-ink-3">{o.group}</span>
+                      <span className="text-[0.65625rem] text-ink-3">{o.group}</span>
                     </button>
                   ))}
                   {task.repeatRule ? (
                     <div className="border-t border-line px-2.5 pb-1 pt-2">
-                      <div className="pb-1 text-[11px] tracking-wide text-ink-3">下一次从哪天算</div>
+                      <div className="pb-1 text-[0.6875rem] tracking-wide text-ink-3">下一次从哪天算</div>
                       <div className="flex gap-1">
                         {[
                           { v: 'due' as const, l: '从原到期日', h: '节奏固定，不看实际完成时间' },
@@ -599,7 +601,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                             title={o.h}
                             onClick={() => void updateTask(task.id, { repeatFrom: o.v })}
                             className={cx(
-                              'flex-1 rounded-md border px-2 py-1 text-[11.5px] transition-colors',
+                              'flex-1 rounded-md border px-2 py-1 text-[0.71875rem] transition-colors',
                               task.repeatFrom === o.v
                                 ? 'border-seal/45 bg-seal/10 font-medium text-seal'
                                 : 'border-line text-ink-2 hover:bg-surface-2',
@@ -609,7 +611,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                           </button>
                         ))}
                       </div>
-                      <p className="pt-1.5 text-[11px] leading-relaxed text-ink-3">
+                      <p className="pt-1.5 text-[0.6875rem] leading-relaxed text-ink-3">
                         {task.repeatFrom === 'done'
                           ? '完成时才排下一次，适合「隔多久做一次」的事。'
                           : '一到日子就推下一个周期，适合固定日子的例事。'}
@@ -617,7 +619,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                     </div>
                   ) : null}
                   {repeatMeta?.ebbinghausOffsets.length ? (
-                    <p className="border-t border-line px-2.5 pb-1 pt-2 text-[11px] leading-relaxed text-ink-3">
+                    <p className="border-t border-line px-2.5 pb-1 pt-2 text-[0.6875rem] leading-relaxed text-ink-3">
                       艾宾浩斯复习间隔（天）：{repeatMeta.ebbinghausOffsets.join(' / ')}
                     </p>
                   ) : null}
@@ -635,7 +637,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                   type="button"
                   onClick={() => void updateTask(task.id, { priority: p.value })}
                   className={cx(
-                    'rounded-lg border px-2.5 py-1 text-[12.5px] transition-colors',
+                    'rounded-lg border px-2.5 py-1 text-[0.78125rem] transition-colors',
                     task.priority === p.value ? 'border-transparent font-medium' : 'border-line text-ink-2 hover:bg-surface-2',
                   )}
                   style={
@@ -662,14 +664,14 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                   type="button"
                   onClick={() => void updateTask(task.id, { [q.key]: !q.on } as never)}
                   className={cx(
-                    'rounded-lg border px-2.5 py-1 text-[12.5px] transition-colors',
+                    'rounded-lg border px-2.5 py-1 text-[0.78125rem] transition-colors',
                     q.on ? 'border-seal/45 bg-seal/10 font-medium text-seal' : 'border-line text-ink-2 hover:bg-surface-2',
                   )}
                 >
                   {q.label}
                 </button>
               ))}
-              <span className="self-center text-[11px] text-ink-3">
+              <span className="self-center text-[0.6875rem] text-ink-3">
                 {task.important && task.urgent
                   ? '立即做'
                   : task.important
@@ -687,7 +689,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
               <button
                 type="button"
                 onClick={() => setListPopover((v) => !v)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-2 py-1 text-[12.5px] text-ink transition-colors hover:bg-surface-2"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-2 py-1 text-[0.78125rem] text-ink transition-colors hover:bg-surface-2"
               >
                 <span className="h-2 w-2 rounded-full" style={{ background: task.listColor }} />
                 {task.listName}
@@ -703,7 +705,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                         setListPopover(false)
                       }}
                       className={cx(
-                        'flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] transition-colors',
+                        'flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[0.78125rem] transition-colors',
                         l.id === task.listId ? 'bg-seal/10 text-seal' : 'text-ink hover:bg-surface-2',
                       )}
                     >
@@ -724,7 +726,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                 {task.tags.map((t) => (
                   <span
                     key={t.id}
-                    className="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[12px]"
+                    className="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[0.75rem]"
                     style={{ color: t.color, borderColor: `color-mix(in oklab, ${t.color} 40%, transparent)` }}
                   >
                     #{t.name}
@@ -736,7 +738,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                 <button
                   type="button"
                   onClick={() => setTagPopover((v) => !v)}
-                  className="inline-flex items-center gap-1 rounded-md border border-dashed border-line px-1.5 py-0.5 text-[12px] text-ink-3 transition-colors hover:border-seal/40 hover:text-seal"
+                  className="inline-flex items-center gap-1 rounded-md border border-dashed border-line px-1.5 py-0.5 text-[0.75rem] text-ink-3 transition-colors hover:border-seal/40 hover:text-seal"
                 >
                   <IconPlus size={11} />
                   添加
@@ -746,27 +748,29 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                 <div className="p-1">
                   <input
                     autoFocus
+                    {...compositionProps}
                     value={tagInput}
                     onChange={(e) => setTagInput(e.target.value)}
                     onKeyDown={(e) => {
+                      if (isComposing(e)) return
                       if (e.key === 'Enter') {
                         e.preventDefault()
                         void addTagByName(tagInput)
                       }
                     }}
                     placeholder="输入标签名，回车新建"
-                    className="mb-1 w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-[12.5px] outline-none focus:border-seal/60"
+                    className="mb-1 w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-[0.78125rem] outline-none focus:border-seal/60"
                   />
                   <div className="max-h-52 overflow-y-auto">
                     {tagOptions.length === 0 && !tagInput ? (
-                      <p className="px-2 py-1.5 text-[11.5px] text-ink-3">没有更多可选标签</p>
+                      <p className="px-2 py-1.5 text-[0.71875rem] text-ink-3">没有更多可选标签</p>
                     ) : null}
                     {tagOptions.map((t) => (
                       <button
                         key={t.id}
                         type="button"
                         onClick={() => void toggleTag(t.id)}
-                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-ink hover:bg-surface-2"
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[0.78125rem] text-ink hover:bg-surface-2"
                       >
                         <span className="h-2 w-2 rounded-full" style={{ background: t.color }} />
                         {t.name}
@@ -777,7 +781,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                     <button
                       type="button"
                       onClick={() => void addTagByName(tagInput)}
-                      className="mt-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-seal hover:bg-seal/8"
+                      className="mt-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[0.78125rem] text-seal hover:bg-seal/8"
                     >
                       <IconPlus size={12} />
                       新建「{tagInput.replace(/^#/, '')}」
@@ -791,7 +795,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
 
         {/* 备注：支持 Markdown，编辑与预览两态 */}
         <div className="mt-5 border-t border-line pt-4">
-          <div className="mb-1.5 flex items-center gap-2 text-[11.5px] font-medium tracking-wide text-ink-3">
+          <div className="mb-1.5 flex items-center gap-2 text-[0.71875rem] font-medium tracking-wide text-ink-3">
             <IconNote size={13} />
             备注
             <span className="ml-auto flex items-center gap-0.5">
@@ -800,7 +804,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                 data-notes-mode="edit"
                 onClick={() => setNotesMode('edit')}
                 className={cx(
-                  'rounded px-1.5 py-0.5 text-[11px] transition-colors',
+                  'rounded px-1.5 py-0.5 text-[0.6875rem] transition-colors',
                   notesMode === 'edit' ? 'bg-surface-2 text-ink' : 'text-ink-3 hover:text-ink-2',
                 )}
               >
@@ -811,7 +815,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                 data-notes-mode="preview"
                 onClick={() => setNotesMode('preview')}
                 className={cx(
-                  'flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-colors',
+                  'flex items-center gap-1 rounded px-1.5 py-0.5 text-[0.6875rem] transition-colors',
                   notesMode === 'preview' ? 'bg-surface-2 text-ink' : 'text-ink-3 hover:text-ink-2',
                 )}
               >
@@ -830,13 +834,13 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                 commitNotes(e.target.value)
               }}
               placeholder="补充背景、链接、验收标准… 支持 Markdown：# 标题、- 列表、**重点**、`代码`"
-              className="w-full resize-none rounded-lg border border-line bg-surface-2/50 px-2.5 py-2 text-[13px] leading-6 outline-none transition-colors placeholder:text-ink-3 focus:border-seal/50 focus:bg-surface"
+              className="w-full resize-none rounded-lg border border-line bg-surface-2/50 px-2.5 py-2 text-[0.8125rem] leading-6 outline-none transition-colors placeholder:text-ink-3 focus:border-seal/50 focus:bg-surface"
               rows={3}
             />
           ) : (
             <div
               data-notes-preview
-              className="markdown min-h-[68px] rounded-lg border border-line bg-surface-2/40 px-2.5 py-2 text-[13px] leading-6"
+              className="markdown min-h-[68px] rounded-lg border border-line bg-surface-2/40 px-2.5 py-2 text-[0.8125rem] leading-6"
             >
               {notes.trim() ? (
                 <div dangerouslySetInnerHTML={{ __html: renderMarkdown(notes) }} />
@@ -849,7 +853,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
 
         {/* 附件 */}
         <div className="mt-5 border-t border-line pt-4">
-          <div className="mb-1.5 flex items-center gap-2 text-[11.5px] font-medium tracking-wide text-ink-3">
+          <div className="mb-1.5 flex items-center gap-2 text-[0.71875rem] font-medium tracking-wide text-ink-3">
             <IconPaperclip size={13} />
             附件
             {attachments.length > 0 ? <span className="tabular-nums">{attachments.length}</span> : null}
@@ -858,7 +862,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
               data-attachment-add
               onClick={() => fileRef.current?.click()}
               disabled={uploading}
-              className="ml-auto rounded px-1.5 py-0.5 text-[11px] text-seal transition-colors hover:bg-seal/10 disabled:opacity-50"
+              className="ml-auto rounded px-1.5 py-0.5 text-[0.6875rem] text-seal transition-colors hover:bg-seal/10 disabled:opacity-50"
             >
               {uploading ? '上传中…' : '添加'}
             </button>
@@ -872,7 +876,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
             onChange={(e) => void uploadFiles(e.target.files)}
           />
           {attachments.length === 0 ? (
-            <p className="text-[11.5px] leading-relaxed text-ink-3">
+            <p className="text-[0.71875rem] leading-relaxed text-ink-3">
               可附上截图、单据或资料，单个文件最大 32MB。
             </p>
           ) : (
@@ -884,10 +888,10 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                   className="flex items-center gap-2 rounded-lg border border-line bg-surface-2/50 px-2.5 py-1.5"
                 >
                   <IconPaperclip size={12} className="shrink-0 text-ink-3" />
-                  <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink" title={a.name}>
+                  <span className="min-w-0 flex-1 truncate text-[0.78125rem] text-ink" title={a.name}>
                     {a.name}
                   </span>
-                  <span className="shrink-0 text-[11px] tabular-nums text-ink-3">{formatSize(a.size)}</span>
+                  <span className="shrink-0 text-[0.6875rem] tabular-nums text-ink-3">{formatSize(a.size)}</span>
                   <a
                     href={api.attachmentURL(a.id)}
                     download={a.name}
@@ -914,11 +918,11 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
         {task.subtasks.length > 0 ? (
           <div className="mt-5 flex items-center gap-3 rounded-xl border border-line bg-surface-2/50 px-3 py-2.5">
             <ProgressRing value={subDone / task.subtasks.length} size={40} stroke={3} color="var(--jade)">
-              <span className="text-[11px] tabular-nums text-ink-2">
+              <span className="text-[0.6875rem] tabular-nums text-ink-2">
                 {Math.round((subDone / task.subtasks.length) * 100)}%
               </span>
             </ProgressRing>
-            <div className="text-[12px] leading-relaxed text-ink-2">
+            <div className="text-[0.75rem] leading-relaxed text-ink-2">
               <div>子任务已完成 {subDone} 项</div>
               <div className="text-ink-3">
                 {subDone === task.subtasks.length ? '枝节已尽，可以收束了。' : `还剩 ${task.subtasks.length - subDone} 项`}
@@ -928,7 +932,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
         ) : null}
 
         <div className="mt-5 flex items-end justify-between gap-3">
-          <div className="space-y-0.5 text-[11px] text-ink-3">
+          <div className="space-y-0.5 text-[0.6875rem] text-ink-3">
             <div>更新于 {relativeTime(task.updatedAt)}</div>
             {task.dueDate ? <div>计划：{fullDate(task.dueDate)}</div> : null}
           </div>
@@ -937,7 +941,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
             data-save-template
             onClick={() => void saveAsTemplate()}
             title="把这条任务的结构存成模板"
-            className="flex shrink-0 items-center gap-1 rounded-lg border border-line px-2 py-1 text-[11px] text-ink-2 transition-colors hover:border-seal/40 hover:text-seal"
+            className="flex shrink-0 items-center gap-1 rounded-lg border border-line px-2 py-1 text-[0.6875rem] text-ink-2 transition-colors hover:border-seal/40 hover:text-seal"
           >
             <IconTemplate size={12} />
             存为模板
@@ -965,7 +969,7 @@ function Row({
 }) {
   return (
     <div className="flex items-start gap-3">
-      <span className="mt-1 inline-flex w-[62px] shrink-0 items-center gap-1.5 text-[11.5px] text-ink-3">
+      <span className="mt-1 inline-flex w-[62px] shrink-0 items-center gap-1.5 text-[0.71875rem] text-ink-3">
         <Icon size={13} />
         {label}
       </span>
@@ -976,6 +980,7 @@ function Row({
 
 /** 链接输入：失焦或回车才落库，避免每敲一个字符打一次接口。 */
 function UrlField({ value, onSave }: { value: string; onSave: (url: string) => void }) {
+  const { compositionProps, isComposing } = useIMEGuard()
   const [draft, setDraft] = useState(value)
   const [editing, setEditing] = useState(false)
 
@@ -994,7 +999,7 @@ function UrlField({ value, onSave }: { value: string; onSave: (url: string) => v
       <button
         type="button"
         onClick={() => setEditing(true)}
-        className="rounded-lg border border-dashed border-line px-2 py-1 text-[12px] text-ink-3 transition-colors hover:border-seal/40 hover:text-seal"
+        className="rounded-lg border border-dashed border-line px-2 py-1 text-[0.75rem] text-ink-3 transition-colors hover:border-seal/40 hover:text-seal"
       >
         添加链接
       </button>
@@ -1005,6 +1010,7 @@ function UrlField({ value, onSave }: { value: string; onSave: (url: string) => v
     <div className="flex items-center gap-1.5">
       <input
         value={draft}
+        {...compositionProps}
         autoFocus={editing}
         onChange={(e) => {
           setDraft(e.target.value)
@@ -1012,6 +1018,7 @@ function UrlField({ value, onSave }: { value: string; onSave: (url: string) => v
         }}
         onBlur={commit}
         onKeyDown={(e) => {
+          if (isComposing(e)) return
           if (e.key === 'Enter') commit()
           if (e.key === 'Escape') {
             setDraft(value)
@@ -1028,7 +1035,7 @@ function UrlField({ value, onSave }: { value: string; onSave: (url: string) => v
             target="_blank"
             rel="noreferrer noopener"
             onClick={(e) => e.stopPropagation()}
-            className="rounded-md border border-line px-1.5 py-1 text-[11.5px] text-seal transition-colors hover:bg-seal/10"
+            className="rounded-md border border-line px-1.5 py-1 text-[0.71875rem] text-seal transition-colors hover:bg-seal/10"
           >
             打开
           </a>
@@ -1038,7 +1045,7 @@ function UrlField({ value, onSave }: { value: string; onSave: (url: string) => v
               setDraft('')
               onSave('')
             }}
-            className="rounded-md border border-line px-1.5 py-1 text-[11.5px] text-ink-3 transition-colors hover:border-p-high/40 hover:text-p-high"
+            className="rounded-md border border-line px-1.5 py-1 text-[0.71875rem] text-ink-3 transition-colors hover:border-p-high/40 hover:text-p-high"
           >
             清除
           </button>
@@ -1063,7 +1070,7 @@ function QuickDateButtons({ task, onPick }: { task: Task; onPick: (date: string 
           type="button"
           onClick={() => onPick(o.value)}
           className={cx(
-            'rounded-lg border px-2 py-1 text-[12.5px] transition-colors',
+            'rounded-lg border px-2 py-1 text-[0.78125rem] transition-colors',
             task.dueDate === o.value ? 'border-seal/45 bg-seal/10 text-seal' : 'border-line text-ink-2 hover:bg-surface-2',
           )}
         >

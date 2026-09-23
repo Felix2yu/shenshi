@@ -88,8 +88,8 @@ export function QuadrantView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b border-line px-5 py-2.5">
         <IconSparkle size={15} className="text-seal" />
-        <h2 className="brand-serif text-[15px] font-semibold text-ink">四象限</h2>
-        <span className="text-[11.5px] text-ink-3">
+        <h2 className="brand-serif text-[0.9375rem] font-semibold text-ink">四象限</h2>
+        <span className="text-[0.71875rem] text-ink-3">
           共 {total} 项未完成 · 拖动任务卡片即可在象限之间移动
         </span>
       </div>
@@ -114,18 +114,18 @@ export function QuadrantView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
               >
                 <div className="mb-2 flex items-center gap-2">
                   <span className="h-2.5 w-2.5 rounded-sm" style={{ background: q.accent }} />
-                  <h3 className="text-[13.5px] font-semibold text-ink">{q.title}</h3>
-                  <span className="rounded-full bg-surface-2 px-1.5 text-[11px] text-ink-3 tabular-nums">
+                  <h3 className="text-[0.84375rem] font-semibold text-ink">{q.title}</h3>
+                  <span className="rounded-full bg-surface-2 px-1.5 text-[0.6875rem] text-ink-3 tabular-nums">
                     {list.length}
                   </span>
-                  <span className="ml-auto text-[11.5px] text-ink-3">{q.action}</span>
+                  <span className="ml-auto text-[0.71875rem] text-ink-3">{q.action}</span>
                 </div>
-                <p className="mb-2 px-0.5 text-[11.5px] leading-relaxed text-ink-3">{q.hint}</p>
+                <p className="mb-2 px-0.5 text-[0.71875rem] leading-relaxed text-ink-3">{q.hint}</p>
 
                 <div className="flex-1 space-y-0.5">
                   {list.length === 0 ? (
                     <div className="grid h-full place-items-center rounded-xl border border-dashed border-line py-6">
-                      <span className="text-[11.5px] text-ink-3">把任务拖到此处</span>
+                      <span className="text-[0.71875rem] text-ink-3">把任务拖到此处</span>
                     </div>
                   ) : (
                     list.map((t) => <TaskRow key={t.id} task={t} onOpen={onOpen} dense showList />)
