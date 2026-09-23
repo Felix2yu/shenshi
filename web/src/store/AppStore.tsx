@@ -95,6 +95,8 @@ interface StoreShape {
   activitiesLoaded: boolean
   /** 每次写操作对账后自增。日历、统计等自持数据的视图据此重新拉取。 */
   version: number
+  /** 统计接口最近一次加载是否失败。与「还没加载」区分开，避免把故障显示成空态。 */
+  statsError: boolean
 
   select: (s: Selection) => void
   selectSmart: (key: SmartKey) => void
@@ -164,7 +166,7 @@ interface StoreShape {
       parentId: number | null
       moveToRoot: boolean
     }>,
-  ) => Promise<void>
+  ) => Promise<boolean>
   deleteFolder: (id: number) => Promise<void>
   reorderFolders: (ids: number[]) => Promise<void>
   createList: (name: string, folderId?: number, color?: string) => Promise<List | null>
@@ -179,13 +181,13 @@ interface StoreShape {
       archived: boolean
       starred: boolean
     }>,
-  ) => Promise<void>
+  ) => Promise<boolean>
   deleteList: (id: number) => Promise<void>
   reorderLists: (ids: number[]) => Promise<void>
 
-  ensureTags: (names: string[]) => Promise<Tag[]>
+  ensureTags: (names: string[]) => Promise<Tag[] | null>
   createTag: (name: string, color?: string) => Promise<Tag | null>
-  updateTag: (id: number, patch: { name?: string; color?: string }) => Promise<void>
+  updateTag: (id: number, patch: { name?: string; color?: string }) => Promise<boolean>
   deleteTag: (id: number) => Promise<void>
 
   saveSettings: (patch: Settings) => Promise<void>
@@ -195,7 +197,7 @@ interface StoreShape {
   dismissToast: (id: number) => void
 
   dismissReminder: (key: string) => void
-  snoozeReminder: (hit: ReminderHit, minutes: number) => void
+  snoozeReminder: (hit: ReminderHit, minutes: number) => Promise<void>
 
   loadStats: (days?: number) => Promise<void>
   setTodayFocus: (ids: number[]) => Promise<void>
@@ -275,6 +277,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([])
   const [reminders, setReminders] = useState<ReminderHit[]>([])
   const [stats, setStats] = useState<Stats | null>(null)
+  const [statsError, setStatsError] = useState(false)
   const [repeatMeta, setRepeatMeta] = useState<RepeatMeta | null>(null)
   const [savedFilters, setSavedFilters] = useState<SavedFilter[]>([])
   const [undo, setUndo] = useState<UndoState | null>(null)
@@ -298,7 +301,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const confirmSeq = useRef(0)
   const reconcileTimer = useRef<number | null>(null)
   const seenReminders = useRef<Set<string>>(new Set())
-  const snoozeTimers = useRef<number[]>([])
+  /** 提醒的跨标签页广播通道，由下方 effect 装配/销毁。 */
+  const remindChannel = useRef<BroadcastChannel | null>(null)
 
   const toast = useCallback((message: string, kind: Toast['kind'] = 'ok') => {
     const id = ++toastSeq.current
@@ -381,7 +385,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const loadStats = useCallback(async (days = 30) => {
     try {
       setStats(await api.stats(days))
+      setStatsError(false)
     } catch (e) {
+      setStatsError(true)
       handleError(e, '加载统计失败')
     }
   }, [handleError])
@@ -456,21 +462,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [refreshBoot])
 
   // 提醒轮询：每 30 秒问一次服务端「现在该提醒什么」。
+  // 口径：服务端集合为准全量对齐本地状态——改期/完成/别的标签页处理过的旧 hit
+  // 自动消失，刷新后未处理的自动回来；「收到即回执」改成了「用户处理时才回执」，
+  // 否则「稍后提醒」到期后服务端已永久静默，永远弹不回来。
   useEffect(() => {
     if (loading) return
     const poll = async () => {
       try {
         const r = await api.dueReminders(120)
-        const fresh = r.reminders.filter((h) => !seenReminders.current.has(`${h.task.id}|${h.fireAt}`))
-        if (!fresh.length) return
+        const hits = r.reminders
+        // 去重与回执统一用 ackId（子任务为负数）：用 task.id 会让所有子任务提醒
+        // 挤在「0|fireAt」一个键上互相过滤，且 ack 传 0 必被服务端拒绝。
+        const fresh = hits.filter((h) => !seenReminders.current.has(`${h.ackId}|${h.fireAt}`))
+        const freshKeys = fresh.map((h) => `${h.ackId}|${h.fireAt}`)
         for (const h of fresh) {
-          seenReminders.current.add(`${h.task.id}|${h.fireAt}`)
-          // 立即回执，避免多标签页重复提醒；本次仍保留在提醒中心供处理。
-          void api.ackReminder(h.task.id, h.fireAt).catch(() => undefined)
-          pushNotification(`慎始 · ${h.task.title}`, `${h.dueLabel}${h.overdue ? '（已到时间）' : ''}`)
+          seenReminders.current.add(`${h.ackId}|${h.fireAt}`)
+          const name = h.subtask ? `${h.task.title} · ${h.subtask.title}` : h.task.title
+          pushNotification(`慎始 · ${name}`, `${h.dueLabel}${h.overdue ? '（已到时间）' : ''}`)
         }
-        if (settings.soundOn !== '0') playChime()
-        setReminders((prev) => [...prev, ...fresh])
+        if (fresh.length) {
+          if (settings.soundOn !== '0') playChime()
+          // 先到的标签页「认领」这些键，后到的不再重复弹通知。
+          remindChannel.current?.postMessage({ type: 'seen', keys: freshKeys })
+        }
+        setReminders(hits)
       } catch {
         /* 轮询失败静默，下个周期再试 */
       }
@@ -479,6 +494,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const t = window.setInterval(() => void poll(), 30_000)
     return () => window.clearInterval(t)
   }, [loading, settings.soundOn])
+
+  // 跨标签页同步：dismiss/snooze 一发生，其它标签页立刻跟进，
+  // 不必等下一个 30 秒轮询周期。
+  useEffect(() => {
+    if (typeof BroadcastChannel === 'undefined') return
+    const ch = new BroadcastChannel('shenshi-reminders')
+    ch.onmessage = (ev: MessageEvent) => {
+      const msg = ev.data as { type?: string; key?: string; keys?: string[] }
+      if (!msg?.type) return
+      const drop = (keys: string[]) => {
+        const set = new Set(keys)
+        setReminders((prev) => prev.filter((h) => !set.has(`${h.ackId}|${h.fireAt}`)))
+      }
+      if (msg.type === 'dismiss' && msg.key) {
+        drop([msg.key])
+        // 对方已落回执：本页也标记已见，防 stale 轮询把它带回来再弹一次。
+        seenReminders.current.add(msg.key)
+      } else if (msg.type === 'snooze' && msg.key) {
+        drop([msg.key])
+        // 不动本页 seen：到期重弹时由各标签页自行决定是否通知。
+      } else if (msg.type === 'seen' && msg.keys) {
+        for (const k of msg.keys) seenReminders.current.add(k)
+      }
+    }
+    remindChannel.current = ch
+    return () => {
+      remindChannel.current = null
+      ch.close()
+    }
+  }, [])
 
   // 撤销槽位带时效（10 分钟），提示条亮着的时候隔一会儿问一次，过期就自己收起来。
   useEffect(() => {
@@ -975,9 +1020,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       try {
         await api.updateFolder(id, patch)
         if (patch.collapsed === undefined) await refreshBoot()
+        return true
       } catch (e) {
         handleError(e, '更新分组失败')
         await refreshBoot()
+        return false
       }
     },
     [refreshBoot, handleError],
@@ -1026,13 +1073,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
         starred: boolean
       }>,
     ) => {
-      // 收藏是单点交互，先本地翻转再落库；失败时由 refreshBoot 拨回。
+      // 收藏是单点交互，先本地翻转再落库；失败时把原值拨回去，不让 UI 说谎。
+      // 用 holder 对象承载：赋值发生在 setBoot 回调里，直接 let 变量会被 TS 收窄成 null。
+      const prev: { value: { starred: boolean; archived: boolean } | null } = { value: null }
       if (patch.starred !== undefined || patch.archived !== undefined) {
-        setBoot((prev) =>
-          prev
+        setBoot((b) => {
+          if (b) {
+            const cur = b.lists.find((l) => l.id === id)
+            if (cur) prev.value = { starred: cur.starred, archived: cur.archived }
+          }
+          return b
+        })
+        setBoot((prevBoot) =>
+          prevBoot
             ? {
-                ...prev,
-                lists: prev.lists.map((l) =>
+                ...prevBoot,
+                lists: prevBoot.lists.map((l) =>
                   l.id === id
                     ? {
                         ...l,
@@ -1042,14 +1098,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
                     : l,
                 ),
               }
-            : prev,
+            : prevBoot,
         )
       }
       try {
         await api.updateList(id, patch)
         await refreshBoot()
+        return true
       } catch (e) {
         handleError(e, '更新清单失败')
+        if (prev.value) {
+          const back = prev.value
+          setBoot((prevBoot) =>
+            prevBoot
+              ? {
+                  ...prevBoot,
+                  lists: prevBoot.lists.map((l) =>
+                    l.id === id ? { ...l, starred: back.starred, archived: back.archived } : l,
+                  ),
+                }
+              : prevBoot,
+          )
+        }
+        return false
       }
     },
     [refreshBoot, handleError],
@@ -1077,7 +1148,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return r.tags.filter((t) => names.includes(t.name))
       } catch (e) {
         handleError(e, '创建标签失败')
-        return []
+        // null 表示「没建成」：调用方据此中止建任务，避免预览有标签、落库却丢了。
+        return null
       }
     },
     [handleError],
@@ -1103,8 +1175,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         await api.updateTag(id, patch)
         await refreshBoot()
         void refreshTasks()
+        return true
       } catch (e) {
         handleError(e, '更新标签失败')
+        return false
       }
     },
     [refreshBoot, refreshTasks, handleError],
@@ -1147,28 +1221,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // ---------- 提醒处理 ----------
 
   const dismissReminder = useCallback((key: string) => {
-    setReminders((prev) => prev.filter((h) => `${h.task.id}|${h.fireAt}` !== key))
+    setReminders((prev) => prev.filter((h) => `${h.ackId}|${h.fireAt}` !== key))
+    // 回执推迟到「用户处理」这一刻：轮询收到即 ack 的旧口径会让 snooze 无处安放。
+    const sep = key.indexOf('|')
+    if (sep > 0) {
+      const ackId = Number(key.slice(0, sep))
+      const fireAt = key.slice(sep + 1)
+      if (Number.isFinite(ackId) && ackId !== 0 && fireAt) {
+        void api.ackReminder(ackId, fireAt).catch(() => undefined)
+      }
+    }
+    remindChannel.current?.postMessage({ type: 'dismiss', key })
   }, [])
 
   const snoozeReminder = useCallback(
-    (hit: ReminderHit, minutes: number) => {
-      const key = `${hit.task.id}|${hit.fireAt}`
-      setReminders((prev) => prev.filter((h) => `${h.task.id}|${h.fireAt}` !== key))
-      const t = window.setTimeout(() => {
-        setReminders((prev) => [...prev, hit])
-        pushNotification(`慎始 · ${hit.task.title}`, '稍后提醒')
-        playChime()
-      }, minutes * 60_000)
-      snoozeTimers.current.push(t)
+    async (hit: ReminderHit, minutes: number) => {
+      const key = `${hit.ackId}|${hit.fireAt}`
+      try {
+        await api.snoozeReminder(hit.ackId, hit.fireAt, minutes)
+      } catch (e) {
+        // 服务端没记上就不能本地假装推迟：否则到期后轮询会把它默默带回来。
+        handleError(e, '设置稍后提醒失败')
+        return
+      }
+      setReminders((prev) => prev.filter((h) => `${h.ackId}|${h.fireAt}` !== key))
+      // 到期重弹要重新通知：把 key 从已见集合挪开，交给下一次轮询当「新提醒」。
+      seenReminders.current.delete(key)
+      remindChannel.current?.postMessage({ type: 'snooze', key })
       toast(`${minutes} 分钟后再提醒`)
     },
-    [toast],
+    [handleError, toast],
   )
-
-  useEffect(() => {
-    const timers = snoozeTimers.current
-    return () => timers.forEach((t) => window.clearTimeout(t))
-  }, [])
 
   // ---------- 专注 ----------
 
@@ -1229,6 +1312,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const select = useCallback((s: Selection) => {
     setSelection(s)
+    // 侧栏点击隐含「去看这个清单」：不切回列表视图的话，在看板/日历下点
+    // 「今天」会毫无反馈（active 判定要求 view === 'list'），快捷键会切、鼠标却不会。
+    setView('list')
     setKeywordState('')
     setSelectedTaskId(null)
     setSelectedIds([])
@@ -1256,7 +1342,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
   }, [])
 
-  const clearSelected = useCallback(() => setSelectedIds([]), [])
+  const clearSelected = useCallback(() => {
+    // 清选择与退多选必须成对：只清 selectedIds 会把界面卡在多选模式，
+    // Esc 按下毫无反应（与 select()/batch() 的成对先例口径一致）。
+    setSelectedIds([])
+    setMultiSelect(false)
+  }, [])
 
   const setFilters = useCallback((f: TaskFilter) => setFiltersState(f), [])
   const resetFilters = useCallback(() => setFiltersState(EMPTY_FILTER), [])
@@ -1276,6 +1367,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     toasts,
     reminders,
     stats,
+    statsError,
     repeatMeta,
     selectedTaskId,
     selectedIds,

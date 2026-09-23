@@ -273,10 +273,25 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// settingsDenied 是服务端自维护的内部键（备份时间戳、最近文件等）。
+// 前端 saveSettings 是「全量合并回传」，会把这些键一并带回来；
+// 入口静默跳过而非报 400 —— 回错会把改主题这类正常保存一起打挂。
+// 只拦外部请求：内部写入（自动备份记时间戳）走 store.SaveSettings 直落，不经这里。
+var settingsDenied = map[string]bool{
+	store.SetBackupLastAt:    true,
+	store.SetBackupLastFile:  true,
+	store.SetBackupLastError: true,
+}
+
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) error {
 	var kv map[string]string
 	if err := decode(w, r, &kv); err != nil {
 		return err
+	}
+	for k := range kv {
+		if settingsDenied[k] {
+			delete(kv, k)
+		}
 	}
 	if err := s.st.SaveSettings(kv); err != nil {
 		return err
@@ -292,7 +307,8 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) error {
 // ---------- 统计 / 复盘 / 专注 ----------
 
 func (s *Server) stats(w http.ResponseWriter, r *http.Request) error {
-	st, err := s.st.Stats(queryInt(r, "days", 30))
+	// days 驱动趋势循环：api 层先钳，store 层再兜一层（两处口径一致）。
+	st, err := s.st.Stats(queryIntClamped(r, "days", 30, 0, 366))
 	if err != nil {
 		return err
 	}
@@ -380,13 +396,39 @@ func (s *Server) ackReminder(w http.ResponseWriter, r *http.Request) error {
 	if err := decode(w, r, &body); err != nil {
 		return err
 	}
-	if body.TaskID <= 0 || body.FireAt == "" {
+	// 子任务提醒的回执 id 是负数（-子任务ID），因此只拒绝 0。
+	if body.TaskID == 0 || body.FireAt == "" {
 		return store.ValidationError{Msg: "taskId 与 fireAt 均为必填"}
 	}
 	if err := s.st.AckReminder(body.TaskID, body.FireAt); err != nil {
 		return err
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	return nil
+}
+
+// snoozeReminder 稍后提醒：把该触发时刻推迟到 until 之后再投递。
+// 与 ack 的分工：ack 是「我处理过了」（永久），snooze 是「等会儿再来」（临时）。
+func (s *Server) snoozeReminder(w http.ResponseWriter, r *http.Request) error {
+	var body struct {
+		TaskID  int64  `json:"taskId"`
+		FireAt  string `json:"fireAt"`
+		Minutes int    `json:"minutes"`
+	}
+	if err := decode(w, r, &body); err != nil {
+		return err
+	}
+	if body.TaskID == 0 || body.FireAt == "" {
+		return store.ValidationError{Msg: "taskId 与 fireAt 均为必填"}
+	}
+	if body.Minutes < 1 || body.Minutes > 1440 {
+		return store.ValidationError{Msg: "稍后提醒应在 1 ~ 1440 分钟之间"}
+	}
+	until := time.Now().Add(time.Duration(body.Minutes) * time.Minute)
+	if err := s.st.SnoozeReminder(body.TaskID, body.FireAt, until); err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "until": until.Format(time.RFC3339)})
 	return nil
 }
 

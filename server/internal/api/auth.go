@@ -168,13 +168,8 @@ func requestIsTLS(r *http.Request) bool {
 }
 
 func clientIP(r *http.Request) string {
-	// 反向代理场景下以 X-Forwarded-For 的第一段为准；拿不到就退回 RemoteAddr。
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.IndexByte(xff, ','); i > 0 {
-			return strings.TrimSpace(xff[:i])
-		}
-		return strings.TrimSpace(xff)
-	}
+	// 限速 key 只认直连地址：X-Forwarded-For 可以被客户端随意伪造，
+	// 用它做 key 等于把限速开关交给攻击者。真实来源需要时看访问日志。
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr

@@ -229,10 +229,11 @@ func (b *Backend) SyncHook() store.EventHook {
 			return
 		}
 		deleted := kind == model.EventTaskDeleted
-		// 日历集合里只放有日期的任务；日期为空时只需记一条删除，把它从客户端撤掉。
-		if t.DueDate != nil || deleted {
-			_ = b.st.NoteCalDAVChange(CollectionEvents, EventUID(t.ID), t.ID, deleted)
-		}
+		// 日历集合只放有日期的任务。没有日期（含刚被清空的）或已删除，
+		// 都要给客户端记一条删除，把可能残留的 VEVENT 撤掉——只在
+		// DueDate != nil 时记变更，清空日期就会留下永远不消失的僵尸日程。
+		// 对从未进过日历的无日期任务，这条删除是幂等无害的 404。
+		_ = b.st.NoteCalDAVChange(CollectionEvents, EventUID(t.ID), t.ID, deleted || t.DueDate == nil)
 		_ = b.st.NoteCalDAVChange(CollectionTasks, TodoUID(t.ID), t.ID, deleted)
 	}
 }

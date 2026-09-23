@@ -431,6 +431,24 @@ func (s *Server) deleteTaskLink(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// taskBlocked 返回任务的依赖阻塞状态与阻塞者清单，供详情面板顶部提示
+// 「被什么挡着」——依赖建好了却看不见，等于没建。
+func (s *Server) taskBlocked(w http.ResponseWriter, r *http.Request) error {
+	id, err := pathID(r, "id")
+	if err != nil {
+		return err
+	}
+	blockers, err := s.st.Blockers(id)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"blocked":  len(blockers) > 0,
+		"blockers": blockers,
+	})
+	return nil
+}
+
 func extractTags(title string) []string {
 	seen := map[string]bool{}
 	out := []string{}

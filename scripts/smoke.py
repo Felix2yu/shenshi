@@ -236,6 +236,12 @@ def run(base: str) -> None:
 
     status, bad = call(base, "POST", "/api/tasks", {"title": "   "})
     check("空标题被拒绝（400）", status == 400, f"{status} {bad}")
+    status, bad = call(base, "POST", "/api/tasks", {"title": "非法日期", "dueDate": "2026-13-45"})
+    check("非法到期日被拒绝（400）", status == 400, f"{status} {bad}")
+    status, bad = call(base, "POST", "/api/tasks", {"title": "非法时间", "dueDate": today.isoformat(), "dueTime": "25:00"})
+    check("非法到期时间被拒绝（400）", status == 400, f"{status} {bad}")
+    status, _ = call(base, "PATCH", f"/api/tasks/{tid}", {"dueTime": ""})
+    check("清空到期时间（空串）不被校验误杀", status == 200, str(status))
 
     section("③ 子任务")
     status, sub = call(base, "POST", f"/api/tasks/{tid}/subtasks", {"title": "确认三条验收标准"})
@@ -338,6 +344,8 @@ def run(base: str) -> None:
     check("批量完成", status == 200 and r["affected"] == 2, str(r))
     status, r = call(base, "POST", "/api/tasks/batch", {"ids": [tid, rep["id"]], "action": "reopen"})
     check("批量恢复", status == 200 and r["affected"] == 2, str(r))
+    status, r = call(base, "POST", "/api/tasks/batch", {"ids": [tid], "action": "explode"})
+    check("未知批量动作被拒绝（400）", status == 400, f"{status} {r}")
 
     section("⑦ 清单分组与标签")
     status, folder = call(base, "POST", "/api/folders", {"name": "学习", "color": "#5c6b8a", "icon": "book"})
@@ -382,17 +390,47 @@ def run(base: str) -> None:
     status, _ = call(base, "POST", "/api/reminders/reset", {"taskId": rem["id"]})
     check("重置提醒台账", status == 200, str(status))
 
+    # 稍后提醒：窗口内不投递，重置台账（等价「到期后重弹」）恢复投递
+    status, rem2 = call(base, "POST", "/api/tasks", {
+        "title": "提醒联调：稍后提醒",
+        "listId": inbox_id,
+        "dueDate": today.isoformat(),
+        "dueTime": today.strftime("%H:%M"),
+        "reminders": [0],
+    })
+    status, due3 = call(base, "GET", "/api/reminders/due?lookahead=1")
+    hit2 = next((h for h in due3["reminders"] if h["task"]["id"] == rem2["id"]), None)
+    check("稍后提醒任务入队", hit2 is not None, str(len(due3["reminders"])))
+    if hit2:
+        status, sn = call(base, "POST", "/api/reminders/snooze", {"taskId": rem2["id"], "fireAt": hit2["fireAt"], "minutes": 5})
+        check("稍后提醒接口", status == 200 and sn.get("ok") is True, str(sn))
+        status, due4 = call(base, "GET", "/api/reminders/due?lookahead=1")
+        check("推迟窗口内不再投递", all(h["task"]["id"] != rem2["id"] for h in due4["reminders"]), str(len(due4["reminders"])))
+        status, _ = call(base, "POST", "/api/reminders/reset", {"taskId": rem2["id"]})
+        status, due5 = call(base, "GET", "/api/reminders/due?lookahead=1")
+        check("台账清掉后恢复投递", any(h["task"]["id"] == rem2["id"] for h in due5["reminders"]), str(len(due5["reminders"])))
+        status, _ = call(base, "POST", "/api/reminders/reset", {"taskId": rem2["id"]})
+    status, bad = call(base, "POST", "/api/reminders/snooze", {"taskId": rem2["id"], "fireAt": "2026-01-01T00:00:00Z", "minutes": 0})
+    check("稍后提醒时长越界被拒绝（400）", status == 400, str(status))
+
     section("⑨ 设置 / 统计 / 日省 / 专注")
     status, kv = call(base, "PUT", "/api/settings", {"theme": "dark", "weekStart": "1"})
     check("写入设置", status == 200 and kv["theme"] == "dark", str(kv))
     status, kv2 = call(base, "GET", "/api/settings")
     check("读取设置", kv2.get("theme") == "dark", str(kv2))
+    # 服务端自维护的内部键混在请求里必须静默跳过，不能 400（前端 saveSettings 是全量回传）
+    status, kv3 = call(base, "PUT", "/api/settings", {"theme": "light", "autoBackupLastAt": "2099-01-01T00:00:00Z"})
+    check("混入内部键时其余设置照常保存", status == 200 and kv3.get("theme") == "light", f"{status} {kv3}")
+    status, kv4 = call(base, "GET", "/api/settings")
+    check("设置内部键不落库", "autoBackupLastAt" not in kv4, str(kv4))
 
     status, st = call(base, "GET", "/api/stats?days=14")
     check("统计接口可用", status == 200 and len(st["trend"]) == 14, str(len(st.get("trend", []))))
     check("统计含未完成总数", st["totalOpen"] >= 1, str(st.get("totalOpen")))
     check("统计含分组分布", len(st["byList"]) >= 1, str(st.get("byList")))
     check("统计含四象限分布", len(st["byQuadrant"]) >= 1, str(st.get("byQuadrant")))
+    status, big = call(base, "GET", "/api/stats?days=9999")
+    check("统计 days 超上限被钳制", status == 200 and len(big.get("trend", [])) <= 366, f"{status} {len(big.get('trend', []))}")
 
     status, rev = call(base, "PUT", "/api/reviews", {"date": today.isoformat(), "mood": "稳", "wins": "完成验收清单", "tomorrow": "继续推进"})
     check("写入日省复盘", status == 200 and rev["mood"] == "稳", str(rev))

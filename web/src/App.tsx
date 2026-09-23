@@ -10,7 +10,7 @@ import { TableView } from './components/TableView'
 import { TaskDetail } from './components/TaskDetail'
 import { IconList, IconX, SealLogo } from './components/icons'
 import { AppOverlays } from './components/Overlays'
-import { TaskListView } from './components/TaskViews'
+import { BatchBar, TaskListView } from './components/TaskViews'
 import { Toolbar } from './components/Toolbar'
 import { Button, IconButton } from './components/ui'
 import { applyFilter } from './lib/filter'
@@ -150,6 +150,8 @@ export default function App() {
         </div>
 
         <Toolbar filters={filters} onFilters={setFilters} />
+        {/* 多选批处理条全局挂一份：各视图（含看板/表格/四象限）进入多选后都能操作 */}
+        <BatchBar />
 
         <div
           className={

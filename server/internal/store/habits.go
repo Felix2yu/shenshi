@@ -1,8 +1,6 @@
 package store
 
 import (
-	"database/sql"
-	"errors"
 	"sort"
 	"strconv"
 	"strings"
@@ -274,29 +272,30 @@ func (s *Store) CheckIn(habitID int64, in CheckInput) (*model.HabitLog, error) {
 	if _, err := s.Habit(habitID); err != nil {
 		return nil, err
 	}
-	var cur int
-	err := s.db.QueryRow(`SELECT count FROM habit_logs WHERE habit_id = ? AND day = ?`, habitID, in.Day).Scan(&cur)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
-	}
-	next := cur + 1
-	if in.Count != nil {
-		next = *in.Count
-	}
-	if next <= 0 {
-		if err := s.Uncheck(habitID, in.Day); err != nil {
-			return nil, err
-		}
-		return nil, nil
-	}
 	note := ""
 	if in.Note != nil {
 		note = *in.Note
 	}
-	if _, err := s.db.Exec(`INSERT INTO habit_logs(habit_id, day, count, note, created_at) VALUES(?,?,?,?,?)
-		ON CONFLICT(habit_id, day) DO UPDATE SET count = excluded.count`+(ternary(in.Note != nil, ", note = excluded.note", "")),
-		habitID, in.Day, next, note, model.Now()); err != nil {
-		return nil, err
+	if in.Count == nil {
+		// 加一次：用 SQL 自增，避免「读出来 +1 再写回」在并发下丢更新。
+		if _, err := s.db.Exec(`INSERT INTO habit_logs(habit_id, day, count, note, created_at) VALUES(?,?,1,?,?)
+			ON CONFLICT(habit_id, day) DO UPDATE SET count = habit_logs.count + 1`+(ternary(in.Note != nil, ", note = excluded.note", "")),
+			habitID, in.Day, note, model.Now()); err != nil {
+			return nil, err
+		}
+	} else {
+		if *in.Count <= 0 {
+			if err := s.Uncheck(habitID, in.Day); err != nil {
+				return nil, err
+			}
+			return nil, nil
+		}
+		// 显式设值：覆盖当天计数。
+		if _, err := s.db.Exec(`INSERT INTO habit_logs(habit_id, day, count, note, created_at) VALUES(?,?,?,?,?)
+			ON CONFLICT(habit_id, day) DO UPDATE SET count = excluded.count`+(ternary(in.Note != nil, ", note = excluded.note", "")),
+			habitID, in.Day, *in.Count, note, model.Now()); err != nil {
+			return nil, err
+		}
 	}
 	var l model.HabitLog
 	if err := s.db.QueryRow(`SELECT id, habit_id, day, count, note, created_at FROM habit_logs WHERE habit_id = ? AND day = ?`, habitID, in.Day).
@@ -317,7 +316,9 @@ func (s *Store) Uncheck(habitID int64, day string) error {
 
 // HabitBoard 一次性返回习惯视图所需数据：区间内的流水 + 每个习惯的统计。
 // 连续天数的计算需要完整历史，因此内部读取全量流水，只把区间内的部分返回给前端。
-func (s *Store) HabitBoard(from, to string) (*model.HabitBoard, error) {
+// includeArchived 为 true 时把已归档习惯一并带上，供「显示已归档」开关用；
+// 归档习惯的字段带 archived 标记，统计照算，由调用方决定是否计入汇总。
+func (s *Store) HabitBoard(from, to string, includeArchived bool) (*model.HabitBoard, error) {
 	today := time.Now().Format("2006-01-02")
 	if to == "" {
 		to = today
@@ -335,7 +336,7 @@ func (s *Store) HabitBoard(from, to string) (*model.HabitBoard, error) {
 		from, to = to, from
 	}
 
-	habits, err := s.Habits(false)
+	habits, err := s.Habits(includeArchived)
 	if err != nil {
 		return nil, err
 	}

@@ -88,8 +88,30 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.root.ServeHTTP(out, r)
 	if strings.HasPrefix(r.URL.Path, "/api/") {
-		log.Printf("%s %s -> %d (%s)", r.Method, r.URL.RequestURI(), sw.code, time.Since(start).Round(time.Millisecond))
+		log.Printf("%s %s -> %d (%s)", r.Method, redactURI(r.URL.RequestURI()), sw.code, time.Since(start).Round(time.Millisecond))
 	}
+}
+
+// redactURI 把查询串里的口令类参数抹掉再进日志，避免 ?token= 落盘。
+func redactURI(uri string) string {
+	if !strings.Contains(uri, "token=") && !strings.Contains(uri, "password=") && !strings.Contains(uri, "secret=") {
+		return uri
+	}
+	qi := strings.IndexByte(uri, '?')
+	if qi < 0 {
+		return uri
+	}
+	base, query := uri[:qi], uri[qi+1:]
+	parts := strings.Split(query, "&")
+	for i, p := range parts {
+		if k, _, ok := strings.Cut(p, "="); ok {
+			switch strings.ToLower(k) {
+			case "token", "password", "secret", "key":
+				parts[i] = k + "=***"
+			}
+		}
+	}
+	return base + "?" + strings.Join(parts, "&")
 }
 
 type statusWriter struct {
@@ -150,6 +172,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PATCH /api/subtasks/{id}", h(s.updateSubtask))
 	s.mux.HandleFunc("DELETE /api/subtasks/{id}", h(s.deleteSubtask))
 	s.mux.HandleFunc("POST /api/tasks/{id}/links", h(s.addTaskLink))
+	s.mux.HandleFunc("GET /api/tasks/{id}/blocked", h(s.taskBlocked))
 	s.mux.HandleFunc("DELETE /api/task-links/{id}", h(s.deleteTaskLink))
 
 	// 撤销最近一次删除与操作历史
@@ -209,6 +232,7 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("GET /api/reminders/due", h(s.dueReminders))
 	s.mux.HandleFunc("POST /api/reminders/ack", h(s.ackReminder))
+	s.mux.HandleFunc("POST /api/reminders/snooze", h(s.snoozeReminder))
 	s.mux.HandleFunc("POST /api/reminders/reset", h(s.resetReminders))
 	s.mux.HandleFunc("GET /api/meta/repeat", h(s.repeatMeta))
 
@@ -266,8 +290,9 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "记录不存在"})
 	default:
+		// 内部错误只记日志，不回传给客户端：err.Error() 可能带 SQL/路径等敏感细节。
 		log.Printf("服务端错误: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "服务端错误"})
 	}
 }
 
@@ -326,6 +351,19 @@ func queryInt(r *http.Request, name string, def int) int {
 	n, err := strconv.Atoi(v)
 	if err != nil {
 		return def
+	}
+	return n
+}
+
+// queryIntClamped 同 queryInt，但把结果收进 [min, max]，
+// 供「数值会驱动循环次数」的端点使用，防止超大入参打爆请求。
+func queryIntClamped(r *http.Request, name string, def, min, max int) int {
+	n := queryInt(r, name, def)
+	if n < min {
+		return min
+	}
+	if n > max {
+		return max
 	}
 	return n
 }

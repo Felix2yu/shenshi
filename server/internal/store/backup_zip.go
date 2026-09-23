@@ -87,7 +87,13 @@ func (s *Store) ExportZIP() (*ZipExport, error) {
 
 // zipOneAttachment 把一个附件写进压缩包。文件不存在时返回 (false, nil)。
 func zipOneAttachment(zw *zip.Writer, dir, stored string) (bool, error) {
-	f, err := os.Open(filepath.Join(dir, stored))
+	// 存储名若带目录成分（异常数据或旧版本写入），按缺失处理——
+	// 绝不能借导出把附件目录之外的文件打进备份。
+	clean, valid := safeStoredName(stored)
+	if !valid {
+		return false, nil
+	}
+	f, err := os.Open(filepath.Join(dir, clean))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
@@ -96,7 +102,7 @@ func zipOneAttachment(zw *zip.Writer, dir, stored string) (bool, error) {
 	}
 	defer f.Close()
 
-	w, err := zw.Create(zipAttachmentPrefix + stored)
+	w, err := zw.Create(zipAttachmentPrefix + clean)
 	if err != nil {
 		return false, fmt.Errorf("创建附件条目失败: %w", err)
 	}

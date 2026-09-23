@@ -275,6 +275,34 @@ async function main() {
     const themeNow = await page.evaluate(() => document.documentElement.dataset.theme)
     check('主题令牌已挂到根节点', themeNow === 'light' || themeNow === 'dark', String(themeNow))
 
+    // 表格视图也接入多选；Esc 必须整态退出（原缺陷只清选中、多选态残留，
+    // 退出后再点行会再次选中而不是打开详情）。
+    await page.locator('button[title="表格"]').first().click()
+    await page.waitForTimeout(700)
+    check('表格视图渲染', (await page.locator('table[data-table]').count()) === 1)
+    await page.locator('button[aria-label="多选"]').first().click()
+    await page.waitForTimeout(300)
+    const tRow = page.locator('tbody tr[data-table-row]').first()
+    await tRow.click()
+    await page.waitForTimeout(300)
+    check('表格多选出现批处理条', (await page.getByText(/已选 1 项/).count()) > 0)
+    check('表格行呈选中态', ((await tRow.getAttribute('class')) || '').includes('bg-seal/6'))
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+    check('Esc 后批处理条消失', (await page.getByText(/已选 \d+ 项/).count()) === 0)
+    check(
+      'Esc 后完全退出多选',
+      (await page.locator('button[aria-label="多选"]').count()) === 1 &&
+        (await page.locator('button[aria-label="退出多选"]').count()) === 0,
+    )
+    await tRow.click()
+    await page.waitForTimeout(600)
+    check('退出后再点行打开详情', (await page.getByText(/子任务|备注|专注/).count()) > 0)
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+    await page.locator('button[title="列表"]').first().click()
+    await page.waitForTimeout(400)
+
     section('⑦ 手动排序与持久化')
     // 用「无日期」清单：其中任务同属一个分区，拖拽排序的落点判定最确定
     const nav = page.locator('aside').first()
@@ -553,10 +581,45 @@ async function main() {
     await page.waitForTimeout(1200)
     check('删除后只剩一个习惯', (await page.locator('[data-habit-row]').count()) === 1)
 
+    // 归档与恢复：默认藏起，勾「显示已归档」找回，再恢复回日常。
+    const arcHabit = page.locator('[data-habit-row]').filter({ hasText: '晨起临帖' }).first()
+    await arcHabit.hover()
+    await page.waitForTimeout(250)
+    await arcHabit.locator('button[title="更多"]').first().click()
+    await page.waitForTimeout(350)
+    await page.locator('button', { hasText: '归档（不再显示）' }).first().click()
+    await page.waitForTimeout(1100)
+    check('归档后习惯默认隐藏', (await page.locator('[data-habit-row]').count()) === 0)
+    await page.locator('[data-testid="toggle-archived-habits"]').first().click()
+    await page.waitForTimeout(700)
+    const archivedRow = page.locator('[data-habit-row]').filter({ hasText: '晨起临帖' }).first()
+    check('显示已归档后行重现', (await archivedRow.count()) === 1)
+    check('归档行带归档标记', (await archivedRow.getAttribute('data-habit-archived')) === '1')
+    await archivedRow.hover()
+    await page.waitForTimeout(250)
+    await archivedRow.locator('button[title="更多"]').first().click()
+    await page.waitForTimeout(350)
+    await page.locator('button', { hasText: '恢复（重新显示）' }).first().click()
+    await page.waitForTimeout(1100)
+    const restoredRow = page.locator('[data-habit-row]').filter({ hasText: '晨起临帖' }).first()
+    check('恢复后归档标记消失', (await restoredRow.getAttribute('data-habit-archived')) === '0')
+    // 今日已打过卡，勾圈的 title 是「撤销今日打卡」；两者有其一即说明打卡控件回来了。
+    check(
+      '恢复后可继续打卡',
+      (await restoredRow.locator('button[title="今日打卡"], button[title="撤销今日打卡"]').count()) > 0,
+    )
+
     section('⑫ 备注 Markdown、附件与集成面板')
     // 注意：右下角可能挂着「开启桌面通知」的提示条，但绝不能手动把它从 DOM 里删掉
     // ——那是 React 管理的节点，删了会让整棵树在下次 reconcile 时崩成白屏。
     // 被它挡住的点击一律用 force，让事件直接落在目标元素上。
+    // 提醒中心（同样 fixed 在右下角、z-40）更麻烦：force 点击仍按坐标派发，
+    // 事件会落到坐标上最顶层的元素——提醒卡片盖住详情面板底部按钮时，
+    // 点击就被卡片吃掉了。先清掉提醒（清空后整卡连同通知提示条一起消失）。
+    for (let i = 0; i < 20 && (await page.locator('button[aria-label="关闭提醒"]').count()) > 0; i++) {
+      await page.locator('button[aria-label="关闭提醒"]').first().click()
+      await page.waitForTimeout(120)
+    }
     // 回到今天视图（上一节停在习惯打卡），并新建一条专用任务，免得依赖别处的残留数据
     await page.locator('button[title="列表"]').first().click({ force: true })
     await page.waitForTimeout(300)

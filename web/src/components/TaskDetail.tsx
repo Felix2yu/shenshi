@@ -15,6 +15,7 @@ import {
   IconClock,
   IconCopy,
   IconDownload,
+  IconAlert,
   IconEye,
   IconFlag,
   IconArchive,
@@ -76,12 +77,48 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
     duplicateTask,
     setSelectedTask,
     toast,
+    version,
   } = useStore()
 
   const task = useMemo(() => tasks.find((t) => t.id === taskId) ?? null, [tasks, taskId])
 
+  // 依赖阻塞：单独拉一次 /blocked，不依赖列表接口是否附带 links。
+  const [blockers, setBlockers] = useState<Task[]>([])
+  useEffect(() => {
+    if (!task || task.status === 'done') {
+      setBlockers([])
+      return
+    }
+    let alive = true
+    void api
+      .taskBlocked(task.id)
+      .then((r) => {
+        if (alive) setBlockers(r.blockers)
+      })
+      .catch(() => {
+        if (alive) setBlockers([])
+      })
+    return () => {
+      alive = false
+    }
+  }, [task, version])
+
   const [title, setTitle] = useState(task?.title ?? '')
   const [notes, setNotes] = useState(task?.notes ?? '')
+  // 预计时长与进度：拖动/逐格输入期间不落库，防抖一次写入，避免请求队列把滑块弹回旧值。
+  const [estimateDraft, setEstimateDraft] = useState<number | null>(null)
+  const [progressDraft, setProgressDraft] = useState<number | null>(null)
+  const commitEstimate = useDebouncedCallback((v: number) => {
+    if (task) void updateTask(task.id, { estimateMinutes: v })
+  }, 450)
+  const commitProgress = useDebouncedCallback((v: number) => {
+    if (task) void updateTask(task.id, { progress: v })
+  }, 450)
+  // 切换任务时清掉未提交的草稿，防止上一个任务的值串到下一个。
+  useEffect(() => {
+    setEstimateDraft(null)
+    setProgressDraft(null)
+  }, [taskId])
   const [subInput, setSubInput] = useState('')
   const [tagInput, setTagInput] = useState('')
   const [tagPopover, setTagPopover] = useState(false)
@@ -294,6 +331,8 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
           onClick={() => {
             startFocus(task.id, 25)
             toast('已开始 25 分钟专注')
+            // 顺手打开专注面板，让计时可见——否则开始后界面毫无反馈。
+            window.dispatchEvent(new CustomEvent('shenshi:focus'))
           }}
         />
         <div className="relative">
@@ -314,7 +353,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
               type="button"
               className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[0.78125rem] text-ink hover:bg-surface-2"
               onClick={async () => {
-                await updateTask(task.id, { status: done ? 'todo' : 'done' })
+                await toggleTask(task.id)
                 setMoreOpen(false)
               }}
             >
@@ -388,6 +427,16 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
         <IconButton icon={IconX} label="关闭详情" onClick={onClose} />
       </header>
 
+      {/* 依赖阻塞提示：先完成前置任务，再动这一件 */}
+      {blockers.length > 0 ? (
+        <div className="flex items-start gap-2 border-b border-p-mid/30 bg-p-mid/8 px-3 py-1.5 text-[0.71875rem] text-p-mid">
+          <IconAlert size={13} className="mt-0.5 shrink-0" />
+          <span className="min-w-0">
+            被「{blockers.map((b) => b.title).join('、')}」挡着 —— 先完成前置任务再开工
+          </span>
+        </div>
+      ) : null}
+
       <div className="flex-1 overflow-y-auto px-4 pb-8 pt-3">
         {/* 标题 */}
         <textarea
@@ -442,8 +491,13 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
           >
             <IconPlus size={14} className="shrink-0 text-ink-3" />
             <input
+              {...compositionProps}
               value={subInput}
               onChange={(e) => setSubInput(e.target.value)}
+              onKeyDown={(e) => {
+                // 输入法选词的 Enter 属于组合过程，必须阻止默认行为，否则会提前提交表单。
+                if (isComposing(e)) e.preventDefault()
+              }}
               placeholder="添加子任务"
               className="min-w-0 flex-1 bg-transparent text-[0.8125rem] outline-none placeholder:text-ink-3"
             />
@@ -465,7 +519,12 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                 <button
                   key={s.v}
                   type="button"
-                  onClick={() => void updateTask(task.id, { status: s.v })}
+                  onClick={() => {
+                    // 完成走 toggle：重复任务在服务端统一续期，也会给出「下一次安排」反馈；
+                    // 恢复（含改为进行中）仍走 PATCH。
+                    if (s.v === 'done' && task.status !== 'done') void toggleTask(task.id)
+                    else if (s.v !== task.status) void updateTask(task.id, { status: s.v })
+                  }}
                   className={cx(
                     'rounded-lg border px-2.5 py-1 text-[0.78125rem] transition-colors',
                     s.v === 'in_progress'
@@ -506,8 +565,13 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                 min={0}
                 max={1440}
                 step={5}
-                value={task.estimateMinutes || ''}
-                onChange={(e) => void updateTask(task.id, { estimateMinutes: Math.max(0, Number(e.target.value) || 0) })}
+                value={estimateDraft ?? (task.estimateMinutes || '')}
+                onChange={(e) => {
+                  const v = Math.max(0, Number(e.target.value) || 0)
+                  setEstimateDraft(v)
+                  commitEstimate(v)
+                }}
+                onBlur={() => setEstimateDraft(null)}
                 placeholder="自定义"
                 title="预计时长（分钟）"
                 className="w-16 rounded-md border border-line bg-surface px-1.5 py-1 text-[0.75rem] tabular-nums outline-none focus:border-seal/50"
@@ -524,11 +588,17 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                 min={0}
                 max={100}
                 step={5}
-                value={task.progress}
-                onChange={(e) => void updateTask(task.id, { progress: Number(e.target.value) })}
+                value={progressDraft ?? task.progress}
+                onChange={(e) => {
+                  const v = Number(e.target.value)
+                  setProgressDraft(v)
+                  commitProgress(v)
+                }}
+                onPointerUp={() => setProgressDraft(null)}
+                onKeyUp={() => setProgressDraft(null)}
                 className="h-1 flex-1 accent-[var(--jade)]"
               />
-              <span className="w-9 text-right text-[0.75rem] tabular-nums text-ink-2">{task.progress}%</span>
+              <span className="w-9 text-right text-[0.75rem] tabular-nums text-ink-2">{progressDraft ?? task.progress}%</span>
             </div>
             {subTotal > 0 ? (
               <p className="mt-0.5 text-[0.6875rem] text-ink-3">
@@ -1360,6 +1430,7 @@ function AddChildSubtask({
   onClose: () => void
   onSubmit: () => Promise<void>
 }) {
+  const { compositionProps, isComposing } = useIMEGuard()
   if (!show) return null
   return (
     <form
@@ -1372,8 +1443,12 @@ function AddChildSubtask({
       <IconPlus size={13} className="shrink-0 text-ink-3" />
       <input
         autoFocus
+        {...compositionProps}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (isComposing(e)) e.preventDefault()
+        }}
         onBlur={() => {
           if (!value.trim()) onClose()
         }}

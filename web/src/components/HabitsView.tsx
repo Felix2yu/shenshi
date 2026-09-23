@@ -102,6 +102,7 @@ export function HabitsView() {
   const [draft, setDraft] = useState<HabitDraft | null>(null)
   const [menuFor, setMenuFor] = useState<number | null>(null)
   const [busy, setBusy] = useState<number | null>(null)
+  const [showArchived, setShowArchived] = useState(false)
 
   const weekStart = (settings.weekStart === '0' ? 0 : 1) as 0 | 1
 
@@ -121,7 +122,7 @@ export function HabitsView() {
     let alive = true
     setLoading(true)
     api
-      .listHabits({ from: grid.start, to: grid.end })
+      .listHabits({ from: grid.start, to: grid.end, includeArchived: showArchived ? '1' : undefined })
       .then((b) => {
         if (alive) setBoard(b)
       })
@@ -130,7 +131,7 @@ export function HabitsView() {
     return () => {
       alive = false
     }
-  }, [grid.start, grid.end, reload])
+  }, [grid.start, grid.end, reload, showArchived])
 
   const today = board?.today ?? todayStr()
   const habits = board?.habits ?? []
@@ -148,10 +149,12 @@ export function HabitsView() {
   }, [board])
 
   const summary = useMemo(() => {
-    const list = board?.stats ?? []
+    // 汇总只算未归档：归档是「收起来」，不该再占用今日分母与达标率。
+    const active = new Set((board?.habits ?? []).filter((h) => !h.archived).map((h) => h.id))
+    const list = (board?.stats ?? []).filter((s) => active.has(s.habitId))
     const done = list.reduce((n, s) => n + s.done, 0)
     const due = list.reduce((n, s) => n + s.due, 0)
-    return { done, due, rate: due ? done / due : 0, hit: list.filter((s) => s.today).length }
+    return { done, due, rate: due ? done / due : 0, hit: list.filter((s) => s.today).length, active: active.size }
   }, [board])
 
   const refresh = useCallback(() => setReload((n) => n + 1), [])
@@ -173,6 +176,7 @@ export function HabitsView() {
 
   /** 一键达标 / 撤销今日。目标多于一次时一次记满，避免连点。 */
   const toggleToday = (habit: Habit, stat: HabitStat | undefined) => {
+    if (habit.archived) return
     if (stat?.today) {
       void run(habit, () => api.uncheckHabit(habit.id, today), '撤销失败')
       return
@@ -181,11 +185,14 @@ export function HabitsView() {
   }
 
   /** 分次记：目标为 N 次时一次一次累加。 */
-  const bumpToday = (habit: Habit) => void run(habit, () => api.checkHabit(habit.id, { day: today }), '打卡失败')
+  const bumpToday = (habit: Habit) => {
+    if (habit.archived) return
+    void run(habit, () => api.checkHabit(habit.id, { day: today }), '打卡失败')
+  }
 
   /** 点热力格的某一天即补记或撤销那一天。 */
   const toggleDay = (habit: Habit, day: string) => {
-    if (day > today) return
+    if (habit.archived || day > today) return
     const met = (logIndex.get(`${habit.id}|${day}`)?.count ?? 0) >= habit.target
     void run(
       habit,
@@ -244,13 +251,25 @@ export function HabitsView() {
     setMenuFor(null)
     try {
       await api.updateHabit(habit.id, { archived: true })
-      toast(`已归档「${habit.name}」`)
+      toast(`已归档「${habit.name}」，勾选「显示已归档」可找回`)
       refresh()
     } catch {
       toast('归档失败', 'error')
     }
   }
 
+  const restore = async (habit: Habit) => {
+    setMenuFor(null)
+    try {
+      await api.updateHabit(habit.id, { archived: false })
+      toast(`已恢复「${habit.name}」`)
+      refresh()
+    } catch {
+      toast('恢复失败', 'error')
+    }
+  }
+
+  // 真空 = 服务端这次没给任何行（开关开着时归档行也在内，有行就该渲染列表）。
   const showEmpty = habits.length === 0 && !loading
 
   return (
@@ -259,7 +278,7 @@ export function HabitsView() {
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-2.5">
         {loading ? <span className="text-[0.71875rem] text-ink-3">载入中…</span> : null}
         <span className="text-[0.75rem] text-ink-3">
-          今日已打卡 <span className="tabular-nums text-ink-2">{summary.hit}</span> / {habits.length}
+          今日已打卡 <span className="tabular-nums text-ink-2">{summary.hit}</span> / {summary.active}
           {summary.due > 0 ? (
             <>
               {' · '}
@@ -283,6 +302,17 @@ export function HabitsView() {
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            data-testid="toggle-archived-habits"
+            onClick={() => setShowArchived((v) => !v)}
+            className={cx(
+              'rounded-lg border px-2.5 py-1.5 text-[0.78125rem] transition-colors',
+              showArchived ? 'border-seal/45 bg-seal/12 font-medium text-seal' : 'border-line text-ink-2 hover:text-ink',
+            )}
+          >
+            {showArchived ? '隐藏已归档' : '显示已归档'}
+          </button>
           <Button variant="primary" onClick={() => setDraft(emptyDraft())}>
             <IconPlus size={14} />
             新建习惯
@@ -327,6 +357,7 @@ export function HabitsView() {
                       setDraft(draftOf(h))
                     }}
                     onArchive={() => void archive(h)}
+                    onRestore={() => void restore(h)}
                     onDelete={() => void remove(h)}
                   />
                 ))}
@@ -360,11 +391,11 @@ export function HabitsView() {
                     })}
                   </div>
                   {habits.map((h) => (
-                    <div key={h.id} className="flex items-center" style={{ gap: CELL_GAP }}>
+                    <div key={h.id} className={cx('flex items-center', h.archived && 'opacity-45')} style={{ gap: CELL_GAP }}>
                       <span
                         className="shrink-0 truncate pr-2 text-right text-[0.71875rem] text-ink-2"
                         style={{ width: NAME_COL }}
-                        title={h.name}
+                        title={h.archived ? `${h.name}（已归档）` : h.name}
                       >
                         {h.name}
                       </span>
@@ -448,6 +479,7 @@ function HabitRow({
   onBump,
   onEdit,
   onArchive,
+  onRestore,
   onDelete,
 }: {
   habit: Habit
@@ -459,37 +491,52 @@ function HabitRow({
   onBump: () => void
   onEdit: () => void
   onArchive: () => void
+  onRestore: () => void
   onDelete: () => void
 }) {
   const done = stat?.today ?? false
   const at = stat?.todayAt ?? 0
+  const archived = habit.archived
   const cadence = habit.cadence === 'weekly' ? weeklyLabel(habit.weekdays) : '每天'
 
   return (
     <div
       data-habit-row={habit.id}
       data-habit-done={done ? '1' : '0'}
+      data-habit-archived={archived ? '1' : '0'}
       className={cx(
         'group/habit relative flex items-center gap-3 rounded-xl border px-3 py-2 transition-colors',
-        done ? 'border-seal/25 bg-seal/6' : 'border-line bg-surface hover:border-line-strong',
+        archived
+          ? 'border-line bg-surface-2/50 opacity-60'
+          : done
+            ? 'border-seal/25 bg-seal/6'
+            : 'border-line bg-surface hover:border-line-strong',
       )}
     >
-      <RoundCheck
-        checked={done}
-        color={habit.color}
-        size={20}
-        title={done ? '撤销今日打卡' : '今日打卡'}
-        onChange={onToggle}
-      />
+      {archived ? (
+        <span className="grid h-5 w-5 shrink-0 place-items-center text-[0.65625rem] text-ink-3" title="已归档，暂停打卡">
+          档
+        </span>
+      ) : (
+        <RoundCheck
+          checked={done}
+          color={habit.color}
+          size={20}
+          title={done ? '撤销今日打卡' : '今日打卡'}
+          onChange={onToggle}
+        />
+      )}
 
       <span className="h-7 w-[3px] shrink-0 rounded-full" style={{ background: habit.color }} />
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className={cx('truncate text-[0.84375rem] font-medium', done ? 'text-ink-2' : 'text-ink')}>
+          <span className={cx('truncate text-[0.84375rem] font-medium', done && !archived ? 'text-ink-2' : 'text-ink')}>
             {habit.name}
           </span>
-          {habit.target > 1 ? (
+          {archived ? (
+            <span className="shrink-0 rounded border border-line px-1 text-[0.65625rem] text-ink-3">已归档</span>
+          ) : habit.target > 1 ? (
             <span
               data-habit-progress={habit.id}
               className="shrink-0 rounded border border-line px-1 text-[0.65625rem] tabular-nums text-ink-3"
@@ -504,7 +551,7 @@ function HabitRow({
         </div>
       </div>
 
-      {habit.target > 1 && !done ? (
+      {!archived && habit.target > 1 && !done ? (
         <button
           type="button"
           onClick={onBump}
@@ -516,7 +563,7 @@ function HabitRow({
         </button>
       ) : null}
 
-      {stat && stat.streak > 0 ? (
+      {!archived && stat && stat.streak > 0 ? (
         <span
           className="flex shrink-0 items-center gap-1 rounded-md border border-p-high/25 bg-p-high/8 px-1.5 py-0.5 text-[0.6875rem] tabular-nums text-p-high"
           title={`当前连续 ${stat.streak} · 历史最长 ${stat.best}`}
@@ -524,11 +571,11 @@ function HabitRow({
           <IconFlame size={12} />
           {stat.streak} 天
         </span>
-      ) : (
+      ) : !archived ? (
         <span className="shrink-0 text-[0.6875rem] text-ink-3" title={stat ? `历史最长 ${stat.best}` : ''}>
           尚未连成
         </span>
-      )}
+      ) : null}
 
       <div className="shrink-0">
         <button
@@ -541,7 +588,11 @@ function HabitRow({
         </button>
         <Popover open={menuOpen} onClose={() => onMenu(false)} align="right" width={200}>
           <MenuItem onClick={onEdit}>编辑</MenuItem>
-          <MenuItem onClick={onArchive}>归档（不再显示）</MenuItem>
+          {archived ? (
+            <MenuItem onClick={onRestore}>恢复（重新显示）</MenuItem>
+          ) : (
+            <MenuItem onClick={onArchive}>归档（不再显示）</MenuItem>
+          )}
           <MenuItem onClick={onDelete} icon={IconTrash} danger>
             删除
           </MenuItem>

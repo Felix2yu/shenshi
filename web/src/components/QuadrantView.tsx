@@ -4,8 +4,8 @@ import { QUOTES } from '../lib/quotes'
 import { matchFilter, type TaskFilter } from '../lib/filter'
 import { useStore } from '../store/AppStore'
 import type { Task } from '../types'
-import { IconSparkle } from './icons'
-import { DRAG_MIME, TaskRow } from './TaskViews'
+import { IconSparkle, IconPlus } from './icons'
+import { DRAG_MIME, QuickAdd, TaskRow } from './TaskViews'
 import { EmptyState, cx } from './ui'
 
 /**
@@ -54,6 +54,7 @@ const QUADRANTS = [
 export function QuadrantView({ onOpen, filter }: { onOpen: (t: Task) => void; filter: TaskFilter }) {
   const { tasks, updateTask } = useStore()
   const [dropKey, setDropKey] = useState<number | null>(null)
+  const [quickKey, setQuickKey] = useState<number | null>(null)
 
   const grouped = useMemo(() => {
     const map = new Map<number, Task[]>()
@@ -119,8 +120,28 @@ export function QuadrantView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
                     {list.length}
                   </span>
                   <span className="ml-auto text-[0.71875rem] text-ink-3">{q.action}</span>
+                  <button
+                    type="button"
+                    title="在此象限新建任务"
+                    onClick={() => setQuickKey(quickKey === q.key ? null : q.key)}
+                    className={cx(
+                      'rounded-md p-0.5 text-ink-3 transition-colors hover:bg-surface-2 hover:text-seal',
+                      quickKey === q.key && 'bg-seal/10 text-seal',
+                    )}
+                  >
+                    <IconPlus size={13} />
+                  </button>
                 </div>
                 <p className="mb-2 px-0.5 text-[0.71875rem] leading-relaxed text-ink-3">{q.hint}</p>
+                {quickKey === q.key ? (
+                  <div className="mb-2">
+                    <QuickAdd
+                      autoFocus
+                      placeholder="记一件事…"
+                      defaults={{ important: q.important, urgent: q.urgent }}
+                    />
+                  </div>
+                ) : null}
 
                 <div className="flex-1 space-y-0.5">
                   {list.length === 0 ? (

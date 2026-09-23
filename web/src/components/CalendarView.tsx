@@ -63,7 +63,7 @@ function placeDay(rows: { task: Task; start: number; end: number }[]) {
 
 /** 日历视图自持数据：它需要的是「一段时间范围内的全部任务」，与侧边栏选择无关。 */
 export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; filter: TaskFilter }) {
-  const { moveTask, version, toast } = useStore()
+  const { moveTask, version, createTask } = useStore()
   const [mode, setMode] = useState<Mode>('month')
   const [anchor, setAnchor] = useState(todayStr())
   const [items, setItems] = useState<Task[]>([])
@@ -128,33 +128,31 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
 
   const quickCreate = async (day: string) => {
     const title = draft.trim()
+    if (!title) {
+      setDraft('')
+      setAdding(null)
+      return
+    }
+    // 走 store 而不是直调 api：version 依赖会自动重拉本视图，
+    // 清单/智能视图的对账也一并生效；失败时保留输入（store 已 toast）。
+    const t = await createTask({ title, dueDate: day })
+    if (!t) return
     setDraft('')
     setAdding(null)
-    if (!title) return
-    try {
-      await api.createTask({ title, dueDate: day })
-      toast(`已记入 ${day}`)
-      const r = await api.listTasks({ from: range.from, to: range.to })
-      setItems(r.tasks)
-    } catch {
-      toast('创建失败', 'error')
-    }
   }
 
   /** 日视图：在某时刻落一件新任务。 */
   const createAt = async (time: string) => {
     const title = draft.trim()
+    if (!title) {
+      setDraft('')
+      setAdding(null)
+      return
+    }
+    const t = await createTask({ title, dueDate: anchor, dueTime: time })
+    if (!t) return
     setDraft('')
     setAdding(null)
-    if (!title) return
-    try {
-      await api.createTask({ title, dueDate: anchor, dueTime: time })
-      toast(`已记入 ${anchor} ${time}`)
-      const r = await api.listTasks({ from: range.from, to: range.to })
-      setItems(r.tasks)
-    } catch {
-      toast('创建失败', 'error')
-    }
   }
 
   /** 日视图：把任务拖到某个时刻，只改时间不动日期；传 null 表示退回「全天」。 */
@@ -354,6 +352,7 @@ function DayCell({
   onQuickCreate: (day: string) => void
   compact?: boolean
 }) {
+  const { compositionProps, isComposing } = useIMEGuard()
   const isToday = day === today
   const overdue = dayDiff(day, today) < 0
   const visible = tasks.slice(0, compact ? 6 : 3)
@@ -446,8 +445,13 @@ function DayCell({
         >
           <input
             autoFocus
+            {...compositionProps}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              // 输入法选词的 Enter 属于组合过程，阻止默认提交，否则会提前建任务。
+              if (isComposing(e)) e.preventDefault()
+            }}
             onBlur={() => !draft.trim() && setAdding(null)}
             placeholder="标题，回车即存"
             className="min-w-0 flex-1 bg-transparent text-[0.71875rem] outline-none placeholder:text-ink-3"

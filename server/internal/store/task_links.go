@@ -89,9 +89,16 @@ func (s *Store) AddTaskLink(taskID, linkedID int64, kind string) (*model.TaskLin
 	if _, err := s.GetTask(linkedID); err != nil {
 		return nil, ValidationError{Msg: "要关联的任务不存在"}
 	}
+	// 环检测、查重、写入同事务：SQLite 单写者串行，tx 内做完即封死
+	// 「两个并发请求各自过检后插入、合起来成环」的窗口。
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	if kind == model.LinkBlocked {
 		// 依赖环会让「先做哪件」永远无解：顺着对方的依赖链往下走，走回自己即成环。
-		blockedBy, err := s.blockedByIDs(linkedID)
+		blockedBy, err := blockedByIDs(tx, linkedID)
 		if err != nil {
 			return nil, err
 		}
@@ -106,7 +113,7 @@ func (s *Store) AddTaskLink(taskID, linkedID int64, kind string) (*model.TaskLin
 				continue
 			}
 			seen[cur] = true
-			more, err := s.blockedByIDs(cur)
+			more, err := blockedByIDs(tx, cur)
 			if err != nil {
 				return nil, err
 			}
@@ -122,18 +129,25 @@ func (s *Store) AddTaskLink(taskID, linkedID int64, kind string) (*model.TaskLin
 		dupArgs = []any{kind, taskID, linkedID, linkedID, taskID}
 	}
 	exists := 0
-	_ = s.db.QueryRow(dupQ, dupArgs...).Scan(&exists)
+	if err := tx.QueryRow(dupQ, dupArgs...).Scan(&exists); err != nil {
+		return nil, err
+	}
 	if exists > 0 {
 		return nil, ValidationError{Msg: "这两个任务之间已存在同类关联"}
 	}
 	ts := model.Now()
-	res, err := s.db.Exec(`INSERT INTO task_links(task_id, linked_task_id, kind, created_at) VALUES(?,?,?,?)`,
+	res, err := tx.Exec(`INSERT INTO task_links(task_id, linked_task_id, kind, created_at) VALUES(?,?,?,?)`,
 		taskID, linkedID, kind, ts)
 	if err != nil {
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
-	_, _ = s.db.Exec(`UPDATE tasks SET updated_at = ? WHERE id IN (?, ?)`, ts, taskID, linkedID)
+	if _, err := tx.Exec(`UPDATE tasks SET updated_at = ? WHERE id IN (?, ?)`, ts, taskID, linkedID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	link := &model.TaskLink{
 		ID:           id,
 		TaskID:       taskID,
@@ -149,8 +163,9 @@ func (s *Store) AddTaskLink(taskID, linkedID int64, kind string) (*model.TaskLin
 }
 
 // blockedByIDs 返回 taskID 直接依赖的全部任务 id（即「谁的完成才能解锁它」）。
-func (s *Store) blockedByIDs(taskID int64) ([]int64, error) {
-	rows, err := s.db.Query(`SELECT linked_task_id FROM task_links WHERE task_id = ? AND kind = ?`, taskID, model.LinkBlocked)
+// 入参用 txer，让环检测可以在 AddTaskLink 的事务内执行。
+func blockedByIDs(q txer, taskID int64) ([]int64, error) {
+	rows, err := q.Query(`SELECT linked_task_id FROM task_links WHERE task_id = ? AND kind = ?`, taskID, model.LinkBlocked)
 	if err != nil {
 		return nil, err
 	}
@@ -188,4 +203,38 @@ func (s *Store) TaskIsBlocked(taskID int64) (bool, error) {
 		return false, fmt.Errorf("查询依赖状态失败: %w", err)
 	}
 	return n > 0, nil
+}
+
+// Blockers 返回「挡在 taskID 前面」的未完成依赖（id、标题、状态），
+// 供详情面板直接渲染「被什么挡着」，不必让前端再翻全量 links 自己算。
+func (s *Store) Blockers(taskID int64) ([]model.TaskLink, error) {
+	return s.linksOfKind(taskID, model.LinkBlocked, true)
+}
+
+// linksOfKind 列出任务的某种关联边。unblockedOnly 时只保留对端未完成的
+// （blocked_by 语义下「已完成」等于路已让开）。
+func (s *Store) linksOfKind(taskID int64, kind string, openOnly bool) ([]model.TaskLink, error) {
+	q := `SELECT tl.id, tl.task_id, tl.linked_task_id, tl.kind, tb.title, tb.status, lb.name
+	      FROM task_links tl
+	      JOIN tasks tb ON tb.id = tl.linked_task_id
+	      JOIN lists lb ON lb.id = tb.list_id
+	      WHERE tl.task_id = ? AND tl.kind = ?`
+	if openOnly {
+		q += ` AND tb.status <> 'done'`
+	}
+	q += ` ORDER BY tl.id`
+	rows, err := s.db.Query(q, taskID, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []model.TaskLink{}
+	for rows.Next() {
+		var l model.TaskLink
+		if err := rows.Scan(&l.ID, &l.TaskID, &l.LinkedTaskID, &l.Kind, &l.Title, &l.Status, &l.ListName); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
 }

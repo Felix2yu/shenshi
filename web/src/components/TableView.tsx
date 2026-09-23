@@ -4,7 +4,8 @@ import { dueLabel, relativeTime, todayStr } from '../lib/date'
 import { useStore } from '../store/AppStore'
 import { PRIORITY_LABEL, type Task } from '../types'
 import { IconCheckCircle, IconClock, IconLink, IconPin, IconStar } from './icons'
-import { EmptyState, RoundCheck, cx } from './ui'
+import { Checkbox, EmptyState, RoundCheck, cx } from './ui'
+import { QuickAdd } from './TaskViews'
 import type { TaskSort } from '../api/client'
 
 /** 列头可以点的列：点一次换排序字段。 */
@@ -27,7 +28,7 @@ const PRIORITY_TONE: Record<number, string> = {
  * 它与列表视图共用同一份筛选结果，只是换了个摆放方式——不做第二套数据通路。
  */
 export function TableView({ tasks, onOpen }: { tasks: Task[]; onOpen: (t: Task) => void }) {
-  const { toggleTask, sortBy, setSortBy, lists } = useStore()
+  const { toggleTask, sortBy, setSortBy, lists, multiSelect, selectedIds, toggleSelected } = useStore()
 
   const listName = useMemo(() => {
     const m = new Map<number, string>()
@@ -37,7 +38,8 @@ export function TableView({ tasks, onOpen }: { tasks: Task[]; onOpen: (t: Task) 
 
   if (!tasks.length) {
     return (
-      <div className="p-6">
+      <div className="space-y-4 p-6">
+        <QuickAdd placeholder="记下一件事…" />
         <EmptyState text="这张表还没有内容" hint="换个清单，或把筛选放宽一些。" />
       </div>
     )
@@ -46,7 +48,11 @@ export function TableView({ tasks, onOpen }: { tasks: Task[]; onOpen: (t: Task) 
   const today = todayStr()
 
   return (
-    <div className="min-h-full overflow-x-auto">
+    <div className="min-h-full">
+      <div className="px-5 pt-1 pb-3">
+        <QuickAdd placeholder="记下一件事…" />
+      </div>
+      <div className="overflow-x-auto">
       <table data-table className="w-full min-w-[860px] border-collapse text-[0.78125rem]">
         <thead className="sticky top-0 z-10 bg-paper/95 backdrop-blur">
           <tr className="border-b border-line text-left text-[0.6875rem] text-ink-3">
@@ -69,19 +75,24 @@ export function TableView({ tasks, onOpen }: { tasks: Task[]; onOpen: (t: Task) 
               <tr
                 key={t.id}
                 data-table-row={t.id}
-                onClick={() => onOpen(t)}
+                onClick={() => (multiSelect ? toggleSelected(t.id) : onOpen(t))}
                 className={cx(
                   'cursor-pointer border-b border-line/60 transition-colors hover:bg-surface-2/60',
+                  multiSelect && selectedIds.includes(t.id) && 'bg-seal/6',
                   done && 'text-ink-3',
                 )}
               >
                 <td className="px-2 py-1.5 align-middle">
-                  <RoundCheck
-                    checked={done}
-                    onChange={() => void toggleTask(t.id)}
-                    color={t.listColor || undefined}
-                    size={16}
-                  />
+                  {multiSelect ? (
+                    <Checkbox checked={selectedIds.includes(t.id)} onChange={() => toggleSelected(t.id)} />
+                  ) : (
+                    <RoundCheck
+                      checked={done}
+                      onChange={() => void toggleTask(t.id)}
+                      color={t.listColor || undefined}
+                      size={16}
+                    />
+                  )}
                 </td>
                 <td className="px-2 py-1.5 align-middle">
                   <div className="flex items-center gap-1.5">
@@ -151,6 +162,7 @@ export function TableView({ tasks, onOpen }: { tasks: Task[]; onOpen: (t: Task) 
       <p className="px-3 py-2 text-[0.6875rem] text-ink-3">
         共 {tasks.length} 行 · 点列头可换排序，点任意一行打开详情
       </p>
+      </div>
     </div>
   )
 }

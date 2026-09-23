@@ -55,12 +55,22 @@ jobs:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
 
+      # 纯函数单测（重复规则推演等），秒级，放在冒烟之前快速失败。
+      - name: 后端单元测试
+        run: go test ./...
+        working-directory: server
+
       - name: 安装前端依赖
         run: npm ci
         working-directory: web
 
       - name: 前端类型检查
         run: npx tsc --noEmit
+        working-directory: web
+
+      # NLP 解析器出错不抛异常、只安静算错日期，用固定「今天」的确定性用例钉住。
+      - name: 自然语言解析回归
+        run: node scripts/check-nlp.mjs
         working-directory: web
 
       # build.sh 会自动定位符合 .nvmrc / server/go.mod 的 node 与 go，并打印实际版本；

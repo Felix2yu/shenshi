@@ -227,25 +227,28 @@ function EntityDialog({ draft, onClose }: { draft: EntityDraft | null; onClose: 
     if (!value || busy) return
     setBusy(true)
     try {
+      // 只有真正落库成功才关窗：store 的更新方法吞掉异常后无法感知，
+      // 这里改为看返回值，失败时留在弹窗内让用户改后重试。
+      let ok = true
       if (draft.kind === 'folder') {
-        if (isNew) await createFolder(value, color, parentId ?? undefined)
-        else await updateFolder(draft.id!, { name: value, color })
-        if (!isNew && draft.id !== undefined) {
+        if (isNew) ok = (await createFolder(value, color, parentId ?? undefined)) !== null
+        else ok = await updateFolder(draft.id!, { name: value, color })
+        if (ok && !isNew && draft.id !== undefined) {
           const current = folders.find((f) => f.id === draft.id)
           const wasParent = current?.parentId ?? null
           if (parentId !== wasParent) {
-            await updateFolder(draft.id, parentId === null ? { moveToRoot: true } : { parentId })
+            ok = await updateFolder(draft.id, parentId === null ? { moveToRoot: true } : { parentId })
           }
         }
       } else if (draft.kind === 'list') {
-        if (isNew) await createList(value, folderId ?? undefined, color)
-        else await updateList(draft.id!, { name: value, color, folderId: folderId ?? undefined, moveToRoot: folderId === null })
+        if (isNew) ok = (await createList(value, folderId ?? undefined, color)) !== null
+        else ok = await updateList(draft.id!, { name: value, color, folderId: folderId ?? undefined, moveToRoot: folderId === null })
       } else if (isNew) {
-        await createTag(value, color)
+        ok = (await createTag(value, color)) !== null
       } else {
-        await updateTag(draft.id!, { name: value, color })
+        ok = await updateTag(draft.id!, { name: value, color })
       }
-      onClose()
+      if (ok) onClose()
     } finally {
       setBusy(false)
     }
@@ -371,6 +374,7 @@ function EntityDialog({ draft, onClose }: { draft: EntityDraft | null; onClose: 
 /* ---------------- 侧边栏 ---------------- */
 
 export function Sidebar() {
+  const { compositionProps, isComposing } = useIMEGuard()
   const {
     selection,
     select,
@@ -397,6 +401,7 @@ export function Sidebar() {
     reminders,
     savedFilters,
     applySavedFilter,
+    renameSavedFilter,
     deleteSavedFilter,
     filters,
     undo,
@@ -412,6 +417,9 @@ export function Sidebar() {
   const [menu, setMenu] = useState<string | null>(null)
   const [addingTag, setAddingTag] = useState(false)
   const [newTagName, setNewTagName] = useState('')
+  const [renamingFilter, setRenamingFilter] = useState<number | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
+  const skipRenameBlur = useRef(false)
   const [appearanceOpen, setAppearanceOpen] = useState(false)
   const [archivedOpen, setArchivedOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -605,32 +613,81 @@ export function Sidebar() {
                   </span>
                 ) : null}
               </div>
-              {savedFilters.map((f) => (
-                <div key={f.id} className="group/filter flex items-center gap-1 rounded-lg pr-1.5 hover:bg-surface-2">
-                  <button
-                    type="button"
-                    data-saved-filter={f.id}
-                    onClick={() => applySavedFilter(f)}
-                    className="flex min-w-0 flex-1 items-start gap-2.5 py-[6px] pl-2.5 text-left"
-                  >
-                    <IconFilter size={13} className="mt-[3px] shrink-0 text-ink-3" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[0.8125rem] text-ink-2">{f.name}</span>
-                      <span className="block truncate text-[0.65625rem] text-ink-3">
-                        {describeFilter(filterFromQuery(f.query), tags) || '无条件'}
+              {savedFilters.map((f) =>
+                renamingFilter === f.id ? (
+                  <div key={f.id} className="flex items-center gap-1 px-2 py-1">
+                    <input
+                      autoFocus
+                      {...compositionProps}
+                      className="min-w-0 flex-1 rounded-md border border-seal/50 bg-surface px-2 py-1 text-[0.78125rem] outline-none focus:border-seal/60"
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (isComposing(e)) return
+                        if (e.key === 'Enter') e.currentTarget.blur()
+                        if (e.key === 'Escape') {
+                          skipRenameBlur.current = true
+                          e.currentTarget.blur()
+                        }
+                      }}
+                      onBlur={() => {
+                        if (skipRenameBlur.current) {
+                          skipRenameBlur.current = false
+                          setRenamingFilter(null)
+                          return
+                        }
+                        const v = renameDraft.trim()
+                        if (v && v !== f.name) void renameSavedFilter(f.id, v)
+                        setRenamingFilter(null)
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div key={f.id} className="group/filter flex items-center gap-1 rounded-lg pr-1.5 hover:bg-surface-2">
+                    <button
+                      type="button"
+                      data-saved-filter={f.id}
+                      onClick={() => applySavedFilter(f)}
+                      className="flex min-w-0 flex-1 items-start gap-2.5 py-[6px] pl-2.5 text-left"
+                    >
+                      <IconFilter size={13} className="mt-[3px] shrink-0 text-ink-3" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[0.8125rem] text-ink-2">{f.name}</span>
+                        <span className="block truncate text-[0.65625rem] text-ink-3">
+                          {describeFilter(filterFromQuery(f.query), tags) || '无条件'}
+                        </span>
                       </span>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    title="删除这条筛选"
-                    onClick={() => void deleteSavedFilter(f.id)}
-                    className="rounded p-0.5 text-ink-3 opacity-0 transition-opacity hover:text-p-high group-hover/filter:opacity-100"
-                  >
-                    <IconX size={12} />
-                  </button>
-                </div>
-              ))}
+                    </button>
+                    <button
+                      type="button"
+                      title="重命名这条筛选"
+                      onClick={() => {
+                        setRenamingFilter(f.id)
+                        setRenameDraft(f.name)
+                      }}
+                      className="rounded p-0.5 text-ink-3 opacity-0 transition-opacity hover:text-ink group-hover/filter:opacity-100"
+                    >
+                      <IconPencil size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      title="删除这条筛选"
+                      onClick={async () => {
+                        const ok = await confirm({
+                          title: `删除筛选「${f.name}」`,
+                          message: '删除后不可恢复，筛选条件本身不会影响任务。',
+                          confirmText: '删除',
+                          danger: true,
+                        })
+                        if (ok) void deleteSavedFilter(f.id)
+                      }}
+                      className="rounded p-0.5 text-ink-3 opacity-0 transition-opacity hover:text-p-high group-hover/filter:opacity-100"
+                    >
+                      <IconX size={12} />
+                    </button>
+                  </div>
+                ),
+              )}
             </div>
           ) : null}
 
@@ -711,17 +768,24 @@ export function Sidebar() {
                     setAddingTag(false)
                     return
                   }
-                  await createTag(name)
-                  setNewTagName('')
-                  setAddingTag(false)
+                  // 创建失败（重名等）返回 null：保持输入不收起，让用户改后再试。
+                  const created = await createTag(name)
+                  if (created) {
+                    setNewTagName('')
+                    setAddingTag(false)
+                  }
                 }}
               >
                 <input
                   autoFocus
+                  {...compositionProps}
                   className="min-w-0 flex-1 rounded-md border border-line bg-surface px-2 py-1 text-[0.78125rem] outline-none focus:border-seal/60"
                   placeholder="标签名"
                   value={newTagName}
                   onChange={(e) => setNewTagName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (isComposing(e)) e.preventDefault()
+                  }}
                   onBlur={() => !newTagName.trim() && setAddingTag(false)}
                 />
                 <IconButton icon={IconX} label="取消" size={13} onClick={() => setAddingTag(false)} />

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -123,6 +122,7 @@ func (s *Store) Undo() (int, error) {
 	defer func() { _ = tx.Rollback() }()
 
 	restored := make([]int64, 0, len(tasks))
+	idMap := make(map[int64]int64, len(tasks))
 	for _, t := range tasks {
 		listID := t.ListID
 		// 清单若在删除之后也被删掉了，退回收件箱，而不是让整次撤销失败。
@@ -137,6 +137,7 @@ func (s *Store) Undo() (int, error) {
 		if err != nil {
 			return 0, err
 		}
+		idMap[t.ID] = newID
 		ids := make([]int64, 0, len(t.Tags))
 		for _, g := range t.Tags {
 			var ok int
@@ -167,6 +168,43 @@ func (s *Store) Undo() (int, error) {
 		}
 		restored = append(restored, newID)
 	}
+
+	// 依赖/关联边原样回放。对端可能没被删（单任务删除），此时用原 id 接回；
+	// attachLinks 的视角视图会把对向边也挂上，related 是对称关系，反向补一条，
+	// UNIQUE 约束保证重复插入无害。指向的对端已不存在时整条跳过。
+	for _, t := range tasks {
+		from, okFrom := idMap[t.ID]
+		if !okFrom {
+			continue
+		}
+		for _, l := range t.Links {
+			if l.Kind == "" || l.LinkedTaskID <= 0 {
+				continue
+			}
+			to := l.LinkedTaskID
+			if mapped, ok := idMap[l.LinkedTaskID]; ok {
+				to = mapped
+			} else {
+				var exists int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM tasks WHERE id = ?`, l.LinkedTaskID).Scan(&exists); err != nil {
+					return 0, err
+				}
+				if exists == 0 {
+					continue
+				}
+			}
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO task_links(task_id, linked_task_id, kind, created_at) VALUES(?,?,?,?)`,
+				from, to, l.Kind, model.Now()); err != nil {
+				return 0, err
+			}
+			if l.Kind == model.LinkRelated && to != from {
+				if _, err := tx.Exec(`INSERT OR IGNORE INTO task_links(task_id, linked_task_id, kind, created_at) VALUES(?,?,?,?)`,
+					to, from, l.Kind, model.Now()); err != nil {
+					return 0, err
+				}
+			}
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
@@ -191,9 +229,9 @@ func (s *Store) Undo() (int, error) {
 	return len(restored), nil
 }
 
-// filePath 由存储名拼出磁盘路径。
+// filePath 由存储名拼出磁盘路径（拒绝带目录成分的名字）。
 func (s *Store) filePath(stored string) string {
-	return filepath.Join(s.attachmentDir, stored)
+	return s.storedPath(stored)
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }

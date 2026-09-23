@@ -344,6 +344,8 @@ export interface ReminderHit {
   task: Task
   /** 子任务自己的提醒（非空时通知文案用它） */
   subtask?: { id: number; taskId: number; title: string } | null
+  /** 回执 id：任务为正 id，子任务为 -子任务ID；去重与 ack 都用它 */
+  ackId: number
   fireAt: string
   offset: number
   overdue: boolean

@@ -273,11 +273,13 @@ CREATE TABLE IF NOT EXISTS habit_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_habit_logs_habit ON habit_logs(habit_id, day);
 
--- 提醒投递台账：保证同一任务的同一触发时刻只提醒一次。
+-- 提醒投递台账：fired_at 非空表示已回执（永久静默）；
+-- snoozed_until 表示「稍后提醒」的到期时刻，到期前不投递、到期后重新出现。
 CREATE TABLE IF NOT EXISTS reminder_log (
-  task_id  INTEGER NOT NULL,
-  fire_at  TEXT    NOT NULL,
-  fired_at TEXT    NOT NULL,
+  task_id        INTEGER NOT NULL,
+  fire_at        TEXT    NOT NULL,
+  fired_at       TEXT    NOT NULL,
+  snoozed_until  TEXT,
   PRIMARY KEY (task_id, fire_at)
 );
 
@@ -400,6 +402,7 @@ var addColumns = []struct{ table, column, ddl string }{
 	{"subtasks", "parent_id", `ALTER TABLE subtasks ADD COLUMN parent_id INTEGER REFERENCES subtasks(id) ON DELETE CASCADE`},
 	{"subtasks", "due_date", `ALTER TABLE subtasks ADD COLUMN due_date TEXT`},
 	{"subtasks", "reminders", `ALTER TABLE subtasks ADD COLUMN reminders TEXT NOT NULL DEFAULT '[]'`},
+	{"reminder_log", "snoozed_until", `ALTER TABLE reminder_log ADD COLUMN snoozed_until TEXT`},
 }
 
 func (s *Store) migrate() error {

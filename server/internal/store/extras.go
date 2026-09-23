@@ -116,8 +116,31 @@ func (s *Store) GetAttachment(id int64) (*model.Attachment, error) {
 }
 
 // AttachmentPath 返回附件在磁盘上的绝对路径。
+// 存储名不可信（可能来自导入的备份）：非法名指向一个必然不存在的占位，
+// 读不到也删不中，目录穿越无从下手。
 func (s *Store) AttachmentPath(a *model.Attachment) string {
-	return filepath.Join(s.attachmentDir, a.File)
+	return s.storedPath(a.File)
+}
+
+// storedPath 把存储名拼成磁盘路径。存储名必须是单一文件名，不含目录成分。
+func (s *Store) storedPath(stored string) string {
+	if clean, ok := safeStoredName(stored); ok {
+		return filepath.Join(s.attachmentDir, clean)
+	}
+	return filepath.Join(s.attachmentDir, ".invalid-stored-name")
+}
+
+// safeStoredName 校验附件存储名：服务端生成的是随机名，备份里带来的不可信，
+// 统一要求「单一相对文件名」——带 /、\ 或 . / .. 一律拒绝。
+func safeStoredName(name string) (string, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" || name == "." || name == ".." {
+		return "", false
+	}
+	if strings.ContainsAny(name, `/\`) || strings.ContainsRune(name, 0) {
+		return "", false
+	}
+	return name, true
 }
 
 // DeleteAttachment 删除一条附件，连同磁盘文件。
@@ -148,13 +171,17 @@ func (s *Store) dropTaskAttachments(taskID int64, removeFiles bool) error {
 	if err != nil {
 		return err
 	}
+	// 先删库行、再删文件（对照 DeleteAttachment）：反过来会在删行失败时
+	// 先把文件删掉，留下指向不存在文件的死链。
+	if _, err := s.db.Exec(`DELETE FROM attachments WHERE task_id = ?`, taskID); err != nil {
+		return err
+	}
 	if removeFiles {
 		for i := range list {
 			_ = os.Remove(s.AttachmentPath(&list[i]))
 		}
 	}
-	_, err = s.db.Exec(`DELETE FROM attachments WHERE task_id = ?`, taskID)
-	return err
+	return nil
 }
 
 // safeDisplayName 只保留文件名部分，并压掉控制字符与路径分隔符。
@@ -696,7 +723,8 @@ func (s *Store) InstantiateTemplate(id int64, listID *int64, dueDate *string) (*
 	}
 	if due != nil {
 		in.DueDate = optOfPtr(due)
-		in.Urgent = optOf(true) // 带了日期就算紧急，与新建任务的口径一致
+		// 紧急与手建任务同口径：due ≤ 明天才算紧急，而不是「带日期就紧急」。
+		in.Urgent = optOf(deriveUrgent(due, false))
 	}
 
 	target := int64(0)
@@ -724,8 +752,11 @@ func (s *Store) NoteCalDAVChange(collection, uid string, taskID int64, deleted b
 	return err
 }
 
-// CalDAVChangesSince 返回序号大于 seq 的变更，以及当前最大序号。
+// CalDAVChangesSince 返回序号大于 seq 的变更，以及「客户端下次该带的令牌水位」。
 // limit 为 0 或负表示不限。
+//
+// 水位在未截断时是全库最大序号；一旦按 limit 截断，只能停在最后一条已返回的变更上——
+// 若照旧回全局 maxSeq，客户端会以为中间被砍掉的变更已经收齐，它们便永远不再重放。
 func (s *Store) CalDAVChangesSince(collection string, seq int64, limit int) ([]model.CalDAVChange, int64, error) {
 	maxSeq, err := s.CalDAVMaxSeq(collection)
 	if err != nil {
@@ -753,7 +784,14 @@ func (s *Store) CalDAVChangesSince(collection string, seq int64, limit int) ([]m
 		c.Deleted = deleted != 0
 		out = append(out, c)
 	}
-	return out, maxSeq, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	next := maxSeq
+	if limit > 0 && len(out) >= limit {
+		next = out[len(out)-1].Seq
+	}
+	return out, next, nil
 }
 
 // CalDAVMaxSeq 返回某集合当前的变更序号上界。

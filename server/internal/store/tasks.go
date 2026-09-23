@@ -197,7 +197,6 @@ func (f TaskFilter) build(countOnly bool) (string, []any) {
 	// 纯计数场景不需要 ORDER BY，交由调用方决定。
 	return strings.Join(where, " AND "), args
 }
-
 // CountTasks 返回满足条件的任务数量（未完成口径，用于角标）。
 func (s *Store) CountTasks(f TaskFilter) (int, error) {
 	where, args := f.whereCount()
@@ -569,6 +568,22 @@ func (s *Store) CreateTask(in model.TaskInput, defaultListID int64) (*model.Task
 	}
 	repeatFrom := normalizeRepeatFrom(deref(in.RepeatFrom, model.RepeatFromDue))
 
+	if err := checkPriority(priority); err != nil {
+		return nil, err
+	}
+	if err := checkDatePtr(startDate); err != nil {
+		return nil, err
+	}
+	if err := checkDatePtr(dueDate); err != nil {
+		return nil, err
+	}
+	if err := checkTime(dueTime); err != nil {
+		return nil, err
+	}
+	if err := checkTime(endTime); err != nil {
+		return nil, err
+	}
+
 	important := deriveImportant(priority)
 	if in.Important.Set {
 		important = in.Important.Value
@@ -581,20 +596,24 @@ func (s *Store) CreateTask(in model.TaskInput, defaultListID int64) (*model.Task
 	if reminders == nil {
 		reminders = []int{}
 	}
+	if err := checkReminders(reminders); err != nil {
+		return nil, err
+	}
 	// 新任务默认追加到末尾。原实现取「当前毫秒 % 1000000」，会在约 16.7 分钟后回绕，
 	// 使新任务插到列表最前面；改为读取当前最大值再加固定步长。
 	sortOrder := deref(in.SortOrder, 0)
-	if !in.SortOrder.Set {
-		if err := s.db.QueryRow(`SELECT COALESCE(MAX(sort_order), 0) + 1024 FROM tasks`).Scan(&sortOrder); err != nil {
-			return nil, err
-		}
-	}
 
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	// MAX 读取放在事务内，避免「读到最大值」与「插入」之间被并发插入插队造成撞号。
+	if !in.SortOrder.Set {
+		if err := tx.QueryRow(`SELECT COALESCE(MAX(sort_order), 0) + 1024 FROM tasks`).Scan(&sortOrder); err != nil {
+			return nil, err
+		}
+	}
 
 	ts := model.Now()
 	res, err := tx.Exec(`INSERT INTO tasks(list_id, title, notes, status, priority, start_date, due_date, due_time, end_time, url, reminders, repeat_rule, repeat_from, important, urgent, pinned, starred, estimate_minutes, progress, sort_order, created_at, updated_at)
@@ -610,14 +629,9 @@ func (s *Store) CreateTask(in model.TaskInput, defaultListID int64) (*model.Task
 	id, _ := res.LastInsertId()
 
 	if in.Subtasks.Set {
-		for i, sub := range in.Subtasks.Value {
-			if strings.TrimSpace(sub.Title) == "" {
-				continue
-			}
-			if _, err := tx.Exec(`INSERT INTO subtasks(task_id, title, done, sort_order) VALUES(?,?,?,?)`,
-				id, strings.TrimSpace(sub.Title), boolInt(sub.Done), i); err != nil {
-				return nil, err
-			}
+		// 与 UpdateTask 同一条写入路径：日期、提醒、两级结构一并保留。
+		if err := replaceSubtasks(tx, id, in.Subtasks.Value); err != nil {
+			return nil, err
 		}
 	}
 	if in.TagIDs.Set {
@@ -689,18 +703,35 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 		add("list_id = ?", in.ListID.Value)
 	}
 	if in.Priority.Set {
+		if err := checkPriority(in.Priority.Value); err != nil {
+			return nil, err
+		}
 		add("priority = ?", in.Priority.Value)
 	}
 	if in.StartDate.Set {
-		add("start_date = ?", ptrStr(cleanDatePtr(in.StartDate.Value)))
+		v := cleanDatePtr(in.StartDate.Value)
+		if err := checkDatePtr(v); err != nil {
+			return nil, err
+		}
+		add("start_date = ?", ptrStr(v))
 	}
 	if in.DueDate.Set {
-		add("due_date = ?", ptrStr(in.DueDate.Value))
+		v := cleanDatePtr(in.DueDate.Value)
+		if err := checkDatePtr(v); err != nil {
+			return nil, err
+		}
+		add("due_date = ?", ptrStr(v))
 	}
 	if in.DueTime.Set {
+		if err := checkTime(in.DueTime.Value); err != nil {
+			return nil, err
+		}
 		add("due_time = ?", ptrStr(in.DueTime.Value))
 	}
 	if in.EndTime.Set {
+		if err := checkTime(in.EndTime.Value); err != nil {
+			return nil, err
+		}
 		add("end_time = ?", ptrStr(in.EndTime.Value))
 	}
 	if in.URL.Set {
@@ -719,6 +750,9 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 		r := in.Reminders.Value
 		if r == nil {
 			r = []int{}
+		}
+		if err := checkReminders(r); err != nil {
+			return nil, err
 		}
 		add("reminders = ?", mustJSON(r))
 	}
@@ -777,23 +811,39 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 
 	add("updated_at = ?", model.Now())
 	args = append(args, id)
-	if _, err := s.db.Exec("UPDATE tasks SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...); err != nil {
+	// 字段更新、标签同步、子任务替换必须同生共死：否则中途失败会留下
+	// 「字段已改但标签/子任务被清掉」的半截状态。
+	tx, err := s.db.Begin()
+	if err != nil {
 		return nil, err
 	}
-
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec("UPDATE tasks SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...); err != nil {
+		return nil, err
+	}
 	if in.TagIDs.Set {
-		if err := syncTaskTags(s.db, id, in.TagIDs.Value); err != nil {
+		if err := syncTaskTags(tx, id, in.TagIDs.Value); err != nil {
 			return nil, err
 		}
 	}
 	if in.Subtasks.Set {
-		if err := replaceSubtasks(s.db, id, in.Subtasks.Value); err != nil {
+		if err := replaceSubtasks(tx, id, in.Subtasks.Value); err != nil {
 			return nil, err
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 	t, err := s.GetTask(id)
 	if err != nil {
 		return nil, err
+	}
+	// 经 PATCH 把状态改为完成时，重复任务同样要续期——与 /toggle 同一口径，
+	// 否则从详情面板完成的重复任务会静默断链（只完成、不再生成下一次）。
+	if in.Status.Set && in.Status.Value == model.StatusDone && cur.Status != model.StatusDone {
+		if _, err := s.spawnNextRepeat(t); err != nil {
+			return nil, err
+		}
 	}
 	// 完成与恢复比「改了某个字段」更值得单独订阅，因此拆成独立事件。
 	switch {
@@ -855,6 +905,14 @@ func (s *Store) deleteTaskRows(id int64, cur *model.Task, quiet bool) error {
 	return nil
 }
 
+// emitTaskUpdatedQuietly 重新读出任务并发一条更新事件；读不到就静默略过——
+// 批处理里单条读失败不值得让整批出错。
+func (s *Store) emitTaskUpdatedQuietly(id int64) {
+	if t, err := s.GetTask(id); err == nil {
+		s.emit(model.EventTaskUpdated, t)
+	}
+}
+
 // DuplicateTask 复制一条任务：结构照搬，状态归零。
 //
 // 复制出的新任务不继承「置顶」（置顶是对此刻的一个表态，不该自己长出来），
@@ -865,9 +923,18 @@ func (s *Store) DuplicateTask(id int64) (*model.Task, error) {
 		return nil, err
 	}
 	subs := make([]model.Subtask, 0, len(cur.Subtasks))
-	for _, sub := range cur.Subtasks {
-		subs = append(subs, model.Subtask{Title: sub.Title, Done: false})
+	var clearDone func(items []model.Subtask) []model.Subtask
+	clearDone = func(items []model.Subtask) []model.Subtask {
+		out := make([]model.Subtask, 0, len(items))
+		for _, sub := range items {
+			cp := sub
+			cp.Done = false
+			cp.Children = clearDone(sub.Children)
+			out = append(out, cp)
+		}
+		return out
 	}
+	subs = clearDone(cur.Subtasks)
 	in := model.TaskInput{
 		Title:      optOf(cur.Title + "（副本）"),
 		Notes:      optOf(cur.Notes),
@@ -885,6 +952,8 @@ func (s *Store) DuplicateTask(id int64) (*model.Task, error) {
 		Urgent:     optOf(cur.Urgent),
 		Starred:    optOf(cur.Starred),
 		Subtasks:   optOf(subs),
+		EstimateMinutes: optOf(cur.EstimateMinutes),
+		Progress:        optOf(cur.Progress),
 	}
 	nt, err := s.CreateTask(in, cur.ListID)
 	if err != nil {
@@ -905,7 +974,7 @@ func (s *Store) DuplicateTask(id int64) (*model.Task, error) {
 
 // PurgeCompleted 清空已完成任务。listID 为 nil 表示跨全部清单。
 func (s *Store) PurgeCompleted(listID *int64) (int, error) {
-	f := TaskFilter{Status: model.StatusDone, SortBy: "manual", IncludeArchived: true}
+	f := TaskFilter{Status: model.StatusDone, SortBy: "manual", IncludeArchived: true, IncludeTaskArchived: true}
 	if listID != nil {
 		f.ListID = listID
 	}
@@ -953,52 +1022,44 @@ func (s *Store) toggleTask(id int64, quiet bool) (*ToggleResult, error) {
 	}
 	ts := model.Now()
 	if cur.Status != model.StatusDone {
-		if _, err := s.db.Exec(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, ts, ts, id); err != nil {
-			return nil, err
-		}
-		res := &ToggleResult{Completed: true}
-		if cur.RepeatRule != nil && *cur.RepeatRule != "" {
-			if next, nextRule, ok := NextRepeat(*cur.RepeatRule, cur.StartDate, cur.DueDate, cur.RepeatFrom, time.Now()); ok {
-				nd := next.Format("2006-01-02")
-				in := model.TaskInput{
-					Title:      optOf(cur.Title),
-					Notes:      optOf(cur.Notes),
-					ListID:     optOf(cur.ListID),
-					Priority:   optOf(cur.Priority),
-					StartDate:  optOfPtr(shiftStart(cur.StartDate, cur.DueDate, nd)),
-					DueDate:    optOfPtr(&nd),
-					DueTime:    optOfPtr(cur.DueTime),
-					EndTime:    optOfPtr(cur.EndTime),
-					URL:        optOf(cur.URL),
-					Reminders:  optOf(cur.Reminders),
-					RepeatRule: optOfPtr(&nextRule),
-					RepeatFrom: optOf(cur.RepeatFrom),
-					Pinned:     optOf(cur.Pinned),
-					Starred:    optOf(cur.Starred),
-				}
-				in.Important = optOf(cur.Important)
-				in.Urgent = optOf(deriveUrgent(&nd, false))
-				if nt, err := s.CreateTask(in, cur.ListID); err == nil {
-					ids := make([]int64, 0, len(cur.Tags))
-					for _, tg := range cur.Tags {
-						ids = append(ids, tg.ID)
-					}
-					if len(ids) > 0 {
-						_ = syncTaskTags(s.db, nt.ID, ids)
-					}
-					res.NextTask, _ = s.GetTask(nt.ID)
-				}
-			}
-		}
-		res.Task, err = s.GetTask(id)
+		// 条件更新 + RowsAffected：并发下两个入口同时点完成时，
+		// 只有赢的那一方继续续期，输的一方直接回读返回，不重复生成下一次。
+		tx, err := s.db.Begin()
 		if err != nil {
 			return nil, err
 		}
-		s.emit(model.EventTaskCompleted, res.Task)
-		if !quiet {
-			s.logActivity(model.ActCompleted, res.Task.ID, res.Task.Title, "在 "+res.Task.ListName+" 中完成")
+		res, err := tx.Exec(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=? AND status<>'done'`, ts, ts, id)
+		if err != nil {
+			_ = tx.Rollback()
+			return nil, err
 		}
-		return res, nil
+		if n, _ := res.RowsAffected(); n == 0 {
+			_ = tx.Rollback()
+			t, err := s.GetTask(id)
+			if err != nil {
+				return nil, err
+			}
+			return &ToggleResult{Task: t, Completed: false}, nil
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		res2 := &ToggleResult{Completed: true}
+		// 续期在提交之后：spawnNextRepeat 内含 CreateTask 自己的事务，
+		// 不能与本次事务嵌套。
+		res2.NextTask, err = s.spawnNextRepeat(cur)
+		if err != nil {
+			return nil, err
+		}
+		res2.Task, err = s.GetTask(id)
+		if err != nil {
+			return nil, err
+		}
+		s.emit(model.EventTaskCompleted, res2.Task)
+		if !quiet {
+			s.logActivity(model.ActCompleted, res2.Task.ID, res2.Task.Title, "在 "+res2.Task.ListName+" 中完成")
+		}
+		return res2, nil
 	}
 	if _, err := s.db.Exec(`UPDATE tasks SET status='todo', completed_at=NULL, updated_at=? WHERE id=?`, ts, id); err != nil {
 		return nil, err
@@ -1012,6 +1073,53 @@ func (s *Store) toggleTask(id int64, quiet bool) (*ToggleResult, error) {
 		s.logActivity(model.ActReopened, t.ID, t.Title, "恢复为未完成")
 	}
 	return &ToggleResult{Task: t, Completed: false}, nil
+}
+
+// spawnNextRepeat 为刚完成的重复任务生成下一次实例，并继承标签。
+// 返回新任务；非重复任务、算不出下次或续期失败时返回 nil。
+// 完成的入口有两条（/toggle 与 PATCH status），续期口径必须在这一处收拢，
+// 否则从详情面板完成的重复任务会静默断链。
+func (s *Store) spawnNextRepeat(cur *model.Task) (*model.Task, error) {
+	if cur.RepeatRule == nil || *cur.RepeatRule == "" {
+		return nil, nil
+	}
+	next, nextRule, ok := NextRepeat(*cur.RepeatRule, cur.StartDate, cur.DueDate, cur.RepeatFrom, time.Now())
+	if !ok {
+		return nil, nil
+	}
+	nd := next.Format("2006-01-02")
+	in := model.TaskInput{
+		Title:      optOf(cur.Title),
+		Notes:      optOf(cur.Notes),
+		ListID:     optOf(cur.ListID),
+		Priority:   optOf(cur.Priority),
+		StartDate:  optOfPtr(shiftStart(cur.StartDate, cur.DueDate, nd)),
+		DueDate:    optOfPtr(&nd),
+		DueTime:    optOfPtr(cur.DueTime),
+		EndTime:    optOfPtr(cur.EndTime),
+		URL:        optOf(cur.URL),
+		Reminders:  optOf(cur.Reminders),
+		RepeatRule: optOfPtr(&nextRule),
+		RepeatFrom: optOf(cur.RepeatFrom),
+		Pinned:     optOf(cur.Pinned),
+		Starred:    optOf(cur.Starred),
+	}
+	in.Important = optOf(cur.Important)
+	in.Urgent = optOf(deriveUrgent(&nd, false))
+	nt, err := s.CreateTask(in, cur.ListID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0, len(cur.Tags))
+	for _, tg := range cur.Tags {
+		ids = append(ids, tg.ID)
+	}
+	if len(ids) > 0 {
+		if err := syncTaskTags(s.db, nt.ID, ids); err != nil {
+			return nil, err
+		}
+	}
+	return s.GetTask(nt.ID)
 }
 
 // NextRepeat 计算下一次发生的日期，并处理两种续期基准。
@@ -1094,7 +1202,11 @@ func (s *Store) SkipTask(id int64) (*model.Task, error) {
 	); err != nil {
 		return nil, err
 	}
-	return s.GetTask(id)
+	t, err := s.GetTask(id)
+	if err == nil {
+		s.emit(model.EventTaskUpdated, t)
+	}
+	return t, err
 }
 
 // MoveTask 用于日历/看板拖拽：改期或改清单。
@@ -1124,7 +1236,12 @@ func (s *Store) MoveTask(id int64, listID *int64, dueDate *string, dueTime *stri
 	if _, err := s.db.Exec("UPDATE tasks SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...); err != nil {
 		return nil, err
 	}
-	return s.GetTask(id)
+	t, err := s.GetTask(id)
+	if err == nil {
+		// 日历端拖拽依赖这条变更：没有 emit，手机上的改期就永远同步不过去。
+		s.emit(model.EventTaskUpdated, t)
+	}
+	return t, err
 }
 
 // nullableStr 把空串归一为 NULL，避免空日期参与比较时造成误判。
@@ -1143,11 +1260,18 @@ func ptrStr(p *string) any {
 	return nullableStr(*p)
 }
 
-// BatchAction 批量操作：complete | reopen | delete | move | pin | unpin | star | unstar。
+// BatchAction 批量操作：complete | reopen | delete | move | pin | unpin |
+// star | unstar | archive | unarchive。
 //
 // 批量删除只占一个撤销槽位。逐个 stage 的话，最后一笔会把前面全盖掉，
 // 用户点「撤销」只能收回一件 —— 那不是撤销，那是捉弄人。
 func (s *Store) BatchAction(ids []int64, action string, listID *int64, dueDate *string) (int, error) {
+	// 白名单先行：未知 action 一律 400，而不是落到 default 静默成功。
+	switch action {
+	case "delete", "complete", "reopen", "move", "pin", "unpin", "star", "unstar", "archive", "unarchive":
+	default:
+		return 0, ValidationError{Msg: "不支持的批量操作: " + action}
+	}
 	if len(ids) == 0 {
 		return 0, nil
 	}
@@ -1194,6 +1318,7 @@ func (s *Store) BatchAction(ids []int64, action string, listID *int64, dueDate *
 		case "reopen":
 			if _, err = s.db.Exec(`UPDATE tasks SET status='todo', completed_at=NULL, updated_at=? WHERE id=?`, model.Now(), id); err == nil {
 				n++
+				s.emitTaskUpdatedQuietly(id)
 			}
 		case "move":
 			if _, err = s.MoveTask(id, listID, dueDate, nil); err == nil {
@@ -1209,6 +1334,7 @@ func (s *Store) BatchAction(ids []int64, action string, listID *int64, dueDate *
 			}
 			if _, err = s.db.Exec(`UPDATE tasks SET `+col+` = ?, updated_at = ? WHERE id = ?`, val, model.Now(), id); err == nil {
 				n++
+				s.emitTaskUpdatedQuietly(id)
 			}
 		case "archive", "unarchive":
 			val := 1
@@ -1217,6 +1343,7 @@ func (s *Store) BatchAction(ids []int64, action string, listID *int64, dueDate *
 			}
 			if _, err = s.db.Exec(`UPDATE tasks SET archived = ?, updated_at = ? WHERE id = ?`, val, model.Now(), id); err == nil {
 				n++
+				s.emitTaskUpdatedQuietly(id)
 			}
 		}
 		if err != nil && !errors.Is(err, ErrNotFound) {
@@ -1255,7 +1382,7 @@ func (s *Store) BatchAction(ids []int64, action string, listID *int64, dueDate *
 func (s *Store) List(id int64) (*model.List, error) {
 	rows, err := s.db.Query(`
 		SELECT l.id, l.folder_id, l.name, l.color, l.icon, l.sort_order, l.archived, l.starred, l.created_at,
-		       (SELECT COUNT(*) FROM tasks t WHERE t.list_id = l.id AND t.status = 'todo')
+		       (SELECT COUNT(*) FROM tasks t WHERE t.list_id = l.id AND t.status IN ('todo','in_progress'))
 		FROM lists l WHERE l.id = ?`, id)
 	if err != nil {
 		return nil, err
@@ -1335,6 +1462,7 @@ func (s *Store) AddSubtask(taskID int64, title string, position int, parentID *i
 	}
 	id, _ := res.LastInsertId()
 	_, _ = s.db.Exec(`UPDATE tasks SET updated_at = ? WHERE id = ?`, model.Now(), taskID)
+	s.emitTaskUpdatedQuietly(taskID)
 	return &model.Subtask{ID: id, TaskID: taskID, ParentID: parentID, Title: title, DueDate: dueDate, Reminders: []int{}, Children: []model.Subtask{}, SortOrder: order}, nil
 }
 
@@ -1392,30 +1520,58 @@ func (s *Store) UpdateSubtask(id int64, u SubtaskUpdate) error {
 		return ErrNotFound
 	}
 	// 子任务变动后刷新父任务的更新时间，便于同步与排序。
-	_, _ = s.db.Exec(`UPDATE tasks SET updated_at = ? WHERE id = (SELECT task_id FROM subtasks WHERE id = ?)`, model.Now(), id)
+	var parentTask int64
+	if err := s.db.QueryRow(`SELECT task_id FROM subtasks WHERE id = ?`, id).Scan(&parentTask); err == nil {
+		_, _ = s.db.Exec(`UPDATE tasks SET updated_at = ? WHERE id = ?`, model.Now(), parentTask)
+		s.emitTaskUpdatedQuietly(parentTask)
+	}
 	return nil
 }
 
 // DeleteSubtask 删除子任务。
 func (s *Store) DeleteSubtask(id int64) error {
-	_, err := s.db.Exec(`DELETE FROM subtasks WHERE id = ?`, id)
-	return err
+	var parentTask int64
+	_ = s.db.QueryRow(`SELECT task_id FROM subtasks WHERE id = ?`, id).Scan(&parentTask)
+	if _, err := s.db.Exec(`DELETE FROM subtasks WHERE id = ?`, id); err != nil {
+		return err
+	}
+	if parentTask != 0 {
+		s.emitTaskUpdatedQuietly(parentTask)
+	}
+	return nil
 }
 
 func replaceSubtasks(db execer, taskID int64, subs []model.Subtask) error {
 	if _, err := db.Exec(`DELETE FROM subtasks WHERE task_id = ?`, taskID); err != nil {
 		return err
 	}
-	for i, sub := range subs {
-		if strings.TrimSpace(sub.Title) == "" {
-			continue
+	// 两级结构靠「先父后子 + 新 id 接续 parent_id」原样重建，日期/提醒一并保留。
+	var insert func(items []model.Subtask, parent *int64) error
+	insert = func(items []model.Subtask, parent *int64) error {
+		for i, sub := range items {
+			if strings.TrimSpace(sub.Title) == "" {
+				continue
+			}
+			order := sub.SortOrder
+			if order == 0 {
+				order = (i + 1) * 1024
+			}
+			res, err := db.Exec(
+				`INSERT INTO subtasks(task_id, parent_id, title, due_date, reminders, done, sort_order) VALUES(?,?,?,?,?,?,?)`,
+				taskID, parent, strings.TrimSpace(sub.Title), sub.DueDate, mustJSON(nonNil(sub.Reminders)), boolInt(sub.Done), order)
+			if err != nil {
+				return err
+			}
+			if len(sub.Children) > 0 {
+				id, _ := res.LastInsertId()
+				if err := insert(sub.Children, &id); err != nil {
+					return err
+				}
+			}
 		}
-		if _, err := db.Exec(`INSERT INTO subtasks(task_id, title, done, sort_order) VALUES(?,?,?,?)`,
-			taskID, strings.TrimSpace(sub.Title), boolInt(sub.Done), i); err != nil {
-			return err
-		}
+		return nil
 	}
-	return nil
+	return insert(subs, nil)
 }
 
 type execer interface {

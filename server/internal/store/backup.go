@@ -42,6 +42,8 @@ type ExportBundle struct {
 	Habits       []model.Habit        `json:"habits"`
 	HabitLogs    []model.HabitLog     `json:"habitLogs"`
 	SavedFilters []model.SavedFilter  `json:"savedFilters"`
+	Templates    []model.TaskTemplate `json:"templates,omitempty"`
+	Webhooks     []model.Webhook      `json:"webhooks,omitempty"`
 	Settings     map[string]string    `json:"settings"`
 }
 
@@ -57,6 +59,8 @@ type ImportResult struct {
 	Habits       int    `json:"habits"`
 	HabitLogs    int    `json:"habitLogs"`
 	SavedFilters int    `json:"savedFilters"`
+	Templates    int    `json:"templates"`
+	Webhooks     int    `json:"webhooks"`
 	// 附件单独报数：裸 JSON 备份不带文件，恢复不出来是预期内的，
 	// 但不说一声用户会以为已经一并恢复了。
 	Attachments       int `json:"attachments"`
@@ -127,6 +131,15 @@ func (s *Store) Export() (*ExportBundle, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 模板与 Webhook 也要能换机带走：配置类数据丢了等于让人重配一遍。
+	templates, err := s.ListTemplates()
+	if err != nil {
+		return nil, err
+	}
+	webhooks, err := s.rawWebhooks()
+	if err != nil {
+		return nil, err
+	}
 
 	// 分组不再嵌套子节点：父子关系由 ParentID 表达，导出两份会互相打架。
 	for i := range folders {
@@ -149,8 +162,30 @@ func (s *Store) Export() (*ExportBundle, error) {
 		Habits:       habits,
 		HabitLogs:    habitLogs,
 		SavedFilters: savedFilters,
+		Templates:    templates,
+		Webhooks:     webhooks,
 		Settings:     settings,
 	}, nil
+}
+
+// rawWebhooks 导出全部 Webhook（含真实密钥）。备份是给本人换机用的，
+// 密钥抹掉就等于换机后所有回调签名校验集体失效。
+func (s *Store) rawWebhooks() ([]model.Webhook, error) {
+	rows, err := s.db.Query(`SELECT id, name, url, secret, events, enabled, created_at, updated_at FROM webhooks ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []model.Webhook{}
+	for rows.Next() {
+		w, err := scanWebhook(rows)
+		if err != nil {
+			return nil, err
+		}
+		w.HasSecret = w.Secret != ""
+		out = append(out, w)
+	}
+	return out, rows.Err()
 }
 
 // rawTaskLinks 导出任务间关联的原始边（不含装配来的展示字段）。
@@ -332,6 +367,13 @@ func (s *Store) stageAttachments(b *ExportBundle, mode string, src AttachmentSou
 			}
 			done[a.File] = true
 
+			// 存储名来自备份、不可信：带目录成分的一律拒收（不落盘、不入库），
+			// 按缺失计数如实上报，别让「../shenshi.db」读走或写出附件目录之外的东西。
+			if _, valid := safeStoredName(a.File); !valid {
+				missed++
+				continue
+			}
+
 			data, ok, err := attachmentBytes(src, s.attachmentDir, a.File, mode)
 			if err != nil {
 				return nil, 0, err
@@ -383,7 +425,12 @@ func attachmentBytes(src AttachmentSource, dir, stored string, mode string) (dat
 		}
 	}
 
-	disk := filepath.Join(dir, stored)
+	// 防御纵深：进入拼接前再验一次，别让这个独立函数依赖调用方已校验。
+	clean, valid := safeStoredName(stored)
+	if !valid {
+		return nil, false, nil
+	}
+	disk := filepath.Join(dir, clean)
 	if _, err := os.Stat(disk); err != nil {
 		return nil, false, nil // 到处都没有：记一笔缺失，任务本身照常导入
 	}
@@ -415,6 +462,10 @@ func newStoredName(old string) string {
 // writeAttachmentFile 把附件内容落到磁盘：先写临时文件再改名，
 // 中途失败不会留下半截文件被当成完整附件。
 func (s *Store) writeAttachmentFile(stored string, data []byte) error {
+	clean, valid := safeStoredName(stored)
+	if !valid {
+		return fmt.Errorf("非法的附件存储名: %q", stored)
+	}
 	if err := os.MkdirAll(s.attachmentDir, 0o755); err != nil {
 		return fmt.Errorf("创建附件目录失败: %w", err)
 	}
@@ -432,7 +483,7 @@ func (s *Store) writeAttachmentFile(stored string, data []byte) error {
 		_ = os.Remove(tmpName)
 		return err
 	}
-	if err := os.Rename(tmpName, filepath.Join(s.attachmentDir, stored)); err != nil {
+	if err := os.Rename(tmpName, filepath.Join(s.attachmentDir, clean)); err != nil {
 		_ = os.Remove(tmpName)
 		return err
 	}
@@ -456,6 +507,11 @@ func importReplace(tx txer, b *ExportBundle, res *ImportResult, files map[string
 		`DELETE FROM habits`,
 		`DELETE FROM reminder_log`,
 		`DELETE FROM saved_filters`,
+		`DELETE FROM webhook_deliveries`,
+		`DELETE FROM webhooks`,
+		`DELETE FROM task_templates`,
+		// 旧撤销槽位引用的是被清掉的附件，留着会在过期时误删刚导入的文件。
+		`DELETE FROM undo_slot`,
 	} {
 		if _, err := tx.Exec(stmt); err != nil {
 			return err
@@ -535,9 +591,15 @@ func importReplace(tx txer, b *ExportBundle, res *ImportResult, files map[string
 	}
 
 	for _, f := range b.Focus {
+		// 任务 id 可能指向备份外的任务（截断的备份、手改过的 JSON），
+		// 挂不上就记为无关联，而不是让整批导入被外键打回。
+		var taskID *int64
+		if f.TaskID != nil && valid[*f.TaskID] {
+			taskID = f.TaskID
+		}
 		if _, err := tx.Exec(
 			`INSERT INTO focus_sessions(id, task_id, minutes, started_at, ended_at) VALUES(?,?,?,?,?)`,
-			f.ID, f.TaskID, f.Minutes, stamp(f.StartedAt), stamp(f.EndedAt),
+			f.ID, taskID, f.Minutes, stamp(f.StartedAt), stamp(f.EndedAt),
 		); err != nil {
 			return err
 		}
@@ -560,6 +622,46 @@ func importReplace(tx txer, b *ExportBundle, res *ImportResult, files map[string
 			return err
 		}
 		res.SavedFilters++
+	}
+
+	// 模板与 Webhook 原样恢复（表已清空，可带原 id）。模板的 list_id 指向的
+	// 清单若不存在，置 NULL 而不是让整批导入失败。
+	for _, t := range b.Templates {
+		var listID *int64
+		if t.ListID != nil {
+			var exists int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM lists WHERE id = ?`, *t.ListID).Scan(&exists); err != nil {
+				return err
+			}
+			if exists == 1 {
+				listID = t.ListID
+			}
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO task_templates(id, name, title, notes, list_id, priority, due_offset, due_time, reminders,
+				repeat_rule, important, urgent, tag_ids, subtasks, sort_order, created_at, updated_at)
+			 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			t.ID, t.Name, t.Title, t.Notes, listID, t.Priority, t.DueOffset, t.DueTime,
+			mustJSON(nonNilInts(t.Reminders)), t.RepeatRule, boolInt(t.Important), boolInt(t.Urgent),
+			mustJSON(nonNilInt64s(t.TagIDs)), mustJSON(nonNilStrings(t.Subtasks)),
+			t.SortOrder, stamp(t.CreatedAt), stamp(t.UpdatedAt),
+		); err != nil {
+			return err
+		}
+		res.Templates++
+	}
+	for _, w := range b.Webhooks {
+		events := w.Events
+		if events == nil {
+			events = []string{}
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO webhooks(id, name, url, secret, events, enabled, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)`,
+			w.ID, w.Name, w.URL, w.Secret, mustJSON(events), boolInt(w.Enabled), stamp(w.CreatedAt), stamp(w.UpdatedAt),
+		); err != nil {
+			return err
+		}
+		res.Webhooks++
 	}
 
 	habitOK := map[int64]bool{}
@@ -689,6 +791,15 @@ func importMerge(tx txer, b *ExportBundle, res *ImportResult, files map[string]s
 		res.Focus++
 	}
 
+	// 设置与 replace 对称：merge 也写回备份里的 settings，换机合并后外观等配置不丢。
+	for k, v := range b.Settings {
+		if _, err := tx.Exec(
+			`INSERT INTO settings(key, value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, k, v,
+		); err != nil {
+			return err
+		}
+	}
+
 	// 习惯一律作为新纪录追加，并把打卡流水挂到新 id 上。
 	habitID := map[int64]int64{}
 	for _, h := range b.Habits {
@@ -734,6 +845,55 @@ func importMerge(tx txer, b *ExportBundle, res *ImportResult, files map[string]s
 			return err
 		}
 		res.SavedFilters++
+	}
+
+	// 模板与 Webhook 作为新纪录追加；同名模板保留本地那份（与筛选同策略）。
+	for _, t := range b.Templates {
+		var n int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM task_templates WHERE name = ?`, t.Name).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		var listID2 *int64
+		if t.ListID != nil {
+			if mapped, ok := listID[*t.ListID]; ok {
+				listID2 = &mapped
+			}
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO task_templates(name, title, notes, list_id, priority, due_offset, due_time, reminders,
+				repeat_rule, important, urgent, tag_ids, subtasks, sort_order, created_at, updated_at)
+			 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			t.Name, t.Title, t.Notes, listID2, t.Priority, t.DueOffset, t.DueTime,
+			mustJSON(nonNilInts(t.Reminders)), t.RepeatRule, boolInt(t.Important), boolInt(t.Urgent),
+			mustJSON(nonNilInt64s(t.TagIDs)), mustJSON(nonNilStrings(t.Subtasks)),
+			t.SortOrder, stamp(t.CreatedAt), stamp(t.UpdatedAt),
+		); err != nil {
+			return err
+		}
+		res.Templates++
+	}
+	for _, w := range b.Webhooks {
+		var n int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM webhooks WHERE url = ?`, w.URL).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		events := w.Events
+		if events == nil {
+			events = []string{}
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO webhooks(name, url, secret, events, enabled, created_at, updated_at) VALUES(?,?,?,?,?,?,?)`,
+			w.Name, w.URL, w.Secret, mustJSON(events), boolInt(w.Enabled), stamp(w.CreatedAt), stamp(w.UpdatedAt),
+		); err != nil {
+			return err
+		}
+		res.Webhooks++
 	}
 
 	return nil
@@ -868,9 +1028,14 @@ func insertAttachments(tx txer, t model.Task, taskID int64, files map[string]str
 		if !ok {
 			continue // 缺失数已由 stageAttachments 统计，这里不重复计
 		}
+		// 双保险：files 的值也过一遍，恶意存储名进不了库。
+		clean, valid := safeStoredName(stored)
+		if !valid {
+			continue
+		}
 		if _, err := tx.Exec(
 			`INSERT INTO attachments(task_id, name, file, size, mime, created_at) VALUES(?,?,?,?,?,?)`,
-			taskID, safeDisplayName(a.Name), stored, a.Size, a.Mime, stamp(a.CreatedAt),
+			taskID, safeDisplayName(a.Name), clean, a.Size, a.Mime, stamp(a.CreatedAt),
 		); err != nil {
 			return err
 		}

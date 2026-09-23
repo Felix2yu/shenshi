@@ -23,7 +23,8 @@ const DavHeader = "1, 3, calendar-access, sync-collection"
 // 我们也可以在将来换内部表示而不破坏客户端。
 const syncTokenPrefix = "ss1-"
 
-// maxSyncBatch 单次增量同步最多返回的条目数。超了就截断，客户端会带着新令牌再来。
+// maxSyncBatch 单次增量同步最多返回的条目数。超了就截断，返回的 sync-token
+// 停在最后一条已返回的变更上，客户端会带着它再来一轮接着取（不丢中间的变更）。
 const maxSyncBatch = 500
 
 // Handler 把 go-webdav 的 CalDAV 处理器包一层，补上 Apple 客户端要求的那些

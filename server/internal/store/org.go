@@ -2,6 +2,8 @@ package store
 
 import (
 	"database/sql"
+	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/yufei/shendu/server/internal/model"
@@ -135,7 +137,7 @@ func (s *Store) flatFolders() ([]model.Folder, error) {
 func (s *Store) Lists() ([]model.List, error) {
 	rows, err := s.db.Query(`
 		SELECT l.id, l.folder_id, l.name, l.color, l.icon, l.sort_order, l.is_inbox, l.archived, l.starred, l.created_at,
-		       (SELECT COUNT(*) FROM tasks t WHERE t.list_id = l.id AND t.status = 'todo')
+		       (SELECT COUNT(*) FROM tasks t WHERE t.list_id = l.id AND t.status IN ('todo','in_progress'))
 		FROM lists l ORDER BY l.is_inbox DESC, l.sort_order, l.id`)
 	if err != nil {
 		return nil, err
@@ -293,14 +295,23 @@ func (s *Store) DeleteFolder(id int64) error {
 	if err := s.db.QueryRow(`SELECT parent_id FROM folders WHERE id = ?`, id).Scan(&parentID); err != nil {
 		return ErrNotFound
 	}
-	if _, err := s.db.Exec(`UPDATE lists SET folder_id = NULL WHERE folder_id = ?`, id); err != nil {
+	// 三条语句同生共死：中间失败若留下「清单已升空、子分组还挂着」的半截状态，
+	// 再点一次删除会因分组已不存在而回 ErrNotFound，脏状态永远修不回来。
+	tx, err := s.db.Begin()
+	if err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`UPDATE folders SET parent_id = ? WHERE parent_id = ?`, parentID, id); err != nil {
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`UPDATE lists SET folder_id = NULL WHERE folder_id = ?`, id); err != nil {
 		return err
 	}
-	_, err := s.db.Exec(`DELETE FROM folders WHERE id = ?`, id)
-	return err
+	if _, err := tx.Exec(`UPDATE folders SET parent_id = ? WHERE parent_id = ?`, parentID, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM folders WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // CreateList 新建清单。
@@ -376,17 +387,55 @@ func (s *Store) UpdateList(id int64, in ListInput) error {
 	return err
 }
 
-// DeleteList 删除清单；收集箱不可删除。清单内的任务会一并删除（外键级联）。
+// DeleteList 删除清单；收集箱不可删除。
+//
+// 清单内的任务不能靠外键级联「顺手删掉」：那会绕过撤销槽位（删了没法反悔）、
+// 不发事件（CalDAV / Webhook 对这次删除一无所知）、也不清理附件文件（磁盘上留孤儿）。
+// 这里先按单删的口径把任务收进撤销槽位并逐条走 deleteTaskRows，最后才删清单本身。
 func (s *Store) DeleteList(id int64) error {
 	var inbox int
-	if err := s.db.QueryRow(`SELECT is_inbox FROM lists WHERE id = ?`, id).Scan(&inbox); err != nil {
+	var name string
+	if err := s.db.QueryRow(`SELECT is_inbox, name FROM lists WHERE id = ?`, id).Scan(&inbox, &name); err != nil {
 		return ErrNotFound
 	}
 	if inbox == 1 {
 		return errForbidden("收集箱不可删除")
 	}
-	_, err := s.db.Exec(`DELETE FROM lists WHERE id = ?`, id)
-	return err
+
+	// 删清单是把整个清单端掉：归档的、已完成的一并带走，不留「幸存者」。
+	listID := id
+	tasks, err := s.ListTasks(TaskFilter{
+		ListID:              &listID,
+		Status:              "all",
+		IncludeArchived:     true,
+		IncludeTaskArchived: true,
+		SortBy:              "manual",
+	})
+	if err != nil {
+		return err
+	}
+	if err := s.stageUndo("删除清单「"+name+"」", tasks); err != nil {
+		return err
+	}
+	deleted := 0
+	for i := range tasks {
+		err := s.deleteTaskRows(tasks[i].ID, &tasks[i], true)
+		if errors.Is(err, ErrNotFound) {
+			continue // 并发下已被别的路径删掉，不值得让整次删除失败
+		}
+		if err != nil {
+			return err
+		}
+		deleted++
+	}
+	if deleted > 0 {
+		s.logActivity(model.ActDeleted, tasks[0].ID, name,
+			fmt.Sprintf("删除清单「%s」，连同 %d 件任务", name, deleted))
+	}
+	if _, err := s.db.Exec(`DELETE FROM lists WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return nil
 }
 
 func derefBool(p *bool, fallback bool) bool {
@@ -409,7 +458,7 @@ func (s *Store) Tags() ([]model.Tag, error) {
 	rows, err := s.db.Query(`
 		SELECT g.id, g.name, g.color, g.created_at,
 		       (SELECT COUNT(*) FROM task_tags tt JOIN tasks t ON t.id = tt.task_id
-		         WHERE tt.tag_id = g.id AND t.status = 'todo')
+		         WHERE tt.tag_id = g.id AND t.status IN ('todo','in_progress'))
 		FROM tags g ORDER BY g.name`)
 	if err != nil {
 		return nil, err
@@ -652,7 +701,8 @@ func (s *Store) Settings() (map[string]string, error) {
 	return out, rows.Err()
 }
 
-// SaveSettings 覆盖写入设置项。
+// SaveSettings 覆盖写入设置项。内部键（autoBackupLastAt 等）照写不误——
+// 自动备份等内部路径经此落库；对外部请求的内部键拦截在 API 层做。
 func (s *Store) SaveSettings(kv map[string]string) error {
 	tx, err := s.db.Begin()
 	if err != nil {

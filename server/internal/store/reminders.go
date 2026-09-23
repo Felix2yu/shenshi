@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
 	"strconv"
 	"time"
@@ -12,6 +13,7 @@ import (
 type ReminderHit struct {
 	Task     model.Task    `json:"task"`
 	Subtask  *model.Subtask `json:"subtask,omitempty"` // 非空表示这是子任务自己的提醒
+	AckID    int64         `json:"ackId"`             // 回执 id：任务为正 id，子任务为 -子任务ID（与台账 key 一致）
 	FireAt   string        `json:"fireAt"`            // RFC3339
 	Offset   int           `json:"offset"`            // 提前分钟数，0 表示准点
 	Overdue  bool          `json:"overdue"`           // 触发时刻已过
@@ -33,10 +35,15 @@ func resolveDueTime(dueDate string, dueTime *string) (time.Time, bool) {
 	return time.Date(d.Year(), d.Month(), d.Day(), 9, 0, 0, 0, time.Local), true
 }
 
-// DueReminders 返回当前应当投递的提醒。窗口内已投递过的会被排除，
-// 因此前端可以放心地按固定间隔轮询而不产生重复打扰。
+// DueReminders 返回当前应当投递的提醒。
+// 台账三态：已回执（fired_at 非空）永久静默；「稍后提醒」窗口内（snoozed_until >
+// now）暂不投递；推迟到期或从未处理的照常返回——前端据此全量对齐本地状态，
+// 刷新与跨标签页都能恢复未处理的提醒。
+// 口径与「欠账」一致：进行中同样要提醒；归档（任务级/清单级）按「收起」语义不再打扰。
 func (s *Store) DueReminders(now time.Time, lookahead, lookback time.Duration) ([]ReminderHit, error) {
-	rows, err := s.db.Query(taskSelect + ` WHERE t.status = 'todo' AND t.due_date IS NOT NULL AND t.reminders <> '[]'`)
+	rows, err := s.db.Query(taskSelect + ` WHERE t.status IN ('todo','in_progress')
+		AND t.archived = 0 AND l.archived = 0
+		AND t.due_date IS NOT NULL AND t.reminders <> '[]'`)
 	if err != nil {
 		return nil, err
 	}
@@ -55,22 +62,43 @@ func (s *Store) DueReminders(now time.Time, lookahead, lookback time.Duration) (
 	}
 	rows.Close()
 
-	// 已投递台账
-	logRows, err := s.db.Query(`SELECT task_id, fire_at FROM reminder_log`)
+	// 台账：fired 永久静默，snoozed 记「推迟到期」。
+	logRows, err := s.db.Query(`SELECT task_id, fire_at, fired_at, snoozed_until FROM reminder_log`)
 	if err != nil {
 		return nil, err
 	}
 	fired := map[string]bool{}
+	snoozed := map[string]time.Time{}
 	for logRows.Next() {
 		var tid int64
-		var fireAt string
-		if err := logRows.Scan(&tid, &fireAt); err != nil {
+		var fireAt, firedAt string
+		var snoozeUntil sql.NullString
+		if err := logRows.Scan(&tid, &fireAt, &firedAt, &snoozeUntil); err != nil {
 			logRows.Close()
 			return nil, err
 		}
-		fired[key(tid, fireAt)] = true
+		k := key(tid, fireAt)
+		if firedAt != "" {
+			fired[k] = true
+		}
+		if snoozeUntil.Valid && snoozeUntil.String != "" {
+			if t, err := time.Parse(time.RFC3339, snoozeUntil.String); err == nil {
+				snoozed[k] = t
+			}
+		}
 	}
 	logRows.Close()
+	// suppressed：已回执的永久静默；推迟窗口内的暂不投递；
+	// 推迟已到期的视同未处理，重新出现在结果里。
+	suppressed := func(k string) bool {
+		if fired[k] {
+			return true
+		}
+		if until, ok := snoozed[k]; ok && until.After(now) {
+			return true
+		}
+		return false
+	}
 
 	hits := []ReminderHit{}
 	for _, t := range tasks {
@@ -87,11 +115,12 @@ func (s *Store) DueReminders(now time.Time, lookahead, lookback time.Duration) (
 				continue
 			}
 			fs := fireAt.Format(time.RFC3339)
-			if fired[key(t.ID, fs)] {
+			if suppressed(key(t.ID, fs)) {
 				continue
 			}
 			hits = append(hits, ReminderHit{
 				Task:     t,
+				AckID:    t.ID,
 				FireAt:   fs,
 				Offset:   off,
 				Overdue:  fireAt.Before(now),
@@ -101,18 +130,20 @@ func (s *Store) DueReminders(now time.Time, lookahead, lookback time.Duration) (
 	}
 
 	// 子任务自己的提醒：父任务未收尾、子步骤未勾选、且单独设了日期与提醒点。
-	// 台账 key 用负数 id（-子任务ID），与任务 ID 空间隔离，避免 (id, fire_at) 撞车。
-	subRows, err := s.db.Query(`SELECT sb.id, sb.task_id, sb.title, sb.due_date, sb.reminders, sb.sort_order
-	      FROM subtasks sb JOIN tasks t ON t.id = sb.task_id
-	      WHERE sb.done = 0 AND sb.due_date IS NOT NULL AND sb.reminders <> '[]' AND t.status <> 'done'`)
+	// 台账 key 用负数 id（-子任务ID），与任务 ID 空间隔离，避免 (id, fire_at) 撞车；
+	// AckID 沿用同一约定，回执接口据此落账。父任务口径与主查询一致（含进行中、排除归档）。
+	subRows, err := s.db.Query(`SELECT sb.id, sb.task_id, sb.title, sb.due_date, sb.reminders, sb.sort_order, t.title
+	      FROM subtasks sb JOIN tasks t ON t.id = sb.task_id JOIN lists l ON l.id = t.list_id
+	      WHERE sb.done = 0 AND sb.due_date IS NOT NULL AND sb.reminders <> '[]'
+	        AND t.status IN ('todo','in_progress') AND t.archived = 0 AND l.archived = 0`)
 	if err != nil {
 		return nil, err
 	}
 	defer subRows.Close()
 	for subRows.Next() {
 		var sb model.Subtask
-		var reminders string
-		if err := subRows.Scan(&sb.ID, &sb.TaskID, &sb.Title, &sb.DueDate, &reminders, &sb.SortOrder); err != nil {
+		var reminders, parentTitle string
+		if err := subRows.Scan(&sb.ID, &sb.TaskID, &sb.Title, &sb.DueDate, &reminders, &sb.SortOrder, &parentTitle); err != nil {
 			return nil, err
 		}
 		sb.Reminders = []int{}
@@ -129,11 +160,14 @@ func (s *Store) DueReminders(now time.Time, lookahead, lookback time.Duration) (
 				continue
 			}
 			fs := fireAt.Format(time.RFC3339)
-			if fired[key(-sb.ID, fs)] {
+			if suppressed(key(-sb.ID, fs)) {
 				continue
 			}
 			hits = append(hits, ReminderHit{
+				// 回填父任务的 id 与标题：前端「查看」要能跳到任务，通知也要有上下文。
+				Task:     model.Task{ID: sb.TaskID, Title: parentTitle},
 				Subtask:  &sb,
+				AckID:    -sb.ID,
 				FireAt:   fs,
 				Offset:   off,
 				Overdue:  fireAt.Before(now),
@@ -147,16 +181,28 @@ func (s *Store) DueReminders(now time.Time, lookahead, lookback time.Duration) (
 	return hits, nil
 }
 
-// AckReminder 记录一条提醒已投递，避免重复提醒。
+// AckReminder 回执一条提醒：用户明确处理过（勾掉/查看/关闭）即永久静默。
+// upsert 而非 INSERT OR IGNORE：「稍后提醒」到期重弹后若再回执，
+// 必须把旧行的 fired_at 补上，否则推迟记录会让它永远关不掉。
 func (s *Store) AckReminder(taskID int64, fireAt string) error {
-	_, err := s.db.Exec(`INSERT OR IGNORE INTO reminder_log(task_id, fire_at, fired_at) VALUES(?,?,?)`,
+	_, err := s.db.Exec(`INSERT INTO reminder_log(task_id, fire_at, fired_at, snoozed_until) VALUES(?,?,?,'')
+		ON CONFLICT(task_id, fire_at) DO UPDATE SET fired_at = excluded.fired_at, snoozed_until = ''`,
 		taskID, fireAt, model.Now())
 	return err
 }
 
-// ClearReminderLog 清空台账（用于「重置提醒」）。
+// SnoozeReminder 记一条「稍后提醒」：窗口内 DueReminders 跳过该键，
+// 到期后重新投递。fired_at 留空表示尚未回执，仍属未处理。
+func (s *Store) SnoozeReminder(taskID int64, fireAt string, until time.Time) error {
+	_, err := s.db.Exec(`INSERT INTO reminder_log(task_id, fire_at, fired_at, snoozed_until) VALUES(?,?, '', ?)
+		ON CONFLICT(task_id, fire_at) DO UPDATE SET snoozed_until = excluded.snoozed_until`,
+		taskID, fireAt, until.Format(time.RFC3339))
+	return err
+}
+
+// ClearReminderLog 清空台账（用于「重置提醒」）。0 表示全清，负数精确清子任务。
 func (s *Store) ClearReminderLog(taskID int64) error {
-	if taskID > 0 {
+	if taskID != 0 {
 		_, err := s.db.Exec(`DELETE FROM reminder_log WHERE task_id = ?`, taskID)
 		return err
 	}

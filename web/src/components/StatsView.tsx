@@ -15,7 +15,7 @@ const RANGES = [
 ]
 
 export function StatsView() {
-  const { stats, loadStats, version } = useStore()
+  const { stats, statsError, loadStats, version } = useStore()
   const [days, setDays] = useState(30)
   const [reviews, setReviews] = useState<Review[]>([])
   const [focusTotal, setFocusTotal] = useState(0)
@@ -41,6 +41,25 @@ export function StatsView() {
     const max = Math.max(1, ...rows.map((r) => Math.max(r.created, r.done)))
     return { rows, max }
   }, [stats, days])
+
+  if (statsError && !stats) {
+    // 接口挂了就明说「加载失败」，别把故障渲染成「正在统计…」再永久卡住。
+    return (
+      <div className="grid h-full place-items-center text-center">
+        <div className="space-y-2">
+          <p className="text-[0.8125rem] text-ink-2">统计加载失败</p>
+          <p className="text-[0.71875rem] text-ink-3">请检查服务是否在运行，或稍后重试。</p>
+          <button
+            type="button"
+            onClick={() => void loadStats(days)}
+            className="rounded-lg border border-line px-3 py-1.5 text-[0.78125rem] text-ink-2 transition-colors hover:bg-surface-2"
+          >
+            重试
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   if (!stats) {
     return (

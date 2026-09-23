@@ -11,7 +11,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check:nlp": "node scripts/check-nlp.mjs"
   },
   "dependencies": {
     "react": "^19.3.0",

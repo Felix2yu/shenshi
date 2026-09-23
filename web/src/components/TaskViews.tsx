@@ -5,7 +5,7 @@ import { QUOTES } from '../lib/quotes'
 import { parseQuickAdd, describeRepeat, type Chip } from '../lib/nlp'
 import { useIMEGuard } from '../lib/ime'
 import { useStore } from '../store/AppStore'
-import type { Priority, Selection, Task } from '../types'
+import type { Priority, Selection, Task, TaskPatch } from '../types'
 import {
   IconBell,
   IconCheck,
@@ -553,7 +553,16 @@ export function bucketize(tasks: Task[]): Bucket[] {
 
 /* ---------------- 快速添加 ---------------- */
 
-export function QuickAdd({ autoFocus, placeholder }: { autoFocus?: boolean; placeholder?: string }) {
+export function QuickAdd({
+  autoFocus,
+  placeholder,
+  defaults,
+}: {
+  autoFocus?: boolean
+  placeholder?: string
+  /** 预填字段（列头新建用）。标题解析出的显式条件优先于 defaults。 */
+  defaults?: TaskPatch
+}) {
   const { createTask, ensureTags, lists, selection } = useStore()
   const { compositionProps, isComposing } = useIMEGuard()
   const [text, setText] = useState('')
@@ -571,19 +580,33 @@ export function QuickAdd({ autoFocus, placeholder }: { autoFocus?: boolean; plac
     let tagIds: number[] | undefined
     if (parsed.tagNames.length) {
       const created = await ensureTags(parsed.tagNames)
+      if (created === null) return // 标签没建成：中止建任务，保留输入（错误已 toast）
       tagIds = created.map((t) => t.id)
     }
-    await createTask({
+    // 智能视图兜底日期：在「今天/明天」清单里记的事没写日期就落收集箱、
+    // 视图里再也看不见；标题解析与 defaults 都没给时补一个。nodate/其它键不注入。
+    const smartDue =
+      parsed.dueDate || defaults?.dueDate
+        ? undefined
+        : selection.kind === 'smart' && selection.key === 'today'
+          ? todayStr()
+          : selection.kind === 'smart' && selection.key === 'tomorrow'
+            ? addDays(todayStr(), 1)
+            : undefined
+    const t = await createTask({
+      ...defaults,
+      ...(smartDue ? { dueDate: smartDue } : {}),
       title,
-      dueDate: parsed.dueDate,
-      dueTime: parsed.dueTime,
-      repeatRule: parsed.repeatRule,
+      ...(parsed.dueDate ? { dueDate: parsed.dueDate } : {}),
+      ...(parsed.dueTime ? { dueTime: parsed.dueTime } : {}),
+      ...(parsed.repeatRule ? { repeatRule: parsed.repeatRule } : {}),
       ...(parsed.priority !== null ? { priority: parsed.priority } : {}),
       ...(parsed.important !== null ? { important: parsed.important } : {}),
       ...(parsed.urgent !== null ? { urgent: parsed.urgent } : {}),
       ...(parsed.listId !== null ? { listId: parsed.listId } : {}),
       ...(tagIds ? { tagIds } : {}),
     })
+    if (!t) return // 创建失败：保留输入与光标，别让用户重敲一遍
     setText('')
     inputRef.current?.focus()
   }
@@ -693,10 +716,6 @@ export function TaskListView({
 }) {
   const {
     multiSelect,
-    selectedIds,
-    clearSelected,
-    batch,
-    lists,
     sortBy,
     reorderTasks,
     selection,
@@ -842,70 +861,81 @@ export function TaskListView({
       </div>
 
       {/* 多选操作条 */}
-      {multiSelect && selectedIds.length > 0 ? (
-        <div className="pointer-events-none fixed bottom-6 left-1/2 z-30 -translate-x-1/2">
-          <div className="pointer-events-auto flex items-center gap-2 rounded-2xl border border-line bg-surface/95 px-3 py-2 shadow-[var(--shadow-lg)] backdrop-blur">
-            <span className="px-1 text-[0.78125rem] text-ink-2">已选 {selectedIds.length} 项</span>
-            <Button variant="primary" size="sm" icon={IconCheck} onClick={() => void batch('complete')}>
-              完成
-            </Button>
-            <Button variant="outline" size="sm" icon={IconCircle} onClick={() => void batch('reopen')}>
-              恢复
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              icon={IconMove}
-              onClick={() => {
-                const today = todayStr()
-                void batch('move', { dueDate: today })
-              }}
-            >
-              移到今天
-            </Button>
-            <select
-              className="h-7 rounded-lg border border-line bg-surface px-1.5 text-[0.75rem]"
-              defaultValue=""
-              onChange={(e) => {
-                if (!e.target.value) return
-                void batch('move', { listId: Number(e.target.value) })
-                e.currentTarget.value = ''
-              }}
-            >
-              <option value="">移到清单…</option>
-              {lists.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
-            <Button variant="outline" size="sm" icon={IconPin} onClick={() => void batch('pin')}>
-              置顶
-            </Button>
-            <Button variant="outline" size="sm" icon={IconStar} onClick={() => void batch('star')}>
-              收藏
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={IconTrash}
-              className="text-p-high"
-              onClick={async () => {
-                const ok = await confirm({
-                  title: `删除已选的 ${selectedIds.length} 项`,
-                  message: '删除后可在左下角撤销，超过 10 分钟才彻底消失。',
-                  confirmText: '删除',
-                  danger: true,
-                })
-                if (ok) await batch('delete')
-              }}
-            >
-              删除
-            </Button>
-            <IconButton icon={IconX} label="取消选择" onClick={clearSelected} />
-          </div>
-        </div>
-      ) : null}
+      <BatchBar />
+    </div>
+  )
+}
+
+/**
+ * 多选批处理条：fixed 定位不占布局，由 App 统一渲染一份，
+ * 列表/表格/看板/四象限/日历进入多选后都能用（原先后台挂在列表视图内部，
+ * 其它视图开了多选也看不到操作入口）。
+ */
+export function BatchBar() {
+  const { multiSelect, selectedIds, clearSelected, batch, lists, confirm } = useStore()
+  if (!multiSelect || selectedIds.length === 0) return null
+  return (
+    <div className="pointer-events-none fixed bottom-6 left-1/2 z-30 -translate-x-1/2">
+      <div className="pointer-events-auto flex items-center gap-2 rounded-2xl border border-line bg-surface/95 px-3 py-2 shadow-[var(--shadow-lg)] backdrop-blur">
+        <span className="px-1 text-[0.78125rem] text-ink-2">已选 {selectedIds.length} 项</span>
+        <Button variant="primary" size="sm" icon={IconCheck} onClick={() => void batch('complete')}>
+          完成
+        </Button>
+        <Button variant="outline" size="sm" icon={IconCircle} onClick={() => void batch('reopen')}>
+          恢复
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          icon={IconMove}
+          onClick={() => {
+            const today = todayStr()
+            void batch('move', { dueDate: today })
+          }}
+        >
+          移到今天
+        </Button>
+        <select
+          className="h-7 rounded-lg border border-line bg-surface px-1.5 text-[0.75rem]"
+          defaultValue=""
+          onChange={(e) => {
+            if (!e.target.value) return
+            void batch('move', { listId: Number(e.target.value) })
+            e.currentTarget.value = ''
+          }}
+        >
+          <option value="">移到清单…</option>
+          {lists.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.name}
+            </option>
+          ))}
+        </select>
+        <Button variant="outline" size="sm" icon={IconPin} onClick={() => void batch('pin')}>
+          置顶
+        </Button>
+        <Button variant="outline" size="sm" icon={IconStar} onClick={() => void batch('star')}>
+          收藏
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={IconTrash}
+          className="text-p-high"
+          onClick={async () => {
+            const ok = await confirm({
+              title: `删除已选的 ${selectedIds.length} 项`,
+              message: '删除后可在左下角撤销，超过 10 分钟才彻底消失。',
+              confirmText: '删除',
+              danger: true,
+            })
+            if (ok) await batch('delete')
+          }}
+        >
+          删除
+        </Button>
+        <IconButton icon={IconX} label="取消选择" onClick={clearSelected} />
+      </div>
     </div>
   )
 }

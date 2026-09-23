@@ -143,6 +143,9 @@ export const api = {
     request<{ tasks: Task[]; count: number }>('GET', `/api/tasks${qs(query as Record<string, string | number>)}`),
 
   getTask: (id: number) => request<Task>('GET', `/api/tasks/${id}`),
+  /** 依赖阻塞状态：blocked_by 且对端未完成时给出阻塞者清单。 */
+  taskBlocked: (id: number) =>
+    request<{ blocked: boolean; blockers: Task[] }>('GET', `/api/tasks/${id}/blocked`),
   createTask: (patch: TaskPatch) => request<Task>('POST', '/api/tasks', patch),
   updateTask: (id: number, patch: TaskPatch) => request<Task>('PATCH', `/api/tasks/${id}`, patch),
   deleteTask: (id: number) => request<{ ok: boolean }>('DELETE', `/api/tasks/${id}`),
@@ -241,8 +244,8 @@ export const api = {
   getSettings: () => request<Record<string, string>>('GET', '/api/settings'),  saveSettings: (kv: Record<string, string>) =>
     request<Record<string, string>>('PUT', '/api/settings', kv),
 
-  /** 习惯看板：习惯 + 区间打卡流水 + 统计一次取回，默认区间为最近 12 周。 */
-  listHabits: (query: { from?: string; to?: string } = {}) =>
+  /** 习惯看板：习惯 + 区间打卡流水 + 统计一次取回，默认区间为最近 12 周；includeArchived=1 连同已归档习惯一并返回。 */
+  listHabits: (query: { from?: string; to?: string; includeArchived?: '1' } = {}) =>
     request<HabitBoard>('GET', `/api/habits${qs(query)}`),
   createHabit: (patch: HabitPatch) => request<Habit>('POST', '/api/habits', patch),
   updateHabit: (id: number, patch: HabitPatch) => request<Habit>('PATCH', `/api/habits/${id}`, patch),
@@ -296,6 +299,9 @@ export const api = {
     request<{ reminders: ReminderHit[]; serverTime: string }>('GET', `/api/reminders/due?lookahead=${lookahead}`),
   ackReminder: (taskId: number, fireAt: string) =>
     request<{ ok: boolean }>('POST', '/api/reminders/ack', { taskId, fireAt }),
+  /** 稍后提醒：服务端记录推迟窗口，到期后经轮询重新投递（刷新/跨标签页都不丢）。 */
+  snoozeReminder: (taskId: number, fireAt: string, minutes: number) =>
+    request<{ ok: boolean; until: string }>('POST', '/api/reminders/snooze', { taskId, fireAt, minutes }),
   resetReminders: (taskId?: number) =>
     request<{ ok: boolean }>('POST', '/api/reminders/reset', taskId ? { taskId } : {}),
 

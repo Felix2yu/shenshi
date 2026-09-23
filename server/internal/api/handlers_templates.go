@@ -74,7 +74,7 @@ func (s *Server) instantiateTemplate(w http.ResponseWriter, r *http.Request) err
 		return err
 	}
 	if body.DueDate != nil {
-		if v := *body.DueDate; v != "" && !isDate(v) {
+		if v := *body.DueDate; v != "" && store.CheckDay(v) != nil {
 			return store.ValidationError{Msg: "日期格式应为 YYYY-MM-DD"}
 		}
 	}
@@ -84,19 +84,4 @@ func (s *Server) instantiateTemplate(w http.ResponseWriter, r *http.Request) err
 	}
 	writeJSON(w, http.StatusCreated, t)
 	return nil
-}
-
-func isDate(s string) bool {
-	if len(s) != 10 || s[4] != '-' || s[7] != '-' {
-		return false
-	}
-	for i, c := range []byte(s) {
-		switch {
-		case i == 4 || i == 7:
-			continue
-		case c < '0' || c > '9':
-			return false
-		}
-	}
-	return true
 }

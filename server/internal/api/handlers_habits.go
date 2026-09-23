@@ -8,8 +8,11 @@ import (
 
 // listHabits 返回习惯视图所需的全部数据：习惯、区间流水与统计。
 // 默认区间为最近 12 周，正好铺满一张热力图。
+// includeArchived=1 时连同已归档习惯一起返回（归档是「收起来」不是「删除」，
+// 必须有地方能看到并恢复；命名刻意区别于任务侧 archived=1 的「只看归档」口径）。
 func (s *Server) listHabits(w http.ResponseWriter, r *http.Request) error {
-	board, err := s.st.HabitBoard(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
+	includeArchived := r.URL.Query().Get("includeArchived") == "1"
+	board, err := s.st.HabitBoard(r.URL.Query().Get("from"), r.URL.Query().Get("to"), includeArchived)
 	if err != nil {
 		return err
 	}

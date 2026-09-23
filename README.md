@@ -342,8 +342,8 @@ shendu/
 └── scripts/
     ├── build.sh                  # 一键构建
     ├── check-toolchain.sh        # 校验各处版本声明是否一致
-    ├── smoke.py                  # 后端端到端冒烟（356 项）
-    └── ui-smoke.mjs              # 真实浏览器 UI 冒烟（91 项）
+    ├── smoke.py                  # 后端端到端冒烟
+    └── ui-smoke.mjs              # 真实浏览器 UI 冒烟
 ```
 
 CI 配置另在 `.github/`（`workflows/build.yml`、`workflows/release.yml`、`dependabot.yml`）。
@@ -402,11 +402,17 @@ CI 配置另在 `.github/`（`workflows/build.yml`、`workflows/release.yml`、`
 ## 测试
 
 ```bash
+# 后端单元测试（重复规则推演等纯函数，秒回）
+cd server && go test ./... && cd ..
+
 # 后端端到端（自建临时实例与数据库，逐条验证核心接口）
 python3 scripts/smoke.py
 
-# 前端 UI（真实 Chromium，验证渲染、交互与运行时零报错）
-cd web && npm ci
+# 自然语言解析回归（固定「今天」的确定性用例，需先 npm ci）
+cd web && node scripts/check-nlp.mjs && cd ..
+
+# 前端 UI（真实 Chromium，验证渲染、交互与运行时零报错；脚本在仓库根目录）
+cd web && npm ci && cd ..
 node scripts/ui-smoke.mjs
 ```
 
@@ -420,7 +426,8 @@ cd web && npx playwright-core install --with-deps chromium
 
 两个脚本都不需要事先手动准备数据 —— 各自起临时实例与临时数据库，跑完即清理。
 
-当前状态：后端 **356/356** 通过；前端 UI 冒烟 **94/96** 通过（含「无控制台错误 / 无未捕获异常」两项硬性检查）。未通过的是「存为模板 / 模板列表里有刚存的模板」两项，属项目既有问题、与本次改动无关，待单独排查。
+当前状态：后端单元测试（重复规则推演等）全绿；端到端冒烟 **368/368** 通过；自然语言解析回归 **54/54** 通过；
+前端 UI 冒烟 **107/107** 通过（含「无控制台错误 / 无未捕获异常」两项硬性检查）。
 UI 冒烟脚本会把各视图截图写到 `SHOT_DIR`（默认 `/tmp/shenshi-shots`），便于人工复核；
 CI 里该目录被改到仓库内并作为 artifact 上传，失败时可直接下载定位。
 

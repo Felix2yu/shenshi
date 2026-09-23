@@ -48,11 +48,34 @@ export function AppOverlays() {
       <MorningPlan open={morningOpen} onClose={() => setMorningOpen(false)} />
       <DailyReview open={reviewOpen} onClose={() => setReviewOpen(false)} />
       <FocusPanel open={focusOpen} onClose={() => setFocusOpen(false)} />
+      <FocusIndicator />
       <ReminderCenter />
       <ConfirmHost />
       <ToastHost />
       <AutoRituals onMorning={() => setMorningOpen(true)} onReview={() => setReviewOpen(true)} />
     </>
+  )
+}
+
+/** 专注进行中的迷你计时条。任务详情开始专注后面板会自动弹出；关掉面板后靠它保持可见，
+ *  点击即可重新打开专注面板。 */
+function FocusIndicator() {
+  const { focus, tasks } = useStore()
+  if (!focus.running) return null
+  const mm = String(Math.floor(focus.remaining / 60)).padStart(2, '0')
+  const ss = String(focus.remaining % 60).padStart(2, '0')
+  const title = tasks.find((t) => t.id === focus.taskId)?.title
+  return (
+    <button
+      type="button"
+      onClick={() => window.dispatchEvent(new CustomEvent('shenshi:focus'))}
+      title="打开专注面板"
+      className="fixed bottom-4 left-4 z-40 flex items-center gap-2 rounded-full border border-seal/40 bg-surface px-3 py-1.5 text-[0.75rem] text-ink shadow-[var(--shadow-sm)] transition-colors hover:bg-surface-2"
+    >
+      <IconTimer size={13} className="text-seal" />
+      <span className="tabular-nums font-medium">{mm}:{ss}</span>
+      {title ? <span className="max-w-36 truncate text-ink-3">{title}</span> : null}
+    </button>
   )
 }
 
@@ -62,7 +85,7 @@ export function AppOverlays() {
  *  判定以服务端 settings 为准，另用 localStorage 记「今天已弹过」作兜底：
  *  即便保存接口失败（后端未起、断网等），也不会在当天反复打扰。 */
 function AutoRituals({ onMorning, onReview }: { onMorning: () => void; onReview: () => void }) {
-  const { settings, saveSettings, loading } = useStore()
+  const { settings, loading } = useStore()
 
   useEffect(() => {
     if (loading) return
@@ -86,7 +109,8 @@ function AutoRituals({ onMorning, onReview }: { onMorning: () => void; onReview:
       if (settings.morningPlanDone !== today && !shownToday('shenshi.morningPlanShown')) {
         onMorning()
         markShown('shenshi.morningPlanShown')
-        void saveSettings({ morningPlanDone: today })
+        // 只记「今天弹过」，不写 morningPlanDone：用户可能直接关掉面板，
+        // 把「弹过」当成「做过」会让完成率统计说谎。真正完成由 MorningPlan.start 保存。
         return
       }
       if (
@@ -109,7 +133,7 @@ function AutoRituals({ onMorning, onReview }: { onMorning: () => void; onReview:
 /* ---------------- 晨省 ---------------- */
 
 function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { lists, todayFocusIds, setTodayFocus, moveTask, updateTask, toggleTask, saveSettings } = useStore()
+  const { lists, todayFocusIds, setTodayFocus, moveTask, updateTask, toggleTask, saveSettings, toast } = useStore()
   const [overdue, setOverdue] = useState<Task[]>([])
   const [today, setToday] = useState<Task[]>([])
   const [inbox, setInbox] = useState<Task[]>([])
@@ -136,7 +160,16 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
   const line = morningLine(pending, overdue.length, doneToday)
 
   const togglePick = (id: number) => {
-    setPicked((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : prev.length >= 3 ? prev : [...prev, id]))
+    if (picked.includes(id)) {
+      setPicked(picked.filter((x) => x !== id))
+      return
+    }
+    if (picked.length >= 3) {
+      // 上限提示：静默忽略会让用户以为点击没生效。
+      toast('今日重点最多 3 件，先放下一件再选')
+      return
+    }
+    setPicked([...picked, id])
   }
 
   const start = async () => {
@@ -656,7 +689,7 @@ function FocusPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
 /* ---------------- 提醒中心 ---------------- */
 
 function ReminderCenter() {
-  const { reminders, dismissReminder, snoozeReminder, toggleTask, setSelectedTask, setView, select } = useStore()
+  const { reminders, dismissReminder, snoozeReminder, toggleTask, updateSubtask, setSelectedTask, setView, select } = useStore()
   // 权限状态跟着浏览器实时走：用户在站点设置里改过之后，这里的文案不会再停留在旧值。
   const { diag, request } = useNotifyDiagnosis()
   const [collapsed, setCollapsed] = useState(false)
@@ -681,16 +714,19 @@ function ReminderCenter() {
         {!collapsed ? (
           <div className="max-h-[320px] space-y-1 overflow-y-auto p-2">
             {reminders.map((h) => {
-              const key = `${h.task.id}|${h.fireAt}`
+              const key = `${h.ackId}|${h.fireAt}`
+              const title = h.subtask ? `${h.task.title} · ${h.subtask.title}` : h.task.title
               return (
                 <div key={key} className="rounded-xl border border-line bg-surface-2/40 px-2.5 py-2">
                   <div className="flex items-start gap-2">
                     <RoundCheck checked={false} onChange={() => {
-                      void toggleTask(h.task.id)
+                      // 子任务提醒勾选的是子步骤本身，不是父任务。
+                      if (h.subtask) void updateSubtask(h.subtask.id, { done: true })
+                      else void toggleTask(h.task.id)
                       dismissReminder(key)
                     }} />
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-[0.8125rem] text-ink">{h.task.title}</div>
+                      <div className="truncate text-[0.8125rem] text-ink">{title}</div>
                       <div className="flex items-center gap-1.5 text-[0.6875rem] text-ink-3">
                         <IconClock size={10.5} />
                         {h.dueLabel}

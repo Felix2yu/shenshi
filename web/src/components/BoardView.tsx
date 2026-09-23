@@ -3,9 +3,9 @@ import { useMemo, useState, type DragEvent } from 'react'
 import { QUOTES } from '../lib/quotes'
 import { matchFilter, type TaskFilter } from '../lib/filter'
 import { useStore } from '../store/AppStore'
-import type { Task } from '../types'
-import { IconColumns } from './icons'
-import { DRAG_MIME, TaskRow } from './TaskViews'
+import type { Task, TaskPatch } from '../types'
+import { IconColumns, IconPlus } from './icons'
+import { DRAG_MIME, QuickAdd, TaskRow } from './TaskViews'
 import { cx } from './ui'
 
 type GroupBy = 'priority' | 'list' | 'tag' | 'due'
@@ -24,11 +24,37 @@ interface Column {
   tasks: Task[]
 }
 
+/** 列头新建任务的预填字段：与该列的归组语义保持一致。 */
+function colDefaults(groupBy: GroupBy, col: Column): TaskPatch | undefined {
+  if (groupBy === 'priority') return { priority: Number(col.key) as 0 | 1 | 2 | 3 }
+  if (groupBy === 'list' && col.key.startsWith('list-')) return { listId: Number(col.key.slice(5)) }
+  if (groupBy === 'tag' && col.key.startsWith('tag-')) {
+    const id = Number(col.key.slice(4))
+    return Number.isFinite(id) && id > 0 ? { tagIds: [id] } : undefined
+  }
+  if (groupBy === 'due') {
+    const today = new Date()
+    const pad = (v: number) => String(v).padStart(2, '0')
+    const str = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    const map: Record<string, string | null> = {
+      overdue: str(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1)),
+      today: str(today),
+      tomorrow: str(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1)),
+      week: str(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 3)),
+      later: str(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 14)),
+      none: null,
+    }
+    if (col.key in map) return { dueDate: map[col.key] }
+  }
+  return undefined
+}
+
 /** 看板视图：与列表共用同一批任务，只是换一种「横向」的读法。 */
 export function BoardView({ onOpen, filter }: { onOpen: (t: Task) => void; filter: TaskFilter }) {
   const { tasks, tags, lists, updateTask } = useStore()
   const [groupBy, setGroupBy] = useState<GroupBy>('priority')
   const [dropCol, setDropCol] = useState<string | null>(null)
+  const [quickCol, setQuickCol] = useState<string | null>(null)
 
   const columns = useMemo<Column[]>(() => {
     const open = tasks.filter((t) => t.status !== 'done' && matchFilter(t, filter))
@@ -170,7 +196,23 @@ export function BoardView({ onOpen, filter }: { onOpen: (t: Task) => void; filte
                 <span className="rounded-full bg-surface-2 px-1.5 text-[0.6875rem] text-ink-3 tabular-nums">
                   {col.tasks.length}
                 </span>
+                <button
+                  type="button"
+                  title="在此列新建任务"
+                  onClick={() => setQuickCol(quickCol === col.key ? null : col.key)}
+                  className={cx(
+                    'ml-auto rounded-md p-0.5 text-ink-3 transition-colors hover:bg-surface-2 hover:text-seal',
+                    quickCol === col.key && 'bg-seal/10 text-seal',
+                  )}
+                >
+                  <IconPlus size={13} />
+                </button>
               </div>
+              {quickCol === col.key ? (
+                <div className="mb-2">
+                  <QuickAdd autoFocus placeholder="记一件事…" defaults={colDefaults(groupBy, col)} />
+                </div>
+              ) : null}
               <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
                 {col.tasks.length === 0 ? (
                   <div className="grid h-24 place-items-center rounded-xl border border-dashed border-line">

@@ -13,15 +13,19 @@ func (s *Store) Stats(days int) (*model.Stats, error) {
 	if days <= 0 {
 		days = 30
 	}
+	// 上限 366：趋势循环按天展开，不封顶时 ?days=999999999 能把请求打爆。
+	if days > 366 {
+		days = 366
+	}
 	today := time.Now().Format("2006-01-02")
 	from := time.Now().AddDate(0, 0, -(days - 1)).Format("2006-01-02")
 
 	st := &model.Stats{Trend: []model.TrendPoint{}, ByList: []model.CountByKey{}, ByPriority: []model.CountByKey{}, ByQuadrant: []model.CountByKey{}}
 
-	// 总量
+	// 总量：「欠账」统一含进行中，与智能清单角标口径一致。
 	var openNull, doneNull sql.NullInt64
 	_ = s.db.QueryRow(`SELECT
-		SUM(CASE WHEN status='todo' THEN 1 ELSE 0 END),
+		SUM(CASE WHEN status IN ('todo','in_progress') THEN 1 ELSE 0 END),
 		SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) FROM tasks`).Scan(&openNull, &doneNull)
 	st.TotalOpen = int(openNull.Int64)
 	st.TotalDone = int(doneNull.Int64)
@@ -33,9 +37,9 @@ func (s *Store) Stats(days int) (*model.Stats, error) {
 		return int(n.Int64)
 	}
 	st.DoneToday = scalar(`SELECT COUNT(*) FROM tasks WHERE status='done' AND substr(completed_at,1,10)=?`, today)
-	st.DueToday = scalar(`SELECT COUNT(*) FROM tasks WHERE status='todo' AND due_date=?`, today)
+	st.DueToday = scalar(`SELECT COUNT(*) FROM tasks WHERE status IN ('todo','in_progress') AND due_date=?`, today)
 	st.DueTodayDone = scalar(`SELECT COUNT(*) FROM tasks WHERE status='done' AND due_date=?`, today)
-	st.Overdue = scalar(`SELECT COUNT(*) FROM tasks WHERE status='todo' AND due_date IS NOT NULL AND due_date<?`, today)
+	st.Overdue = scalar(`SELECT COUNT(*) FROM tasks WHERE status IN ('todo','in_progress') AND due_date IS NOT NULL AND due_date<?`, today)
 	if st.TotalAll > 0 {
 		st.Completion = float64(st.TotalDone) / float64(st.TotalAll) * 100
 	}
@@ -120,17 +124,24 @@ func (s *Store) Stats(days int) (*model.Stats, error) {
 
 	st.ByList = collect(`
 		SELECT CAST(l.id AS TEXT), l.name, COUNT(*) FROM tasks t JOIN lists l ON l.id = t.list_id
-		WHERE t.status='todo' GROUP BY l.id ORDER BY COUNT(*) DESC, l.sort_order LIMIT 8`)
+		WHERE t.status IN ('todo','in_progress') GROUP BY l.id ORDER BY COUNT(*) DESC, l.sort_order LIMIT 8`)
 
 	st.ByPriority = collect(`
 		SELECT CAST(priority AS TEXT), CASE priority WHEN 3 THEN '高' WHEN 2 THEN '中' WHEN 1 THEN '低' ELSE '无' END, COUNT(*)
-		FROM tasks WHERE status='todo' GROUP BY priority ORDER BY priority DESC`)
+		FROM tasks WHERE status IN ('todo','in_progress') GROUP BY priority ORDER BY priority DESC`)
 
 	st.ByQuadrant = collect(`
-		SELECT CAST(important*2 + urgent AS TEXT),
-		       CASE important*2 + urgent WHEN 3 THEN '重要且紧急' WHEN 2 THEN '重要不紧急' WHEN 1 THEN '紧急不重要' ELSE '不紧急不重要' END,
+		SELECT CAST(CASE WHEN t.important = 1 AND t.urgent = 1 THEN 1
+		                 WHEN t.important = 1 THEN 2
+		                 WHEN t.urgent = 1 THEN 3
+		                 ELSE 4 END AS TEXT),
+		       CASE WHEN t.important = 1 AND t.urgent = 1 THEN '重要且紧急'
+		            WHEN t.important = 1 THEN '重要不紧急'
+		            WHEN t.urgent = 1 THEN '紧急不重要'
+		            ELSE '不紧急不重要' END,
 		       COUNT(*)
-		FROM tasks WHERE status='todo' GROUP BY important*2 + urgent ORDER BY important*2 + urgent DESC`)
+		FROM tasks t WHERE t.status IN ('todo','in_progress')
+		GROUP BY 1 ORDER BY 1`)
 
 	return st, nil
 }
@@ -231,6 +242,8 @@ func (s *Store) UpsertReview(in ReviewInput) (*model.Review, error) {
 	date := strings.TrimSpace(in.Date)
 	if date == "" {
 		date = time.Now().Format("2006-01-02")
+	} else if err := checkDay(date); err != nil {
+		return nil, err
 	}
 	ts := model.Now()
 	_, err := s.db.Exec(`

@@ -321,7 +321,7 @@ function TemplateEditor({
 
       <div className="grid gap-2 sm:grid-cols-2">
         <Field label="时间" hint="HH:MM，留空不限时">
-          <input value={dueTime} onChange={(e) => setDueTime(e.target.value)} className={inputClass} placeholder="09:30" />
+          <input type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} className={inputClass} placeholder="09:30" />
         </Field>
         <Field label="重复规则" hint="留空不重复">
           <input value={repeatRule} onChange={(e) => setRepeatRule(e.target.value)} className={inputClass} placeholder="weekly:1" />
