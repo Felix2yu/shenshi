@@ -15,10 +15,19 @@ const (
 	PriorityHigh   = 3
 )
 
-// 任务状态
+// 任务状态：todo 未开始、in_progress 进行中、done 已完成。
+// 「进行中」是执行层的表态——开始做了但还没收尾，与「到期日」这种时间属性分开。
 const (
-	StatusTodo = "todo"
-	StatusDone = "done"
+	StatusTodo       = "todo"
+	StatusInProgress = "in_progress"
+	StatusDone       = "done"
+)
+
+// 任务间关联的类型：related 互相引用（对称），blocked_by 依赖阻塞（有向）。
+const (
+	LinkRelated  = "related"
+	LinkBlocked  = "blocked_by" // 本任务被 linkedTaskId 阻塞：对方不完成，本任务不宜开工
+	LinkBlocking = "blocks"     // 查询装配时的反向视图：本任务阻塞着对方
 )
 
 // 智能清单（虚拟清单）标识。这些不是数据库实体，由查询条件驱动。
@@ -106,6 +115,10 @@ type Task struct {
 	Urgent     bool   `json:"urgent"`    // 四象限：紧急
 	Pinned     bool   `json:"pinned"`    // 置顶：始终排在未完成列表最前
 	Starred    bool   `json:"starred"`   // 收藏：进入「收藏」智能清单
+	Archived   bool   `json:"archived"`  // 归档：从日常视野收起，侧栏「已归档」可恢复
+
+	EstimateMinutes int `json:"estimateMinutes"` // 预计时长（分钟），0 表示未估
+	Progress        int `json:"progress"`        // 手工进度百分比 0-100；有子任务时可与其完成度互为印证
 
 	CompletedAt *string `json:"completedAt"`
 	SortOrder   float64 `json:"sortOrder"`
@@ -116,6 +129,7 @@ type Task struct {
 	Subtasks    []Subtask    `json:"subtasks"`
 	Attachments []Attachment `json:"attachments"`
 	Tags        []Tag        `json:"tags"`
+	Links       []TaskLink   `json:"links"`
 	ListName    string       `json:"listName"`
 	ListColor   string       `json:"listColor"`
 	FolderID    *int64       `json:"folderId"`
@@ -234,13 +248,31 @@ var WebhookEvents = []string{
 	EventTaskCreated, EventTaskUpdated, EventTaskCompleted, EventTaskReopened, EventTaskDeleted,
 }
 
-// Subtask 子任务。
+// Subtask 子任务。子任务可以再套子任务（ParentID），形成任务分解树；
+// 日期与提醒让一条子步骤自己有「什么时候做、什么时候该被叫醒」的完整节律。
 type Subtask struct {
-	ID        int64  `json:"id"`
-	TaskID    int64  `json:"taskId"`
-	Title     string `json:"title"`
-	Done      bool   `json:"done"`
-	SortOrder int    `json:"sortOrder"`
+	ID        int64     `json:"id"`
+	TaskID    int64     `json:"taskId"`
+	ParentID  *int64    `json:"parentId"`
+	Title     string    `json:"title"`
+	DueDate   *string   `json:"dueDate"`
+	Reminders []int     `json:"reminders"`
+	Done      bool      `json:"done"`
+	SortOrder int       `json:"sortOrder"`
+	Children  []Subtask `json:"children"`
+}
+
+// TaskLink 任务间的关联。Related 是对称的互相引用；BlockedBy 是有向依赖：
+// task_id 依赖 linked_task_id —— 对方不收尾，这条就悬着。
+// Title/Status/ListName 是查询时从对方任务装配来的展示字段。
+type TaskLink struct {
+	ID           int64  `json:"id"`
+	TaskID       int64  `json:"taskId"`
+	LinkedTaskID int64  `json:"linkedTaskId"`
+	Kind         string `json:"kind"`
+	Title        string `json:"title"`
+	Status       string `json:"status"`
+	ListName     string `json:"listName"`
 }
 
 // Tag 标签：跨清单的多维度组织方式。
@@ -316,9 +348,13 @@ type TaskInput struct {
 	Urgent     Opt[bool]      `json:"urgent"`
 	Pinned     Opt[bool]      `json:"pinned"`
 	Starred    Opt[bool]      `json:"starred"`
+	Archived   Opt[bool]      `json:"archived"`
 	TagIDs     Opt[[]int64]   `json:"tagIds"`
 	Subtasks   Opt[[]Subtask] `json:"subtasks"`
 	SortOrder  Opt[float64]   `json:"sortOrder"`
+
+	EstimateMinutes Opt[int] `json:"estimateMinutes"`
+	Progress        Opt[int] `json:"progress"`
 }
 
 // SavedFilter 保存下来的筛选条件。Query 存前端 TaskFilter 的 JSON 原文，

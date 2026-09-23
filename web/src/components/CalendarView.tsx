@@ -115,7 +115,7 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
     return map
   }, [visible])
 
-  const noDate = useMemo(() => visible.filter((t) => !t.dueDate && t.status === 'todo'), [visible])
+  const noDate = useMemo(() => visible.filter((t) => !t.dueDate && t.status !== 'done'), [visible])
 
   const onDrop = async (e: DragEvent<HTMLDivElement>, day: string) => {
     e.preventDefault()
@@ -383,7 +383,7 @@ function DayCell({
         >
           {Number(day.slice(8, 10))}
         </span>
-        {overdue && tasks.some((t) => t.status === 'todo') ? (
+          {overdue && tasks.some((t) => t.status !== 'done') ? (
           <span className="text-[0.59375rem] text-p-high">逾期</span>
         ) : null}
         <span
@@ -584,8 +584,10 @@ function DayView(props: DayProps) {
       .filter((t) => t.dueTime)
       .map((t) => {
         const start = toMinutes(t.dueTime as string)
-        const raw = t.endTime ? toMinutes(t.endTime) : start + DEFAULT_DURATION
-        return { task: t, start, end: raw > start ? raw : start + DEFAULT_DURATION }
+        // 块高优先用结束时间；没有则按预计时长，再退回默认 45 分。
+        const dur = t.estimateMinutes > 0 ? t.estimateMinutes : DEFAULT_DURATION
+        const raw = t.endTime ? toMinutes(t.endTime) : start + dur
+        return { task: t, start, end: raw > start ? raw : start + dur }
       })
       .sort((a, b) => a.start - b.start || a.end - b.end)
     return placeDay(rows)
@@ -769,7 +771,11 @@ function DayView(props: DayProps) {
                 </span>
                 <span className="block truncate text-[0.65625rem] tabular-nums text-ink-3">
                   {minutesToHM(p.start)} – {minutesToHM(p.end)}
-                  {p.task.endTime ? '' : '（默认 45 分）'}
+                  {p.task.endTime
+                    ? ''
+                    : p.task.estimateMinutes > 0
+                      ? `（预计 ${p.task.estimateMinutes} 分）`
+                      : '（默认 45 分）'}
                 </span>
               </button>
             ))}

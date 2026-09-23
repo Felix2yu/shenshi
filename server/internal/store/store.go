@@ -170,6 +170,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   urgent      INTEGER NOT NULL DEFAULT 0,
   pinned      INTEGER NOT NULL DEFAULT 0,
   starred     INTEGER NOT NULL DEFAULT 0,
+  archived    INTEGER NOT NULL DEFAULT 0,
   completed_at TEXT,
   sort_order  REAL    NOT NULL DEFAULT 0,
   created_at  TEXT    NOT NULL,
@@ -184,11 +185,26 @@ CREATE INDEX IF NOT EXISTS idx_tasks_starred ON tasks(starred);
 CREATE TABLE IF NOT EXISTS subtasks (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  parent_id  INTEGER REFERENCES subtasks(id) ON DELETE CASCADE,
   title      TEXT    NOT NULL,
+  due_date   TEXT,
+  reminders  TEXT    NOT NULL DEFAULT '[]',
   done       INTEGER NOT NULL DEFAULT 0,
   sort_order INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_subtasks_task ON subtasks(task_id);
+
+-- 任务间关联：related 互相引用（对称），blocked_by 依赖阻塞（有向，task_id 依赖对方）。
+CREATE TABLE IF NOT EXISTS task_links (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id        INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  linked_task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  kind           TEXT    NOT NULL DEFAULT 'related',
+  created_at     TEXT    NOT NULL,
+  UNIQUE(task_id, linked_task_id, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_task_links_task  ON task_links(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_links_other ON task_links(linked_task_id);
 
 CREATE TABLE IF NOT EXISTS tags (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -378,6 +394,12 @@ var addColumns = []struct{ table, column, ddl string }{
 	{"tasks", "repeat_from", `ALTER TABLE tasks ADD COLUMN repeat_from TEXT NOT NULL DEFAULT 'due'`},
 	{"tasks", "pinned", `ALTER TABLE tasks ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`},
 	{"tasks", "starred", `ALTER TABLE tasks ADD COLUMN starred INTEGER NOT NULL DEFAULT 0`},
+	{"tasks", "estimate_minutes", `ALTER TABLE tasks ADD COLUMN estimate_minutes INTEGER NOT NULL DEFAULT 0`},
+	{"tasks", "progress", `ALTER TABLE tasks ADD COLUMN progress INTEGER NOT NULL DEFAULT 0`},
+	{"tasks", "archived", `ALTER TABLE tasks ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`},
+	{"subtasks", "parent_id", `ALTER TABLE subtasks ADD COLUMN parent_id INTEGER REFERENCES subtasks(id) ON DELETE CASCADE`},
+	{"subtasks", "due_date", `ALTER TABLE subtasks ADD COLUMN due_date TEXT`},
+	{"subtasks", "reminders", `ALTER TABLE subtasks ADD COLUMN reminders TEXT NOT NULL DEFAULT '[]'`},
 }
 
 func (s *Store) migrate() error {

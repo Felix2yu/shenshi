@@ -35,6 +35,7 @@ type ExportBundle struct {
 	Folders      []model.Folder       `json:"folders"`
 	Lists        []model.List         `json:"lists"`
 	Tasks        []model.Task         `json:"tasks"`
+	TaskLinks    []model.TaskLink     `json:"taskLinks,omitempty"`
 	Tags         []model.Tag          `json:"tags"`
 	Reviews      []model.Review       `json:"reviews"`
 	Focus        []model.FocusSession `json:"focus"`
@@ -82,7 +83,8 @@ func (s *Store) Export() (*ExportBundle, error) {
 		return nil, err
 	}
 	// IncludeArchived：归档清单里的任务同样是数据，备份漏掉它们就等于悄悄丢东西。
-	tasks, err := s.ListTasks(TaskFilter{Status: "all", SortBy: "manual", IncludeArchived: true})
+	// IncludeTaskArchived 同理：已归档的任务也要原样带走。
+	tasks, err := s.ListTasks(TaskFilter{Status: "all", SortBy: "manual", IncludeArchived: true, IncludeTaskArchived: true})
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +121,12 @@ func (s *Store) Export() (*ExportBundle, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 任务间关联按原始边导出。装配到任务上的 Links 是「视角视图」，
+	// 同一条 related 边会在两端各出现一次，直接落库会翻倍。
+	links, err := s.rawTaskLinks()
+	if err != nil {
+		return nil, err
+	}
 
 	// 分组不再嵌套子节点：父子关系由 ParentID 表达，导出两份会互相打架。
 	for i := range folders {
@@ -134,6 +142,7 @@ func (s *Store) Export() (*ExportBundle, error) {
 		Folders:      folders,
 		Lists:        lists,
 		Tasks:        tasks,
+		TaskLinks:    links,
 		Tags:         tags,
 		Reviews:      reviews,
 		Focus:        focus,
@@ -142,6 +151,24 @@ func (s *Store) Export() (*ExportBundle, error) {
 		SavedFilters: savedFilters,
 		Settings:     settings,
 	}, nil
+}
+
+// rawTaskLinks 导出任务间关联的原始边（不含装配来的展示字段）。
+func (s *Store) rawTaskLinks() ([]model.TaskLink, error) {
+	rows, err := s.db.Query(`SELECT id, task_id, linked_task_id, kind FROM task_links`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []model.TaskLink{}
+	for rows.Next() {
+		var l model.TaskLink
+		if err := rows.Scan(&l.ID, &l.TaskID, &l.LinkedTaskID, &l.Kind); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
 }
 
 // ExportJSON 返回带缩进的 JSON，便于人工查看与 diff。
@@ -416,6 +443,7 @@ func importReplace(tx txer, b *ExportBundle, res *ImportResult, files map[string
 	// 按外键层级自上而下清空；reminder_log 一并清掉，免得旧台账挡住新数据的提醒。
 	for _, stmt := range []string{
 		`DELETE FROM task_tags`,
+		`DELETE FROM task_links`,
 		`DELETE FROM subtasks`,
 		`DELETE FROM attachments`,
 		`DELETE FROM tasks`,
@@ -489,6 +517,11 @@ func importReplace(tx txer, b *ExportBundle, res *ImportResult, files map[string
 			return err
 		}
 		res.Tasks++
+	}
+
+	// replace 模式保留原始任务 id，关联边可以原样回放。
+	if err := restoreTaskLinks(tx, b.TaskLinks, func(id int64) (int64, bool) { return id, valid[id] }, res); err != nil {
+		return err
 	}
 
 	for _, r := range b.Reviews {
@@ -600,6 +633,7 @@ func importMerge(tx txer, b *ExportBundle, res *ImportResult, files map[string]s
 		return err
 	}
 
+	taskID := map[int64]int64{}
 	for _, t := range b.Tasks {
 		target, ok := listID[t.ListID]
 		if !ok {
@@ -609,6 +643,7 @@ func importMerge(tx txer, b *ExportBundle, res *ImportResult, files map[string]s
 		if err != nil {
 			return err
 		}
+		taskID[t.ID] = newID
 		ids := make([]int64, 0, len(t.Tags))
 		for _, g := range t.Tags {
 			if mapped, ok := tagID[g.ID]; ok {
@@ -622,6 +657,14 @@ func importMerge(tx txer, b *ExportBundle, res *ImportResult, files map[string]s
 			return err
 		}
 		res.Tasks++
+	}
+
+	// merge 模式任务全部重新编号，关联边按新旧 id 映射重建；断边的跳过。
+	if err := restoreTaskLinks(tx, b.TaskLinks, func(id int64) (int64, bool) {
+		n, ok := taskID[id]
+		return n, ok
+	}, res); err != nil {
+		return err
 	}
 
 	for _, r := range b.Reviews {
@@ -838,12 +881,13 @@ func insertAttachments(tx txer, t model.Task, taskID int64, files map[string]str
 
 // insertTaskWithID 按原 id 精确复原一条任务（replace 模式）。
 func insertTaskWithID(tx txer, t model.Task) error {
-	if _, err := tx.Exec(`INSERT INTO tasks(id, list_id, title, notes, status, priority, start_date, due_date, due_time, end_time, url, reminders, repeat_rule, repeat_from, important, urgent, pinned, starred, completed_at, sort_order, created_at, updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	if _, err := tx.Exec(`INSERT INTO tasks(id, list_id, title, notes, status, priority, start_date, due_date, due_time, end_time, url, reminders, repeat_rule, repeat_from, important, urgent, pinned, starred, archived, estimate_minutes, progress, completed_at, sort_order, created_at, updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		t.ID, t.ListID, t.Title, t.Notes, statusOr(t.Status), t.Priority,
 		t.StartDate, t.DueDate, t.DueTime, t.EndTime, t.URL,
 		mustJSON(nonNil(t.Reminders)), t.RepeatRule, normalizeRepeatFrom(t.RepeatFrom),
-		boolInt(t.Important), boolInt(t.Urgent), boolInt(t.Pinned), boolInt(t.Starred), t.CompletedAt, t.SortOrder,
+		boolInt(t.Important), boolInt(t.Urgent), boolInt(t.Pinned), boolInt(t.Starred), boolInt(t.Archived),
+		t.EstimateMinutes, t.Progress, t.CompletedAt, t.SortOrder,
 		stamp(t.CreatedAt), stamp(t.UpdatedAt),
 	); err != nil {
 		return err
@@ -861,12 +905,13 @@ func insertTaskWithID(tx txer, t model.Task) error {
 
 // insertTaskCopy 追加一条任务副本，id 由数据库重新分配（merge 模式 / 撤销恢复复用）。
 func insertTaskCopy(tx txer, t model.Task, listID int64) (int64, error) {
-	r, err := tx.Exec(`INSERT INTO tasks(list_id, title, notes, status, priority, start_date, due_date, due_time, end_time, url, reminders, repeat_rule, repeat_from, important, urgent, pinned, starred, completed_at, sort_order, created_at, updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	r, err := tx.Exec(`INSERT INTO tasks(list_id, title, notes, status, priority, start_date, due_date, due_time, end_time, url, reminders, repeat_rule, repeat_from, important, urgent, pinned, starred, archived, estimate_minutes, progress, completed_at, sort_order, created_at, updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		listID, t.Title, t.Notes, statusOr(t.Status), t.Priority,
 		t.StartDate, t.DueDate, t.DueTime, t.EndTime, t.URL,
 		mustJSON(nonNil(t.Reminders)), t.RepeatRule, normalizeRepeatFrom(t.RepeatFrom),
-		boolInt(t.Important), boolInt(t.Urgent), boolInt(t.Pinned), boolInt(t.Starred), t.CompletedAt, t.SortOrder,
+		boolInt(t.Important), boolInt(t.Urgent), boolInt(t.Pinned), boolInt(t.Starred), boolInt(t.Archived),
+		t.EstimateMinutes, t.Progress, t.CompletedAt, t.SortOrder,
 		stamp(t.CreatedAt), stamp(t.UpdatedAt),
 	)
 	if err != nil {
@@ -878,19 +923,31 @@ func insertTaskCopy(tx txer, t model.Task, listID int64) (int64, error) {
 }
 
 func insertSubtasks(tx txer, t model.Task, taskID int64) error {
-	for i, s := range t.Subtasks {
-		order := s.SortOrder
-		if order == 0 {
-			order = (i + 1) * 1024
+	// 递归插入：先父后子，用新分配的 id 接续 parent_id，树的形状原样保留。
+	var insert func(subs []model.Subtask, parent *int64) error
+	insert = func(subs []model.Subtask, parent *int64) error {
+		for i, s := range subs {
+			order := s.SortOrder
+			if order == 0 {
+				order = (i + 1) * 1024
+			}
+			r, err := tx.Exec(
+				`INSERT INTO subtasks(task_id, parent_id, title, due_date, reminders, done, sort_order) VALUES(?,?,?,?,?,?,?)`,
+				taskID, parent, s.Title, s.DueDate, mustJSON(nonNil(s.Reminders)), boolInt(s.Done), order,
+			)
+			if err != nil {
+				return err
+			}
+			if len(s.Children) > 0 {
+				id, _ := r.LastInsertId()
+				if err := insert(s.Children, &id); err != nil {
+					return err
+				}
+			}
 		}
-		if _, err := tx.Exec(
-			`INSERT INTO subtasks(task_id, title, done, sort_order) VALUES(?,?,?,?)`,
-			taskID, s.Title, boolInt(s.Done), order,
-		); err != nil {
-			return err
-		}
+		return nil
 	}
-	return nil
+	return insert(t.Subtasks, nil)
 }
 
 // ensureInbox 保证系统里有且仅有一个收件箱。
@@ -931,10 +988,33 @@ func firstInboxID(tx txer) (int64, error) {
 }
 
 func statusOr(s string) string {
-	if s == model.StatusDone {
+	switch s {
+	case model.StatusDone:
 		return model.StatusDone
+	case model.StatusInProgress:
+		return model.StatusInProgress
 	}
 	return model.StatusTodo
+}
+
+// restoreTaskLinks 回放任务间关联边。mapID 把备份里的任务 id 换算成目标库的 id，
+// 返回 false 表示该任务没进来（清单缺失等），相关的边随之丢弃。
+func restoreTaskLinks(tx txer, links []model.TaskLink, mapID func(int64) (int64, bool), res *ImportResult) error {
+	for _, l := range links {
+		a, okA := mapID(l.TaskID)
+		b, okB := mapID(l.LinkedTaskID)
+		if !okA || !okB || a == b {
+			continue
+		}
+		if l.Kind != model.LinkRelated && l.Kind != model.LinkBlocked {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO task_links(task_id, linked_task_id, kind, created_at) VALUES(?,?,?,?)`,
+			a, b, l.Kind, model.Now()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // stamp 补全缺失的时间戳，避免导入的空值污染排序与展示。

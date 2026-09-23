@@ -145,9 +145,13 @@ interface StoreShape {
   /** 用口令换取会话；成功即整页重载，把失效期间的请求补回来。 */
   unlock: (token: string) => Promise<boolean>
 
-  addSubtask: (taskId: number, title: string) => Promise<void>
-  updateSubtask: (id: number, patch: { title?: string; done?: boolean }) => Promise<void>
+  addSubtask: (taskId: number, title: string, opts?: { parentId?: number; dueDate?: string | null }) => Promise<void>
+  updateSubtask: (id: number, patch: { title?: string; done?: boolean; dueDate?: string | null; reminders?: number[] }) => Promise<void>
   deleteSubtask: (id: number) => Promise<void>
+  /** 建立任务间关联（related / blocked_by）。 */
+  addTaskLink: (taskId: number, linkedTaskId: number, kind: 'related' | 'blocked_by') => Promise<void>
+  /** 删除一条任务间关联。 */
+  removeTaskLink: (linkId: number) => Promise<void>
 
   createFolder: (name: string, color?: string, parentId?: number) => Promise<Folder | null>
   updateFolder: (
@@ -346,17 +350,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [handleError])
 
+  // 设置里的「显示已完成」接线到查询结果：关闭时日常视图隐藏已完成任务，
+  // 「已完成 / 最近完成」这两个本来就是看完成记录的视图不受影响。
+  const showCompleted = settings.showCompleted !== '0'
+
   const refreshTasks = useCallback(async () => {
     setTasksLoading(true)
     try {
       const r = await api.listTasks(queryFor(selection, keyword, sortBy))
-      setTasks(r.tasks)
+      const doneView =
+        selection.kind === 'smart' && (selection.key === 'done' || selection.key === 'recentdone')
+      setTasks(!showCompleted && !doneView ? r.tasks.filter((t) => t.status !== 'done') : r.tasks)
     } catch (e) {
       handleError(e, '加载任务失败')
     } finally {
       setTasksLoading(false)
     }
-  }, [selection, keyword, sortBy, handleError])
+  }, [selection, keyword, sortBy, showCompleted, handleError])
 
   /** 写操作后统一做一次去抖对账：刷新角标、必要时刷新列表。 */
   const reconcile = useCallback(() => {
@@ -850,10 +860,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // ---------- 子任务 ----------
 
+  /** 递归找「哪条任务的子树里含有这条子任务」——子任务可以嵌套，不能只扫顶层。 */
+  const findTaskBySubtaskId = (list: Task[], id: number): Task | undefined =>
+    list.find((t) => {
+      const hit = (subs: Task['subtasks']): boolean => subs.some((s) => s.id === id || hit(s.children))
+      return hit(t.subtasks)
+    })
+
   const addSubtask = useCallback(
-    async (taskId: number, title: string) => {
+    async (taskId: number, title: string, opts?: { parentId?: number; dueDate?: string | null }) => {
       try {
-        await api.addSubtask(taskId, title)
+        await api.addSubtask(taskId, title, opts)
         const t = await api.getTask(taskId)
         patchLocalTask(t)
       } catch (e) {
@@ -864,11 +881,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 
   const updateSubtask = useCallback(
-    async (id: number, patch: { title?: string; done?: boolean }) => {
+    async (id: number, patch: { title?: string; done?: boolean; dueDate?: string | null; reminders?: number[] }) => {
       try {
         await api.updateSubtask(id, patch)
         // 子任务归属父任务，重新取一次父任务即可拿到最新进度。
-        const parent = tasks.find((t) => t.subtasks.some((s) => s.id === id))
+        const parent = findTaskBySubtaskId(tasks, id)
         if (parent) patchLocalTask(await api.getTask(parent.id))
       } catch (e) {
         handleError(e, '更新子任务失败')
@@ -881,10 +898,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async (id: number) => {
       try {
         await api.deleteSubtask(id)
-        const parent = tasks.find((t) => t.subtasks.some((s) => s.id === id))
+        const parent = findTaskBySubtaskId(tasks, id)
         if (parent) patchLocalTask(await api.getTask(parent.id))
       } catch (e) {
         handleError(e, '删除子任务失败')
+      }
+    },
+    [tasks, patchLocalTask, handleError],
+  )
+
+  // ---------- 任务间关联 ----------
+
+  const addTaskLink = useCallback(
+    async (taskId: number, linkedTaskId: number, kind: 'related' | 'blocked_by') => {
+      try {
+        await api.addTaskLink(taskId, linkedTaskId, kind)
+        patchLocalTask(await api.getTask(taskId))
+      } catch (e) {
+        handleError(e, '建立关联失败')
+      }
+    },
+    [patchLocalTask, handleError],
+  )
+
+  const removeTaskLink = useCallback(
+    async (linkId: number) => {
+      // 删的是「视角」里的一条边；删完把当前任务刷新一遍即可。
+      const owner = tasks.find((t) => t.links?.some((l) => l.id === linkId))
+      try {
+        await api.deleteTaskLink(linkId)
+        if (owner) patchLocalTask(await api.getTask(owner.id))
+      } catch (e) {
+        handleError(e, '删除关联失败')
       }
     },
     [tasks, patchLocalTask, handleError],
@@ -1291,6 +1336,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     addSubtask,
     updateSubtask,
     deleteSubtask,
+    addTaskLink,
+    removeTaskLink,
 
     createFolder,
     updateFolder,

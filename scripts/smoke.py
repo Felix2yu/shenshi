@@ -1216,6 +1216,115 @@ def run_new_features(base: str) -> None:
     check("清单可取消归档", status in (200, 201), str(status))
 
 
+    section("㉒ 分解与执行：三态状态 / 预计时长 / 进度 / 多级子任务 / 关联依赖")
+
+    status, boot2 = call(base, "GET", "/api/bootstrap")
+    inbox2 = (boot2 or {}).get("inboxListId", 0)
+    first_list = next(l["id"] for l in (boot2 or {}).get("lists", []) if l["id"] != inbox2)
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
+
+    status, a = call(base, "POST", "/api/tasks", {"title": "准备答辩材料", "listId": first_list})
+    check("创建依赖主任务", status == 201, str(status))
+    status, b = call(base, "POST", "/api/tasks", {"title": "预约答辩会议室", "listId": first_list})
+    check("创建被依赖任务", status == 201, str(status))
+
+    # 三态状态
+    status, ip = call(base, "PATCH", f"/api/tasks/{a['id']}", {"status": "in_progress"})
+    check("PATCH 可把任务标为进行中", status == 200 and ip["status"] == "in_progress", str(ip.get("status")))
+    check("进行中不写完成时间", ip["completedAt"] is None, str(ip.get("completedAt")))
+    status, lst = call(base, "GET", "/api/tasks?status=todo&listId=" + str(first_list))
+    check("「未完成」口径包含进行中", any(t["id"] == a["id"] for t in lst["tasks"]), str(len(lst["tasks"])))
+    status, lst = call(base, "GET", "/api/tasks?status=in_progress&listId=" + str(first_list))
+    check("status=in_progress 过滤", any(t["id"] == a["id"] for t in lst["tasks"]), str(len(lst["tasks"])))
+    status, fin = call(base, "PATCH", f"/api/tasks/{a['id']}", {"status": "done"})
+    check("进行中可直接完成", fin["status"] == "done" and bool(fin["completedAt"]), str(fin.get("status")))
+
+    # 预计时长与进度
+    status, est = call(base, "PATCH", f"/api/tasks/{a['id']}", {"estimateMinutes": 45, "progress": 60})
+    check("预计时长与进度写入", est["estimateMinutes"] == 45 and est["progress"] == 60, str((est.get("estimateMinutes"), est.get("progress"))))
+    status, est2 = call(base, "PATCH", f"/api/tasks/{a['id']}", {"progress": 150})
+    check("进度越界收敛到 100", est2["progress"] == 100, str(est2.get("progress")))
+    status, est3 = call(base, "PATCH", f"/api/tasks/{a['id']}", {"estimateMinutes": -5})
+    check("负预计时长收敛到 0", est3["estimateMinutes"] == 0, str(est3.get("estimateMinutes")))
+
+    # 多级子任务 + 日期 + 提醒
+    status, sub = call(base, "POST", f"/api/tasks/{b['id']}/subtasks", {"title": "查会议室空闲时段", "dueDate": tomorrow.isoformat()})
+    check("子任务可带日期", status == 201 and sub.get("dueDate") == tomorrow.isoformat(), str(sub))
+    status, _ = call(base, "PATCH", f"/api/subtasks/{sub['id']}", {"reminders": [30]})
+    check("子任务可设提醒", status == 200, str(status))
+    status, sub2 = call(base, "POST", f"/api/tasks/{b['id']}/subtasks", {"title": "发会议邀请", "parentId": sub["id"]})
+    check("子任务可挂父级（多级）", status == 201 and sub2.get("parentId") == sub["id"], str(sub2))
+    status, tb = call(base, "GET", f"/api/tasks/{b['id']}")
+    top = tb["subtasks"][0] if tb["subtasks"] else {}
+    check("子任务树形回传", top.get("title") == "查会议室空闲时段" and len(top.get("children", [])) == 1, str(tb["subtasks"]))
+    check("完成度按全树计数", tb["subtaskOpen"] == 2 and tb["subtaskDone"] == 0, str((tb["subtaskDone"], tb["subtaskOpen"])))
+    status, _ = call(base, "POST", f"/api/tasks/{b['id']}/subtasks", {"title": "越级挂父", "parentId": sub2["id"]})
+    check("三级子任务被拒绝（400）", status == 400, str(status))
+    status, _ = call(base, "PATCH", f"/api/subtasks/{sub['id']}", {"dueDate": ""})
+    check("子任务日期可清空", status == 200, str(status))
+
+    # 关联与依赖
+    status, link = call(base, "POST", f"/api/tasks/{a['id']}/links", {"linkedTaskId": b["id"], "kind": "blocked_by"})
+    check("建立依赖关系", status == 201 and link["kind"] == "blocked_by", str(link))
+    status, ta = call(base, "GET", f"/api/tasks/{a['id']}")
+    check("被阻塞方看到依赖视图", any(l["kind"] == "blocked_by" and l["linkedTaskId"] == b["id"] for l in ta["links"]), str(ta["links"]))
+    status, tb2 = call(base, "GET", f"/api/tasks/{b['id']}")
+    check("阻塞方看到反向视图", any(l["kind"] == "blocks" and l["linkedTaskId"] == a["id"] for l in tb2["links"]), str(tb2["links"]))
+    status, dup = call(base, "POST", f"/api/tasks/{a['id']}/links", {"linkedTaskId": b["id"], "kind": "blocked_by"})
+    check("重复依赖被拒绝（400）", status == 400, str(status))
+    status, _ = call(base, "POST", f"/api/tasks/{a['id']}/links", {"linkedTaskId": a["id"], "kind": "related"})
+    check("自关联被拒绝（400）", status == 400, str(status))
+    status, rel = call(base, "POST", f"/api/tasks/{a['id']}/links", {"linkedTaskId": b["id"], "kind": "related"})
+    check("可另建 related 关联", status == 201, str(rel))
+
+    # 环路检测：B 被 A 阻塞之后，再让 A 依赖 B 应当被拒绝
+    status, c = call(base, "POST", "/api/tasks", {"title": "链路第三环", "listId": first_list})
+    status, _ = call(base, "POST", f"/api/tasks/{b['id']}/links", {"linkedTaskId": c["id"], "kind": "blocked_by"})
+    status, cyc = call(base, "POST", f"/api/tasks/{c['id']}/links", {"linkedTaskId": a["id"], "kind": "blocked_by"})
+    check("依赖环路被拒绝（400）", status == 400, str(cyc))
+
+    # 备份带出关联边
+    status, bundle = call(base, "GET", "/api/export")
+    check("备份导出 taskLinks", status == 200 and any(l.get("kind") == "blocked_by" for l in bundle.get("taskLinks", [])), str(len(bundle.get("taskLinks", []))))
+
+    # 删除依赖任务后，边随级联消失
+    status, _ = call(base, "DELETE", f"/api/task-links/{link['id']}")
+    check("删除关联", status == 200, str(status))
+    status, ta2 = call(base, "GET", f"/api/tasks/{a['id']}")
+    check("删除后依赖消失", all(l["id"] != link["id"] for l in ta2["links"]), str(ta2["links"]))
+    for tid in (a["id"], b["id"], c["id"]):
+        call(base, "DELETE", f"/api/tasks/{tid}")
+
+    section("㉓ 任务级归档")
+    status, arc = call(base, "POST", "/api/tasks", {"title": "归档验收任务"})
+    check("创建待归档任务", status == 201, str(status))
+    status, arc2 = call(base, "POST", "/api/tasks", {"title": "归档验收任务二"})
+    check("创建第二件待归档任务", status == 201, str(status))
+
+    status, archived = call(base, "PATCH", f"/api/tasks/{arc['id']}", {"archived": True})
+    check("PATCH 可归档任务", status == 200 and archived.get("archived") is True, str(archived.get("archived")))
+    status, lst = call(base, "GET", "/api/tasks?smart=all")
+    check("归档任务退出日常视图", all(t["id"] != arc["id"] for t in lst["tasks"]), str(lst.get("count")))
+    status, lst = call(base, "GET", "/api/tasks?archived=1")
+    check("archived=1 只看已归档", any(t["id"] == arc["id"] for t in lst["tasks"]) and all(t.get("archived") is True for t in lst["tasks"]), str(lst.get("count")))
+    status, r = call(base, "POST", "/api/tasks/batch", {"ids": [arc2["id"]], "action": "archive"})
+    check("批量归档", status == 200 and r.get("affected") == 1, str(r))
+    status, got = call(base, "GET", f"/api/tasks/{arc2['id']}")
+    check("批量归档生效", got.get("archived") is True, str(got.get("archived")))
+    status, restored = call(base, "PATCH", f"/api/tasks/{arc['id']}", {"archived": False})
+    check("取消归档回到日常视图", status == 200 and restored.get("archived") is False, str(restored.get("archived")))
+    status, lst = call(base, "GET", "/api/tasks?smart=all")
+    check("恢复后任务重新可见", any(t["id"] == arc["id"] for t in lst["tasks"]), str(lst.get("count")))
+
+    # 归档态随备份往返
+    status, bundle3 = call(base, "GET", "/api/export")
+    arc_rows = [t for t in bundle3.get("tasks", []) if t["id"] == arc2["id"]]
+    check("备份包含已归档任务", status == 200 and len(arc_rows) == 1 and arc_rows[0].get("archived") is True, str(arc_rows))
+    for tid in (arc["id"], arc2["id"]):
+        call(base, "DELETE", f"/api/tasks/{tid}")
+
+
 def run_auth(base: str, token: str) -> None:
     """访问口令鉴权：单开一个带 -token 的实例，验证这道门该拦的拦住、该放的放行。"""
     section("⑳ 访问口令鉴权")

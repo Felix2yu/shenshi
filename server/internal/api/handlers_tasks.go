@@ -115,6 +115,11 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) error {
 		p := queryInt(r, "priority", 0)
 		f.Priority = &p
 	}
+	// archived=1 只看已归档（侧栏恢复区），archived=0 显式排除；缺省走默认口径（排除）。
+	if r.URL.Query().Has("archived") {
+		v := r.URL.Query().Get("archived") == "1"
+		f.TaskArchived = &v
+	}
 	tasks, err := s.st.ListTasks(f)
 	if err != nil {
 		return err
@@ -333,7 +338,9 @@ func (s *Server) addSubtask(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var body struct {
-		Title string `json:"title"`
+		Title    string `json:"title"`
+		ParentID *int64 `json:"parentId"`
+		DueDate  string `json:"dueDate"`
 	}
 	if err := decode(w, r, &body); err != nil {
 		return err
@@ -341,7 +348,11 @@ func (s *Server) addSubtask(w http.ResponseWriter, r *http.Request) error {
 	if strings.TrimSpace(body.Title) == "" {
 		return store.ValidationError{Msg: "子任务标题不能为空"}
 	}
-	sub, err := s.st.AddSubtask(id, body.Title, -1)
+	var dueDate *string
+	if body.DueDate != "" {
+		dueDate = &body.DueDate
+	}
+	sub, err := s.st.AddSubtask(id, body.Title, -1, body.ParentID, dueDate)
 	if err != nil {
 		return err
 	}
@@ -358,11 +369,14 @@ func (s *Server) updateSubtask(w http.ResponseWriter, r *http.Request) error {
 		Title     *string `json:"title"`
 		Done      *bool   `json:"done"`
 		SortOrder *int    `json:"sortOrder"`
+		DueDate   *string `json:"dueDate"`
+		Reminders *[]int  `json:"reminders"`
 	}
 	if err := decode(w, r, &body); err != nil {
 		return err
 	}
-	if err := s.st.UpdateSubtask(id, body.Title, body.Done, body.SortOrder); err != nil {
+	u := store.SubtaskUpdate{Title: body.Title, Done: body.Done, SortOrder: body.SortOrder, DueDate: body.DueDate, Reminders: body.Reminders}
+	if err := s.st.UpdateSubtask(id, u); err != nil {
 		return err
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
@@ -375,6 +389,42 @@ func (s *Server) deleteSubtask(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if err := s.st.DeleteSubtask(id); err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
+	return nil
+}
+
+// addTaskLink 建立任务间关联（related 互相关注 / blocked_by 依赖阻塞）。
+func (s *Server) addTaskLink(w http.ResponseWriter, r *http.Request) error {
+	id, err := pathID(r, "id")
+	if err != nil {
+		return err
+	}
+	var body struct {
+		LinkedTaskID int64  `json:"linkedTaskId"`
+		Kind         string `json:"kind"`
+	}
+	if err := decode(w, r, &body); err != nil {
+		return err
+	}
+	if body.Kind == "" {
+		body.Kind = model.LinkRelated
+	}
+	link, err := s.st.AddTaskLink(id, body.LinkedTaskID, body.Kind)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusCreated, link)
+	return nil
+}
+
+func (s *Server) deleteTaskLink(w http.ResponseWriter, r *http.Request) error {
+	id, err := pathID(r, "id")
+	if err != nil {
+		return err
+	}
+	if err := s.st.DeleteTaskLink(id); err != nil {
 		return err
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})

@@ -12,9 +12,27 @@ export const PRIORITY_LABEL: Record<Priority, string> = {
 export interface Subtask {
   id: number
   taskId: number
+  /** 父级子任务：null 表示顶层，非空表示挂在另一条子任务之下（两级） */
+  parentId: number | null
   title: string
+  /** 子任务自己的日期（YYYY-MM-DD），独立于父任务 */
+  dueDate: string | null
+  /** 子任务自己的提醒（提前分钟数） */
+  reminders: number[]
   done: boolean
   sortOrder: number
+  children: Subtask[]
+}
+
+/** 任务间关联：related 互相关注（对称），blocked_by 依赖（有向），blocks 被谁阻塞的反向视图。 */
+export interface TaskLink {
+  id: number
+  taskId: number
+  linkedTaskId: number
+  kind: 'related' | 'blocked_by' | 'blocks'
+  title: string
+  status: 'todo' | 'in_progress' | 'done'
+  listName: string
 }
 
 export interface Tag {
@@ -30,7 +48,7 @@ export interface Task {
   listId: number
   title: string
   notes: string
-  status: 'todo' | 'done'
+  status: 'todo' | 'in_progress' | 'done'
   priority: Priority
   /** 计划开始日 YYYY-MM-DD */
   startDate: string | null
@@ -49,6 +67,12 @@ export interface Task {
   pinned: boolean
   /** 收藏：进入「收藏」智能清单 */
   starred: boolean
+  /** 归档：从日常视野收起，侧栏「已归档」可恢复 */
+  archived: boolean
+  /** 预计时长（分钟），0 表示未估；专注计时记录的是事后实际值 */
+  estimateMinutes: number
+  /** 手工进度百分比 0-100；有子任务时可与其完成度互为印证 */
+  progress: number
   completedAt: string | null
   sortOrder: number
   createdAt: string
@@ -56,6 +80,8 @@ export interface Task {
   subtasks: Subtask[]
   attachments: Attachment[]
   tags: Tag[]
+  /** 关联 / 依赖的其他任务 */
+  links: TaskLink[]
   listName: string
   listColor: string
   folderId: number | null
@@ -316,6 +342,8 @@ export interface FocusSession {
 
 export interface ReminderHit {
   task: Task
+  /** 子任务自己的提醒（非空时通知文案用它） */
+  subtask?: { id: number; taskId: number; title: string } | null
   fireAt: string
   offset: number
   overdue: boolean
@@ -423,7 +451,7 @@ export interface TaskPatch {
   title?: string
   notes?: string
   listId?: number
-  status?: 'todo' | 'done'
+  status?: 'todo' | 'in_progress' | 'done'
   priority?: Priority
   startDate?: string | null
   dueDate?: string | null
@@ -437,9 +465,14 @@ export interface TaskPatch {
   urgent?: boolean
   pinned?: boolean
   starred?: boolean
+  archived?: boolean
   tagIds?: number[]
   subtasks?: { title: string; done: boolean; sortOrder: number }[]
   sortOrder?: number
+  /** 预计时长（分钟） */
+  estimateMinutes?: number
+  /** 手工进度百分比 0-100 */
+  progress?: number
 }
 
 /** 批量操作的 action 取值。 */
@@ -452,6 +485,15 @@ export type BatchAction =
   | 'unpin'
   | 'star'
   | 'unstar'
+  | 'archive'
+  | 'unarchive'
+
+/** 任务状态的三种档位。 */
+export const STATUS_LABEL: Record<Task['status'], string> = {
+  todo: '未开始',
+  in_progress: '进行中',
+  done: '已完成',
+}
 
 /** 明暗模式。auto 表示跟随系统外观，由 AppStore 解析成实际生效的 light / dark。 */
 export type ThemeMode = 'light' | 'dark' | 'auto'

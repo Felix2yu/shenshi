@@ -6,7 +6,7 @@ import { renderMarkdown } from '../lib/markdown'
 import { describeRepeat } from '../lib/nlp'
 import { useIMEGuard } from '../lib/ime'
 import { useStore } from '../store/AppStore'
-import type { Attachment, Priority, Task } from '../types'
+import type { Attachment, Priority, Subtask, Task } from '../types'
 import {
   IconBell,
   IconCalendar,
@@ -17,6 +17,7 @@ import {
   IconDownload,
   IconEye,
   IconFlag,
+  IconArchive,
   IconLink,
   IconList,
   IconMore,
@@ -63,6 +64,8 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
     addSubtask,
     updateSubtask,
     deleteSubtask,
+    addTaskLink,
+    removeTaskLink,
     lists,
     tags,
     repeatMeta,
@@ -87,8 +90,12 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
   const [datePopover, setDatePopover] = useState(false)
   const [listPopover, setListPopover] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
+  const [linkPopover, setLinkPopover] = useState(false)
+  const [linkQuery, setLinkQuery] = useState('')
+  const [linkResults, setLinkResults] = useState<Task[]>([])
   // 备注默认就是编辑态；有 Markdown 语法时进详情直接看到渲染结果更有用。
   const [notesMode, setNotesMode] = useState<'edit' | 'preview'>('edit')
+  const notesInputRef = useRef<HTMLTextAreaElement>(null)
   const [attachments, setAttachments] = useState<Attachment[]>(task?.attachments ?? [])
   const [uploading, setUploading] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -124,6 +131,49 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
     [task, updateTask],
   )
 
+  /** 关联候选搜索：跨清单找任务，排除自己与已关联的。 */
+  const searchLinkTargets = useCallback(
+    async (q: string, selfId: number) => {
+      if (!q.trim()) {
+        setLinkResults([])
+        return
+      }
+      try {
+        const r = await api.listTasks({ q: q.trim(), limit: 8 })
+        const linked = new Set([selfId])
+        for (const t of tasks) if (t.id === selfId) t.links?.forEach((l) => linked.add(l.linkedTaskId))
+        setLinkResults(r.tasks.filter((t) => !linked.has(t.id)))
+      } catch {
+        setLinkResults([])
+      }
+    },
+    [tasks],
+  )
+
+  /** 在备注光标处插入 GFM 检查清单模板。 */
+  const insertChecklist = useCallback(() => {
+    const el = notesInputRef.current
+    const tpl = '- [ ] 第一步\n- [ ] 第二步\n- [ ] 第三步'
+    if (!el) {
+      setNotes((prev) => (prev ? `${prev}\n${tpl}` : tpl))
+      commitNotes(notes ? `${notes}\n${tpl}` : tpl)
+      return
+    }
+    const start = el.selectionStart ?? notes.length
+    const end = el.selectionEnd ?? notes.length
+    const head = notes.slice(0, start)
+    const tail = notes.slice(end)
+    const sep = head && !head.endsWith('\n') ? '\n' : ''
+    const next = `${head}${sep}${tpl}${tail && !tail.startsWith('\n') ? '\n' : ''}${tail}`
+    setNotes(next)
+    commitNotes(next)
+    requestAnimationFrame(() => {
+      el.focus()
+      const pos = (head + sep + tpl).length
+      el.setSelectionRange(pos, pos)
+    })
+  }, [notes, commitNotes])
+
   if (!task) {
     return (
       <div className="flex h-full w-[352px] shrink-0 items-center justify-center border-l border-line bg-surface text-[0.8125rem] text-ink-3">
@@ -133,7 +183,9 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
   }
 
   const done = task.status === 'done'
-  const subDone = task.subtasks.filter((s) => s.done).length
+  // 完成度按全树计（后端装配的 subtaskDone/Open 已含子子任务）。
+  const subDone = task.subtaskDone
+  const subTotal = task.subtaskDone + task.subtaskOpen
   const tagOptions = tags.filter((t) => !task.tags.some((x) => x.id === t.id))
   const repeatOptions = repeatMeta?.presets ?? []
 
@@ -294,6 +346,22 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
               <IconCopy size={13} className="text-ink-3" />
               复制一份
             </button>
+            <button
+              type="button"
+              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[0.78125rem] text-ink hover:bg-surface-2"
+              onClick={async () => {
+                setMoreOpen(false)
+                const updated = await updateTask(task.id, { archived: !task.archived })
+                if (updated) {
+                  toast(task.archived ? '已恢复到日常视图' : '已归档，侧栏「已归档」可找回')
+                  // 归档会改变任务在哪些视图出现，关掉详情让列表刷新后的口径说话。
+                  onClose()
+                }
+              }}
+            >
+              <IconArchive size={13} className="text-ink-3" />
+              {task.archived ? '取消归档' : '归档任务'}
+            </button>
             <div className="my-1 border-t border-line" />
             <button
               type="button"
@@ -341,15 +409,15 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
           <div className="mb-1.5 flex items-center gap-2 text-[0.71875rem] font-medium tracking-wide text-ink-3">
             <IconSubtask size={13} />
             <span>子任务</span>
-            {task.subtasks.length > 0 ? (
+            {subTotal > 0 ? (
               <>
                 <span className="tabular-nums">
-                  {subDone}/{task.subtasks.length}
+                  {subDone}/{subTotal}
                 </span>
                 <span className="ml-1 h-1 flex-1 overflow-hidden rounded-full bg-line">
                   <span
                     className="block h-full rounded-full bg-jade transition-[width] duration-300"
-                    style={{ width: `${(subDone / task.subtasks.length) * 100}%` }}
+                    style={{ width: `${(subDone / subTotal) * 100}%` }}
                   />
                 </span>
               </>
@@ -358,28 +426,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
 
           <div className="space-y-0.5">
             {task.subtasks.map((s) => (
-              <div key={s.id} className="group/sub flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-surface-2">
-                <RoundCheck
-                  checked={s.done}
-                  size={15}
-                  color="var(--jade)"
-                  onChange={(next) => void updateSubtask(s.id, { done: next })}
-                />
-                <input
-                  defaultValue={s.title}
-                  onBlur={(e) => {
-                    const v = e.target.value.trim()
-                    if (v && v !== s.title) void updateSubtask(s.id, { title: v })
-                  }}
-                  className={cx(
-                    'min-w-0 flex-1 bg-transparent text-[0.8125rem] outline-none',
-                    s.done ? 'text-ink-3 line-through' : 'text-ink',
-                  )}
-                />
-                <span className="opacity-0 transition-opacity group-hover/sub:opacity-100">
-                  <IconButton icon={IconX} label="删除子任务" size={12} onClick={() => void deleteSubtask(s.id)} />
-                </span>
-              </div>
+              <SubtaskItem key={s.id} sub={s} depth={0} />
             ))}
           </div>
 
@@ -405,6 +452,91 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
 
         {/* 属性区 */}
         <div className="mt-4 space-y-2.5 border-t border-line pt-4">
+          {/* 状态：未开始 / 进行中 / 已完成 三态。进行中是执行层的表态。 */}
+          <Row label="状态" icon={IconSparkle}>
+            <div className="flex gap-1">
+              {(
+                [
+                  { v: 'todo', label: '未开始' },
+                  { v: 'in_progress', label: '进行中' },
+                  { v: 'done', label: '已完成' },
+                ] as const
+              ).map((s) => (
+                <button
+                  key={s.v}
+                  type="button"
+                  onClick={() => void updateTask(task.id, { status: s.v })}
+                  className={cx(
+                    'rounded-lg border px-2.5 py-1 text-[0.78125rem] transition-colors',
+                    s.v === 'in_progress'
+                      ? task.status === s.v
+                        ? 'border-transparent bg-jade/15 font-medium text-jade'
+                        : 'border-line text-ink-2 hover:bg-surface-2'
+                      : task.status === s.v
+                        ? 'border-transparent font-medium text-seal bg-seal/10'
+                        : 'border-line text-ink-2 hover:bg-surface-2',
+                  )}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </Row>
+
+          {/* 预计时长：做事前先掂量分量，专注计时记录的则是事后实际值 */}
+          <Row label="预计" icon={IconClock}>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {[15, 30, 45, 60, 120].map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => void updateTask(task.id, { estimateMinutes: task.estimateMinutes === m ? 0 : m })}
+                  className={cx(
+                    'rounded-lg border px-2 py-1 text-[0.75rem] transition-colors',
+                    task.estimateMinutes === m
+                      ? 'border-seal/45 bg-seal/10 font-medium text-seal'
+                      : 'border-line text-ink-2 hover:bg-surface-2',
+                  )}
+                >
+                  {m}分
+                </button>
+              ))}
+              <input
+                type="number"
+                min={0}
+                max={1440}
+                step={5}
+                value={task.estimateMinutes || ''}
+                onChange={(e) => void updateTask(task.id, { estimateMinutes: Math.max(0, Number(e.target.value) || 0) })}
+                placeholder="自定义"
+                title="预计时长（分钟）"
+                className="w-16 rounded-md border border-line bg-surface px-1.5 py-1 text-[0.75rem] tabular-nums outline-none focus:border-seal/50"
+              />
+              <span className="text-[0.71875rem] text-ink-3">分钟</span>
+            </div>
+          </Row>
+
+          {/* 进度：无子任务也能标百分比；有子任务时与其完成度互为印证 */}
+          <Row label="进度" icon={IconFlag}>
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={5}
+                value={task.progress}
+                onChange={(e) => void updateTask(task.id, { progress: Number(e.target.value) })}
+                className="h-1 flex-1 accent-[var(--jade)]"
+              />
+              <span className="w-9 text-right text-[0.75rem] tabular-nums text-ink-2">{task.progress}%</span>
+            </div>
+            {subTotal > 0 ? (
+              <p className="mt-0.5 text-[0.6875rem] text-ink-3">
+                子任务完成度 {Math.round((subDone / subTotal) * 100)}%，可作参照
+              </p>
+            ) : null}
+          </Row>
+
           {/* 开始日期：只表明「打算从哪天动手」，不参与逾期判定 */}
           <Row label="开始" icon={IconCalendarRange}>
             <div className="flex flex-wrap items-center gap-1.5">
@@ -793,12 +925,141 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
           </div>
         </div>
 
+        {/* 关联与依赖 */}
+        <div className="mt-5 border-t border-line pt-4">
+          <div className="mb-1.5 flex items-center gap-2 text-[0.71875rem] font-medium tracking-wide text-ink-3">
+            <IconLink size={13} />
+            关联与依赖
+            {task.links.length > 0 ? <span className="tabular-nums">{task.links.length}</span> : null}
+            <button
+              type="button"
+              onClick={() => setLinkPopover((v) => !v)}
+              className="ml-auto rounded px-1.5 py-0.5 text-[0.6875rem] text-seal transition-colors hover:bg-seal/10"
+            >
+              添加
+            </button>
+          </div>
+          {task.links.length === 0 ? (
+            <p className="text-[0.71875rem] leading-relaxed text-ink-3">
+              关联相关任务，或声明依赖：被阻塞的事在对方完成前不宜开工。
+            </p>
+          ) : (
+            <ul className="space-y-1">
+              {task.links.map((l) => {
+                const ldone = l.status === 'done'
+                return (
+                  <li
+                    key={l.id}
+                    className="flex items-center gap-2 rounded-lg border border-line bg-surface-2/50 px-2.5 py-1.5"
+                  >
+                    <span
+                      className={cx(
+                        'shrink-0 rounded px-1.5 py-0.5 text-[0.65625rem] font-medium',
+                        l.kind === 'blocked_by' && !ldone
+                          ? 'bg-p-high/12 text-p-high'
+                          : l.kind === 'blocks'
+                            ? 'bg-seal/10 text-seal'
+                            : 'bg-surface-2 text-ink-3',
+                      )}
+                    >
+                      {l.kind === 'blocked_by' ? '依赖' : l.kind === 'blocks' ? '阻塞着' : '关联'}
+                    </span>
+                    <span
+                      className={cx(
+                        'min-w-0 flex-1 truncate text-[0.78125rem]',
+                        ldone ? 'text-ink-3 line-through' : 'text-ink',
+                      )}
+                    >
+                      {l.title}
+                    </span>
+                    {l.kind === 'blocked_by' && !ldone ? (
+                      <span className="shrink-0 text-[0.65625rem] text-p-high">未完成</span>
+                    ) : ldone ? (
+                      <IconCheck size={12} className="shrink-0 text-jade" />
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => void removeTaskLink(l.id)}
+                      title="移除关联"
+                      className="shrink-0 rounded p-0.5 text-ink-3 transition-colors hover:text-p-high"
+                    >
+                      <IconX size={12} />
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+          <Popover open={linkPopover} onClose={() => setLinkPopover(false)} align="left" width={280} side="top">
+            <div className="p-1">
+              <input
+                autoFocus
+                {...compositionProps}
+                value={linkQuery}
+                onChange={(e) => {
+                  setLinkQuery(e.target.value)
+                  void searchLinkTargets(e.target.value, task.id)
+                }}
+                placeholder="搜任务标题，建立关联"
+                className="mb-1 w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-[0.78125rem] outline-none focus:border-seal/60"
+              />
+              <div className="max-h-56 overflow-y-auto">
+                {linkResults.map((t) => (
+                  <div key={t.id} className="flex items-center gap-1 rounded-lg px-1 hover:bg-surface-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await addTaskLink(task.id, t.id, 'related')
+                        setLinkQuery('')
+                        setLinkResults([])
+                        setLinkPopover(false)
+                      }}
+                      className="min-w-0 flex-1 truncate py-1.5 text-left text-[0.78125rem] text-ink"
+                    >
+                      {t.title}
+                      <span className="ml-1.5 text-[0.65625rem] text-ink-3">{t.listName}</span>
+                    </button>
+                    <button
+                      type="button"
+                      title="设为依赖：它不完成，本任务被阻塞"
+                      onClick={async () => {
+                        await addTaskLink(task.id, t.id, 'blocked_by')
+                        setLinkQuery('')
+                        setLinkResults([])
+                        setLinkPopover(false)
+                      }}
+                      className="shrink-0 rounded px-1.5 py-0.5 text-[0.65625rem] text-p-high hover:bg-p-high/10"
+                    >
+                      依赖
+                    </button>
+                  </div>
+                ))}
+                {linkQuery.trim() && linkResults.length === 0 ? (
+                  <p className="px-2 py-1.5 text-[0.71875rem] text-ink-3">没有匹配的任务</p>
+                ) : null}
+              </div>
+            </div>
+          </Popover>
+        </div>
+
         {/* 备注：支持 Markdown，编辑与预览两态 */}
         <div className="mt-5 border-t border-line pt-4">
           <div className="mb-1.5 flex items-center gap-2 text-[0.71875rem] font-medium tracking-wide text-ink-3">
             <IconNote size={13} />
             备注
             <span className="ml-auto flex items-center gap-0.5">
+              {notesMode === 'edit' ? (
+                <button
+                  type="button"
+                  data-notes-checklist
+                  onClick={insertChecklist}
+                  title="在光标处插入检查清单（- [ ] 行）"
+                  className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[0.6875rem] text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
+                >
+                  <IconCheck size={11} />
+                  插入检查清单
+                </button>
+              ) : null}
               <button
                 type="button"
                 data-notes-mode="edit"
@@ -826,7 +1087,10 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
           </div>
           {notesMode === 'edit' ? (
             <textarea
-              ref={notesRef}
+              ref={(el) => {
+                notesRef.current = el
+                notesInputRef.current = el
+              }}
               value={notes}
               data-notes-input
               onChange={(e) => {
@@ -915,17 +1179,17 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
         </div>
 
         {/* 完成度 */}
-        {task.subtasks.length > 0 ? (
+        {subTotal > 0 ? (
           <div className="mt-5 flex items-center gap-3 rounded-xl border border-line bg-surface-2/50 px-3 py-2.5">
-            <ProgressRing value={subDone / task.subtasks.length} size={40} stroke={3} color="var(--jade)">
+            <ProgressRing value={subDone / subTotal} size={40} stroke={3} color="var(--jade)">
               <span className="text-[0.6875rem] tabular-nums text-ink-2">
-                {Math.round((subDone / task.subtasks.length) * 100)}%
+                {Math.round((subDone / subTotal) * 100)}%
               </span>
             </ProgressRing>
             <div className="text-[0.75rem] leading-relaxed text-ink-2">
               <div>子任务已完成 {subDone} 项</div>
               <div className="text-ink-3">
-                {subDone === task.subtasks.length ? '枝节已尽，可以收束了。' : `还剩 ${task.subtasks.length - subDone} 项`}
+                {subDone === subTotal ? '枝节已尽，可以收束了。' : `还剩 ${subTotal - subDone} 项`}
               </div>
             </div>
           </div>
@@ -956,6 +1220,168 @@ function formatSize(n: number): string {
   if (n < 1024) return `${n} B`
   if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`
   return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
+
+/**
+ * 一条子任务：勾选、改名、设日期、设提醒、加子子任务、删除。
+ * children 递归渲染成缩进的分解树；日期让子步骤有自己的节律，
+ * 提醒走服务端的子任务提醒通道（见 store.DueReminders）。
+ */
+function SubtaskItem({ sub, depth }: { sub: Subtask; depth: number }) {
+  const { addSubtask, updateSubtask, deleteSubtask } = useStore()
+  const [childOpen, setChildOpen] = useState(false)
+  const [childInput, setChildInput] = useState('')
+  const [remindOpen, setRemindOpen] = useState(false)
+
+  const toggleReminder = (value: number) => {
+    const has = sub.reminders.includes(value)
+    const next = has ? sub.reminders.filter((r) => r !== value) : [...sub.reminders, value].sort((a, b) => a - b)
+    void updateSubtask(sub.id, { reminders: next })
+  }
+
+  return (
+    <div>
+      <div
+        className={cx(
+          'group/sub flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-surface-2',
+          depth > 0 && 'ml-4 border-l border-line pl-2',
+        )}
+      >
+        <RoundCheck
+          checked={sub.done}
+          size={15}
+          color="var(--jade)"
+          onChange={(next) => void updateSubtask(sub.id, { done: next })}
+        />
+        <input
+          defaultValue={sub.title}
+          onBlur={(e) => {
+            const v = e.target.value.trim()
+            if (v && v !== sub.title) void updateSubtask(sub.id, { title: v })
+          }}
+          className={cx(
+            'min-w-0 flex-1 bg-transparent text-[0.8125rem] outline-none',
+            sub.done ? 'text-ink-3 line-through' : 'text-ink',
+          )}
+        />
+        <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover/sub:opacity-100">
+          <input
+            type="date"
+            value={sub.dueDate ?? ''}
+            onChange={(e) => void updateSubtask(sub.id, { dueDate: e.target.value || null })}
+            title="子任务日期"
+            className="w-[7.2rem] rounded-md border border-line bg-surface px-1 py-0.5 text-[0.6875rem] tabular-nums outline-none focus:border-seal/50"
+          />
+          <span className="relative">
+            <IconButton
+              icon={IconBell}
+              label="子任务提醒"
+              size={12}
+              active={sub.reminders.length > 0}
+              onClick={() => setRemindOpen((v) => !v)}
+            />
+            <Popover open={remindOpen} onClose={() => setRemindOpen(false)} align="right" width={172} side="top">
+              <div className="py-1">
+                {REMINDER_OPTIONS.map((o) => (
+                  <button
+                    key={o.value}
+                    type="button"
+                    onClick={() => toggleReminder(o.value)}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[0.78125rem] text-ink hover:bg-surface-2"
+                  >
+                    <span
+                      className={cx(
+                        'grid h-4 w-4 place-items-center rounded-[5px] border',
+                        sub.reminders.includes(o.value) ? 'border-seal bg-seal text-white' : 'border-line-strong',
+                      )}
+                    >
+                      {sub.reminders.includes(o.value) ? <IconCheck size={11} strokeWidth={3} /> : null}
+                    </span>
+                    {o.label}
+                  </button>
+                ))}
+                <p className="border-t border-line px-2.5 pb-1 pt-2 text-[0.6875rem] leading-relaxed text-ink-3">
+                  按子任务日期当天 09:00 起算。
+                </p>
+              </div>
+            </Popover>
+          </span>
+          {depth === 0 ? (
+            <IconButton
+              icon={IconPlus}
+              label="添加子子任务"
+              size={12}
+              onClick={() => setChildOpen((v) => !v)}
+            />
+          ) : null}
+          <IconButton icon={IconX} label="删除子任务" size={12} onClick={() => void deleteSubtask(sub.id)} />
+        </span>
+      </div>
+
+      {/* 子子任务：只展开一层（后端同样限制两级），够拆解「准备答辩 → 订会议室」这类结构 */}
+      {depth === 0 && sub.children.length > 0 ? (
+        <div className="space-y-0.5">
+          {sub.children.map((c) => (
+            <SubtaskItem key={c.id} sub={c} depth={1} />
+          ))}
+        </div>
+      ) : null}
+
+      {depth === 0 ? (
+        <AddChildSubtask
+          show={childOpen}
+          value={childInput}
+          onChange={setChildInput}
+          onClose={() => setChildOpen(false)}
+          onSubmit={async () => {
+            const v = childInput.trim()
+            if (!v) return
+            setChildInput('')
+            setChildOpen(false)
+            await addSubtask(sub.taskId, v, { parentId: sub.id })
+          }}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+/** 「添加子子任务」的行内输入：点 + 号展开，回车提交，失焦或空值时收起。 */
+function AddChildSubtask({
+  show,
+  value,
+  onChange,
+  onClose,
+  onSubmit,
+}: {
+  show: boolean
+  value: string
+  onChange: (v: string) => void
+  onClose: () => void
+  onSubmit: () => Promise<void>
+}) {
+  if (!show) return null
+  return (
+    <form
+      className="ml-4 flex items-center gap-2 border-l border-line pl-2"
+      onSubmit={(e) => {
+        e.preventDefault()
+        void onSubmit()
+      }}
+    >
+      <IconPlus size={13} className="shrink-0 text-ink-3" />
+      <input
+        autoFocus
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onBlur={() => {
+          if (!value.trim()) onClose()
+        }}
+        placeholder="添加子子任务"
+        className="min-w-0 flex-1 bg-transparent py-1 text-[0.78125rem] outline-none placeholder:text-ink-3"
+      />
+    </form>
+  )
 }
 
 function Row({

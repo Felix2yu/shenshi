@@ -63,7 +63,7 @@ export function TableView({ tasks, onOpen }: { tasks: Task[]; onOpen: (t: Task) 
         </thead>
         <tbody>
           {tasks.map((t) => {
-            const overdue = t.status === 'todo' && !!t.dueDate && t.dueDate < today
+            const overdue = t.status !== 'done' && !!t.dueDate && t.dueDate < today
             const done = t.status === 'done'
             return (
               <tr

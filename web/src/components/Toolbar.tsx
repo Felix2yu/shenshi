@@ -165,7 +165,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
     return ''
   }, [selection, view, lists, keyword])
 
-  const openCount = tasks.filter((t) => t.status === 'todo').length
+  const openCount = tasks.filter((t) => t.status !== 'done').length
   const doneCount = tasks.filter((t) => t.status === 'done').length
   const hitCount = useMemo(() => applyFilter(tasks, filters).length, [tasks, filters])
 

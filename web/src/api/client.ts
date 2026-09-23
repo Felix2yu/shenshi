@@ -20,6 +20,7 @@ import type {
   Stats,
   Tag,
   Task,
+  TaskLink,
   TaskPatch,
   TaskTemplate,
   TemplatePatch,
@@ -102,6 +103,8 @@ export interface TaskQuery {
   priority?: number
   quadrant?: string
   q?: string
+  /** archived=1 只看已归档任务（侧栏恢复区）；缺省为默认口径（排除已归档）。 */
+  archived?: '0' | '1'
   sortBy?: TaskSort
   limit?: number
 }
@@ -179,11 +182,16 @@ export const api = {
     request<{ ok: boolean }>('PATCH', `/api/saved-filters/${id}`, body),
   deleteSavedFilter: (id: number) => request<{ ok: boolean }>('DELETE', `/api/saved-filters/${id}`),
 
-  addSubtask: (taskId: number, title: string) =>
-    request<{ id: number }>('POST', `/api/tasks/${taskId}/subtasks`, { title }),
-  updateSubtask: (id: number, patch: { title?: string; done?: boolean; sortOrder?: number }) =>
+  addSubtask: (taskId: number, title: string, opts: { parentId?: number; dueDate?: string | null } = {}) =>
+    request<{ id: number }>('POST', `/api/tasks/${taskId}/subtasks`, { title, ...opts }),
+  updateSubtask: (id: number, patch: { title?: string; done?: boolean; sortOrder?: number; dueDate?: string | null; reminders?: number[] }) =>
     request<{ ok: boolean }>('PATCH', `/api/subtasks/${id}`, patch),
   deleteSubtask: (id: number) => request<{ ok: boolean }>('DELETE', `/api/subtasks/${id}`),
+
+  // ---- 任务间关联 / 依赖 ----
+  addTaskLink: (taskId: number, linkedTaskId: number, kind: 'related' | 'blocked_by') =>
+    request<TaskLink>('POST', `/api/tasks/${taskId}/links`, { linkedTaskId, kind }),
+  deleteTaskLink: (id: number) => request<{ ok: boolean }>('DELETE', `/api/task-links/${id}`),
 
   listFolders: () => request<{ folders: Folder[] }>('GET', '/api/folders'),
   createFolder: (body: { name: string; color?: string; icon?: string; parentId?: number }) =>

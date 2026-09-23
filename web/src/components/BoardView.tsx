@@ -31,7 +31,7 @@ export function BoardView({ onOpen, filter }: { onOpen: (t: Task) => void; filte
   const [dropCol, setDropCol] = useState<string | null>(null)
 
   const columns = useMemo<Column[]>(() => {
-    const open = tasks.filter((t) => t.status === 'todo' && matchFilter(t, filter))
+    const open = tasks.filter((t) => t.status !== 'done' && matchFilter(t, filter))
 
     if (groupBy === 'priority') {
       return [3, 2, 1, 0].map((p) => ({
@@ -185,7 +185,7 @@ export function BoardView({ onOpen, filter }: { onOpen: (t: Task) => void; filte
         </div>
       </div>
 
-      {tasks.filter((t) => t.status === 'todo').length === 0 ? (
+      {tasks.filter((t) => t.status !== 'done').length === 0 ? (
         <div className="pb-12">
           <div className="text-center">
             <p className="brand-serif text-[0.875rem] text-ink-2">{QUOTES.board.text}</p>

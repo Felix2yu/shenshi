@@ -18,7 +18,8 @@ var ErrNotFound = errors.New("记录不存在")
 const taskSelect = `
 SELECT t.id, t.list_id, t.title, t.notes, t.status, t.priority,
        t.start_date, t.due_date, t.due_time, t.end_time, t.url, t.reminders, t.repeat_rule, t.repeat_from,
-       t.important, t.urgent, t.pinned, t.starred, t.completed_at, t.sort_order, t.created_at, t.updated_at,
+       t.important, t.urgent, t.pinned, t.starred, t.estimate_minutes, t.progress, t.archived,
+       t.completed_at, t.sort_order, t.created_at, t.updated_at,
        l.name, l.color, l.folder_id
 FROM tasks t JOIN lists l ON l.id = t.list_id`
 
@@ -39,6 +40,11 @@ type TaskFilter struct {
 	// IncludeArchived 让被归档清单里的任务也参与查询。默认排除：
 	// 「归档」的语义就是「从日常视野里收起来」，否则智能清单会被旧事灌满。
 	IncludeArchived bool
+	// IncludeTaskArchived 让已归档的任务也参与查询（备份导出用）。
+	// TaskArchived 显式指定归档态（侧栏「已归档」恢复区只看 true），
+	// 两者都未设置时，已归档任务从一切日常视野中排除。
+	IncludeTaskArchived bool
+	TaskArchived        *bool
 }
 
 // where 把过滤器翻译为 WHERE 子句与绑定参数。所有值均通过占位符绑定，杜绝注入。
@@ -123,18 +129,29 @@ func (f TaskFilter) build(countOnly bool) (string, []any) {
 
 	switch status {
 	case model.StatusTodo:
-		where = append(where, "t.status = 'todo'")
+		// 「未完成」口径包含进行中：进行中的事同样是欠着的账。
+		where = append(where, "t.status IN ('todo', 'in_progress')")
+	case model.StatusInProgress:
+		where = append(where, "t.status = 'in_progress'")
 	case model.StatusDone:
 		where = append(where, "t.status = 'done'")
 	case statusOpenWithTodayDone:
 		dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Format(time.RFC3339)
-		where = append(where, "(t.status = 'todo' OR (t.status = 'done' AND t.completed_at >= ?))")
+		where = append(where, "(t.status IN ('todo', 'in_progress') OR (t.status = 'done' AND t.completed_at >= ?))")
 		args = append(args, dayStart)
 	}
 
 	// 归档清单里的任务默认不进入任何聚合视图；显式打开该清单时才算例外。
 	if !f.IncludeArchived && !(f.ListID != nil && f.Smart == "") {
 		where = append(where, "l.archived = 0")
+	}
+
+	// 任务级归档：显式按归档态查询时以它为准，否则已归档任务一律收起。
+	if f.TaskArchived != nil {
+		where = append(where, "t.archived = ?")
+		args = append(args, boolInt(*f.TaskArchived))
+	} else if !f.IncludeTaskArchived {
+		where = append(where, "t.archived = 0")
 	}
 
 	if f.ListID != nil {
@@ -282,6 +299,9 @@ func (s *Store) ListTasks(f TaskFilter) ([]model.Task, error) {
 	if err := s.attachAttachments(tasks); err != nil {
 		return nil, err
 	}
+	if err := s.attachLinks(tasks); err != nil {
+		return nil, err
+	}
 	return tasks, nil
 }
 
@@ -310,6 +330,9 @@ func (s *Store) GetTask(id int64) (*model.Task, error) {
 	if err := s.attachAttachments(list); err != nil {
 		return nil, err
 	}
+	if err := s.attachLinks(list); err != nil {
+		return nil, err
+	}
 	return &list[0], nil
 }
 
@@ -321,13 +344,14 @@ func scanTask(r rowScanner) (model.Task, error) {
 	var t model.Task
 	var startDate, dueDate, dueTime, endTime, repeatRule, completedAt sql.NullString
 	var reminders, url, repeatFrom string
-	var important, urgent, pinned, starred int
+	var important, urgent, pinned, starred, archived int
 	var listName, listColor sql.NullString
 	var folderID sql.NullInt64
 
 	err := r.Scan(&t.ID, &t.ListID, &t.Title, &t.Notes, &t.Status, &t.Priority,
 		&startDate, &dueDate, &dueTime, &endTime, &url, &reminders, &repeatRule, &repeatFrom,
-		&important, &urgent, &pinned, &starred, &completedAt, &t.SortOrder, &t.CreatedAt, &t.UpdatedAt,
+		&important, &urgent, &pinned, &starred, &t.EstimateMinutes, &t.Progress, &archived,
+		&completedAt, &t.SortOrder, &t.CreatedAt, &t.UpdatedAt,
 		&listName, &listColor, &folderID)
 	if err != nil {
 		return t, err
@@ -365,6 +389,7 @@ func scanTask(r rowScanner) (model.Task, error) {
 	t.Urgent = urgent == 1
 	t.Pinned = pinned == 1
 	t.Starred = starred == 1
+	t.Archived = archived == 1
 	t.ListName = listName.String
 	t.ListColor = listColor.String
 	if folderID.Valid {
@@ -381,6 +406,9 @@ func scanTask(r rowScanner) (model.Task, error) {
 	return t, nil
 }
 
+// attachSubtasks 装配子任务树。子任务可再套子任务（parent_id），
+// 查询一次取平，再在内存里挂成树：根节点直接归入任务，其余各归其父。
+// SubtaskDone/Open 统计全树的叶子口径，父任务的进度条不受嵌套层级影响。
 func (s *Store) attachSubtasks(tasks []model.Task) error {
 	if len(tasks) == 0 {
 		return nil
@@ -394,29 +422,95 @@ func (s *Store) attachSubtasks(tasks []model.Task) error {
 		ids = append(ids, tasks[i].ID)
 		ph = append(ph, "?")
 	}
-	q := `SELECT id, task_id, title, done, sort_order FROM subtasks WHERE task_id IN (` + strings.Join(ph, ",") + `) ORDER BY sort_order, id`
+	q := `SELECT id, task_id, parent_id, title, due_date, reminders, done, sort_order
+	      FROM subtasks WHERE task_id IN (` + strings.Join(ph, ",") + `) ORDER BY sort_order, id`
 	rows, err := s.db.Query(q, ids...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
+
+	// 先摊平收集，再挂树。引用子任务作 map 值后不能再用下标写入，因此统一走指针副本。
+	type node struct {
+		sub      model.Subtask
+		parentID *int64
+	}
+	nodes := map[int64]*node{}
+	var order []int64
 	for rows.Next() {
+		var n node
 		var sub model.Subtask
 		var done int
-		if err := rows.Scan(&sub.ID, &sub.TaskID, &sub.Title, &done, &sub.SortOrder); err != nil {
+		var reminders string
+		if err := rows.Scan(&sub.ID, &sub.TaskID, &n.parentID, &sub.Title, &sub.DueDate, &reminders, &done, &sub.SortOrder); err != nil {
 			return err
 		}
 		sub.Done = done == 1
-		if i, ok := idx[sub.TaskID]; ok {
-			tasks[i].Subtasks = append(tasks[i].Subtasks, sub)
-			if sub.Done {
-				tasks[i].SubtaskDone++
-			} else {
-				tasks[i].SubtaskOpen++
+		sub.Reminders = []int{}
+		if reminders != "" {
+			_ = json.Unmarshal([]byte(reminders), &sub.Reminders)
+		}
+		sub.Children = []model.Subtask{}
+		n.sub = sub
+		nodes[sub.ID] = &n
+		order = append(order, sub.ID)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	rows.Close()
+
+	// 自底向上挂：先给每个节点装 Children，再把根节点挂到任务上。
+	// 断链的子任务（父节点已被删但级联未及）视作根，不让它凭空消失。
+	byParent := map[int64][]int64{}
+	for _, id := range order {
+		n := nodes[id]
+		if n.parentID != nil && *n.parentID != id {
+			byParent[*n.parentID] = append(byParent[*n.parentID], id)
+		}
+	}
+	var attach func(id int64) model.Subtask
+	attach = func(id int64) model.Subtask {
+		n := nodes[id]
+		sub := n.sub
+		sub.ParentID = n.parentID
+		for _, cid := range byParent[id] {
+			sub.Children = append(sub.Children, attach(cid))
+		}
+		return sub
+	}
+	for _, id := range order {
+		n := nodes[id]
+		if n.parentID == nil || *n.parentID == id || nodes[*n.parentID] == nil {
+			sub := attach(id)
+			if i, ok := idx[sub.TaskID]; ok {
+				tasks[i].Subtasks = append(tasks[i].Subtasks, sub)
 			}
 		}
 	}
-	return rows.Err()
+	// 完成度按全树计数。
+	var count func(sub model.Subtask) (done, open int)
+	count = func(sub model.Subtask) (done, open int) {
+		if sub.Done {
+			done = 1
+		} else {
+			open = 1
+		}
+		for _, c := range sub.Children {
+			d, o := count(c)
+			done += d
+			open += o
+		}
+		return done, open
+	}
+	for i := range tasks {
+		for _, sub := range tasks[i].Subtasks {
+			d, o := count(sub)
+			tasks[i].SubtaskDone += d
+			tasks[i].SubtaskOpen += o
+		}
+	}
+	return nil
 }
 
 func (s *Store) attachTags(tasks []model.Task) error {
@@ -503,11 +597,12 @@ func (s *Store) CreateTask(in model.TaskInput, defaultListID int64) (*model.Task
 	defer func() { _ = tx.Rollback() }()
 
 	ts := model.Now()
-	res, err := tx.Exec(`INSERT INTO tasks(list_id, title, notes, status, priority, start_date, due_date, due_time, end_time, url, reminders, repeat_rule, repeat_from, important, urgent, pinned, starred, sort_order, created_at, updated_at)
-		VALUES(?,?,?,'todo',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	res, err := tx.Exec(`INSERT INTO tasks(list_id, title, notes, status, priority, start_date, due_date, due_time, end_time, url, reminders, repeat_rule, repeat_from, important, urgent, pinned, starred, estimate_minutes, progress, sort_order, created_at, updated_at)
+		VALUES(?,?,?,'todo',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		listID, title, deref(in.Notes, ""), priority, ptrStr(startDate), ptrStr(dueDate), ptrStr(dueTime), ptrStr(endTime),
 		deref(in.URL, ""), mustJSON(reminders), ptrStr(repeatRule), repeatFrom,
 		boolInt(important), boolInt(urgent), boolInt(deref(in.Pinned, false)), boolInt(deref(in.Starred, false)),
+		maxInt(deref(in.EstimateMinutes, 0), 0), clampProgress(deref(in.Progress, 0)),
 		sortOrder, ts, ts)
 	if err != nil {
 		return nil, err
@@ -617,6 +712,9 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 	if in.Starred.Set {
 		add("starred = ?", boolInt(in.Starred.Value))
 	}
+	if in.Archived.Set {
+		add("archived = ?", boolInt(in.Archived.Value))
+	}
 	if in.Reminders.Set {
 		r := in.Reminders.Value
 		if r == nil {
@@ -632,6 +730,12 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 	}
 	if in.SortOrder.Set {
 		add("sort_order = ?", in.SortOrder.Value)
+	}
+	if in.EstimateMinutes.Set {
+		add("estimate_minutes = ?", maxInt(in.EstimateMinutes.Value, 0))
+	}
+	if in.Progress.Set {
+		add("progress = ?", clampProgress(in.Progress.Value))
 	}
 
 	// important / urgent 自动跟随优先级与到期日，除非本次显式指定。
@@ -662,6 +766,9 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 		case model.StatusDone:
 			add("status = 'done'")
 			add("completed_at = ?", model.Now())
+		case model.StatusInProgress:
+			add("status = 'in_progress'")
+			add("completed_at = NULL")
 		case model.StatusTodo:
 			add("status = 'todo'")
 			add("completed_at = NULL")
@@ -693,7 +800,7 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 	case cur.Status != t.Status && t.Status == model.StatusDone:
 		s.emit(model.EventTaskCompleted, t)
 		s.logActivity(model.ActCompleted, t.ID, t.Title, "在 "+t.ListName+" 中完成")
-	case cur.Status != t.Status && t.Status == model.StatusTodo:
+	case cur.Status != t.Status && t.Status != model.StatusDone:
 		s.emit(model.EventTaskReopened, t)
 		s.logActivity(model.ActReopened, t.ID, t.Title, "恢复为未完成")
 	case cur.ListID != t.ListID:
@@ -701,6 +808,14 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 		s.logActivity(model.ActMoved, t.ID, t.Title, cur.ListName+" → "+t.ListName)
 	default:
 		s.emit(model.EventTaskUpdated, t)
+	}
+	// 归档态变化单独记一笔：它与完成不同，是「主动把事情收起来」的动作。
+	if cur.Archived != t.Archived {
+		if t.Archived {
+			s.logActivity(model.ActArchived, t.ID, t.Title, "在 "+t.ListName+" 中归档")
+		} else {
+			s.logActivity(model.ActUnarchived, t.ID, t.Title, "恢复归档任务")
+		}
 	}
 	return t, nil
 }
@@ -837,7 +952,7 @@ func (s *Store) toggleTask(id int64, quiet bool) (*ToggleResult, error) {
 		return nil, err
 	}
 	ts := model.Now()
-	if cur.Status == model.StatusTodo {
+	if cur.Status != model.StatusDone {
 		if _, err := s.db.Exec(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, ts, ts, id); err != nil {
 			return nil, err
 		}
@@ -1095,6 +1210,14 @@ func (s *Store) BatchAction(ids []int64, action string, listID *int64, dueDate *
 			if _, err = s.db.Exec(`UPDATE tasks SET `+col+` = ?, updated_at = ? WHERE id = ?`, val, model.Now(), id); err == nil {
 				n++
 			}
+		case "archive", "unarchive":
+			val := 1
+			if action == "unarchive" {
+				val = 0
+			}
+			if _, err = s.db.Exec(`UPDATE tasks SET archived = ?, updated_at = ? WHERE id = ?`, val, model.Now(), id); err == nil {
+				n++
+			}
 		}
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return n, err
@@ -1112,6 +1235,10 @@ func (s *Store) BatchAction(ids []int64, action string, listID *int64, dueDate *
 		s.logActivity(model.ActCompleted, ids[0], firstTitle, fmt.Sprintf("批量完成 %d 件任务", n))
 	case "reopen":
 		s.logActivity(model.ActReopened, ids[0], firstTitle, fmt.Sprintf("批量恢复 %d 件任务", n))
+	case "archive":
+		s.logActivity(model.ActArchived, ids[0], firstTitle, fmt.Sprintf("批量归档 %d 件任务", n))
+	case "unarchive":
+		s.logActivity(model.ActUnarchived, ids[0], firstTitle, fmt.Sprintf("批量恢复归档 %d 件任务", n))
 	case "move":
 		if listID != nil {
 			name := ""
@@ -1174,37 +1301,84 @@ func (s *Store) ReorderTasks(ids []int64) error {
 	return tx.Commit()
 }
 
-// AddSubtask 新增子任务。
-func (s *Store) AddSubtask(taskID int64, title string, position int) (*model.Subtask, error) {
+// AddSubtask 新增子任务。parentID 非空时挂在同级子任务之下（多级分解），
+// dueDate 让这条步骤自己有节律，不必与父任务同起同落。
+func (s *Store) AddSubtask(taskID int64, title string, position int, parentID *int64, dueDate *string) (*model.Subtask, error) {
+	// 父级必须同属一条任务，且自身不再有父级 —— 分解树允许任意深度，
+	// 但「跨任务挂父」会造成删除与统计的语义混乱，直接拒绝。
+	if parentID != nil {
+		var parentTask int64
+		var parentParent *int64
+		if err := s.db.QueryRow(`SELECT task_id, parent_id FROM subtasks WHERE id = ?`, *parentID).Scan(&parentTask, &parentParent); err != nil {
+			return nil, ErrNotFound
+		}
+		if parentTask != taskID {
+			return nil, ValidationError{Msg: "父级子任务不属于该任务"}
+		}
+		if parentParent != nil {
+			return nil, ValidationError{Msg: "暂只支持两级子任务，父级已是子子任务"}
+		}
+	}
+	if dueDate != nil && strings.TrimSpace(*dueDate) == "" {
+		dueDate = nil
+	}
 	var maxOrder sql.NullInt64
 	_ = s.db.QueryRow(`SELECT MAX(sort_order) FROM subtasks WHERE task_id = ?`, taskID).Scan(&maxOrder)
 	order := int(maxOrder.Int64) + 1
 	if position >= 0 {
 		order = position
 	}
-	res, err := s.db.Exec(`INSERT INTO subtasks(task_id, title, done, sort_order) VALUES(?,?,0,?)`, taskID, strings.TrimSpace(title), order)
+	res, err := s.db.Exec(`INSERT INTO subtasks(task_id, parent_id, title, due_date, reminders, done, sort_order) VALUES(?,?,?,?,?,0,?)`,
+		taskID, parentID, strings.TrimSpace(title), dueDate, "[]", order)
 	if err != nil {
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
-	return &model.Subtask{ID: id, TaskID: taskID, Title: title, SortOrder: order}, nil
+	_, _ = s.db.Exec(`UPDATE tasks SET updated_at = ? WHERE id = ?`, model.Now(), taskID)
+	return &model.Subtask{ID: id, TaskID: taskID, ParentID: parentID, Title: title, DueDate: dueDate, Reminders: []int{}, Children: []model.Subtask{}, SortOrder: order}, nil
+}
+
+// SubtaskUpdate 子任务的局部更新入参，nil 表示不改动。
+type SubtaskUpdate struct {
+	Title     *string
+	Done      *bool
+	SortOrder *int
+	DueDate   *string
+	Reminders *[]int
 }
 
 // UpdateSubtask 更新子任务。
-func (s *Store) UpdateSubtask(id int64, title *string, done *bool, sortOrder *int) error {
+func (s *Store) UpdateSubtask(id int64, u SubtaskUpdate) error {
 	sets := []string{}
 	args := []any{}
-	if title != nil {
+	if u.Title != nil {
 		sets = append(sets, "title = ?")
-		args = append(args, strings.TrimSpace(*title))
+		args = append(args, strings.TrimSpace(*u.Title))
 	}
-	if done != nil {
+	if u.Done != nil {
 		sets = append(sets, "done = ?")
-		args = append(args, boolInt(*done))
+		args = append(args, boolInt(*u.Done))
 	}
-	if sortOrder != nil {
+	if u.SortOrder != nil {
 		sets = append(sets, "sort_order = ?")
-		args = append(args, *sortOrder)
+		args = append(args, *u.SortOrder)
+	}
+	if u.DueDate != nil {
+		d := strings.TrimSpace(*u.DueDate)
+		if d == "" {
+			sets = append(sets, "due_date = NULL")
+		} else {
+			sets = append(sets, "due_date = ?")
+			args = append(args, d)
+		}
+	}
+	if u.Reminders != nil {
+		r := *u.Reminders
+		if r == nil {
+			r = []int{}
+		}
+		sets = append(sets, "reminders = ?")
+		args = append(args, mustJSON(r))
 	}
 	if len(sets) == 0 {
 		return nil
@@ -1267,6 +1441,24 @@ func syncTaskTags(db execer, taskID int64, tagIDs []int64) error {
 
 // deriveImportant：优先级「中」及以上视为重要。
 func deriveImportant(priority int) bool { return priority >= model.PriorityMedium }
+
+// clampProgress 把进度收进 0-100：越界值一律贴边，而不是报错打断录入。
+func clampProgress(v int) int {
+	if v < 0 {
+		return 0
+	}
+	if v > 100 {
+		return 100
+	}
+	return v
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
 
 // deriveUrgent：今天或明天到期、以及已逾期，视为紧急。
 func deriveUrgent(dueDate *string, _ bool) bool {

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from 'react'
+import { useMemo, useRef, useState, useEffect, type ChangeEvent, type DragEvent, type ReactNode } from 'react'
 
 import { EXPORT_URLS, api, type ImportMode } from '../api/client'
 import { humanDay, relativeTime, todayStr } from '../lib/date'
@@ -15,6 +15,7 @@ import {
   type List,
   type SmartKey,
   type Tag,
+  type Task,
   type ThemeMode,
 } from '../types'
 import { SORT_MIME } from './TaskViews'
@@ -385,6 +386,7 @@ export function Sidebar() {
     saveSettings,
     updateFolder,
     updateList,
+    updateTask,
     reorderFolders,
     reorderLists,
     updateTag,
@@ -403,6 +405,7 @@ export function Sidebar() {
     activities,
     loadActivities,
     clearActivities,
+    version,
   } = useStore()
 
   const [draft, setDraft] = useState<EntityDraft | null>(null)
@@ -412,6 +415,20 @@ export function Sidebar() {
   const [appearanceOpen, setAppearanceOpen] = useState(false)
   const [archivedOpen, setArchivedOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
+  // 已归档任务：归档的任务不出现在任何日常视图，这里按需取一份供恢复。
+  const [archivedTasks, setArchivedTasks] = useState<Task[]>([])
+  useEffect(() => {
+    let alive = true
+    api
+      .listTasks({ archived: '1', sortBy: 'updated', limit: 50 })
+      .then((r) => {
+        if (alive) setArchivedTasks(r.tasks)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [version])
 
   const inboxId = boot?.inboxListId ?? 0
   // 归档的分组与清单不参与主列表，只出现在折叠起来的「已归档」里。
@@ -790,7 +807,7 @@ export function Sidebar() {
           </div>
 
           {/* 已归档：折叠收纳，默认收起，避免淹没主列表 */}
-          {archivedFolders.length > 0 || archivedLists.length > 0 ? (
+          {archivedFolders.length > 0 || archivedLists.length > 0 || archivedTasks.length > 0 ? (
             <div className="mt-1 border-t border-line pt-1">
               <button
                 type="button"
@@ -800,7 +817,7 @@ export function Sidebar() {
                 <IconChevronRight size={12} className={cx('transition-transform', archivedOpen && 'rotate-90')} />
                 已归档
                 <span className="text-[0.625rem] font-normal normal-case tracking-normal">
-                  {archivedFolders.length + archivedLists.length}
+                  {archivedFolders.length + archivedLists.length + archivedTasks.length}
                 </span>
               </button>
               {archivedOpen ? (
@@ -826,6 +843,18 @@ export function Sidebar() {
                     >
                       <IconArchive size={12} className="shrink-0" />
                       <span className="flex-1 truncate">{l.name}</span>
+                      <span className="text-[0.625rem] opacity-0 transition-opacity group-hover/arc:opacity-100">恢复</span>
+                    </button>
+                  ))}
+                  {archivedTasks.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => void updateTask(t.id, { archived: false })}
+                      className="group/arc flex w-full items-center gap-2 rounded-lg px-2.5 py-[6px] text-left text-[0.78125rem] text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
+                    >
+                      <IconArchive size={12} className="shrink-0" />
+                      <span className="flex-1 truncate">{t.title}</span>
                       <span className="text-[0.625rem] opacity-0 transition-opacity group-hover/arc:opacity-100">恢复</span>
                     </button>
                   ))}
@@ -1349,6 +1378,23 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
                     {a.label}
                   </button>
                 ))}
+              </div>
+            </Field>
+
+            <Field label="任务列表" hint="归档的任务收进侧栏「已归档」，随时可恢复。">
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-[0.78125rem] text-ink-2">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 accent-[var(--seal)]"
+                    checked={settings.showCompleted !== '0'}
+                    onChange={(e) => void saveSettings({ showCompleted: e.target.checked ? '1' : '0' })}
+                  />
+                  显示已完成任务
+                </label>
+                <p className="text-[0.6875rem] leading-relaxed text-ink-3">
+                  关闭后日常视图只看未完成的事；「已完成 / 最近完成」清单不受影响。
+                </p>
               </div>
             </Field>
 

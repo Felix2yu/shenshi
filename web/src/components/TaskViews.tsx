@@ -14,6 +14,7 @@ import {
   IconCopy,
   IconFlag,
   IconGrip,
+  IconLink,
   IconList,
   IconMore,
   IconMove,
@@ -91,6 +92,31 @@ export function TaskMeta({ task }: { task: Task }) {
         <span title="已设提醒" className="inline-flex items-center gap-1 text-[0.71875rem] text-ink-3">
           <IconBell size={11.5} />
           {task.reminders.some((r) => r > 0) ? task.reminders.filter((r) => r > 0).map((r) => (r >= 60 ? `${r / 60}时` : `${r}分`)).join('/') : '准点'}
+        </span>
+      ) : null}
+      {task.estimateMinutes > 0 ? (
+        <span title="预计时长" className="inline-flex items-center gap-1 text-[0.71875rem] text-ink-3 tabular-nums">
+          <IconClock size={11.5} />
+          {task.estimateMinutes >= 60 && task.estimateMinutes % 60 === 0 ? `${task.estimateMinutes / 60}时` : `${task.estimateMinutes}分`}
+        </span>
+      ) : null}
+      {task.progress > 0 ? (
+        <span
+          title="进度"
+          className={cx('inline-flex items-center gap-1 text-[0.71875rem] tabular-nums', task.progress >= 100 ? 'text-jade' : 'text-ink-3')}
+        >
+          {task.progress}%
+        </span>
+      ) : null}
+      {task.links?.some((l) => l.kind === 'blocked_by' && l.status !== 'done') ? (
+        <span title="有未完成的依赖" className="inline-flex items-center gap-1 text-[0.71875rem] font-medium text-p-high">
+          <IconLink size={11.5} />
+          被依赖阻塞
+        </span>
+      ) : null}
+      {task.status === 'in_progress' ? (
+        <span title="进行中" className="inline-flex items-center rounded-full bg-jade/12 px-1.5 text-[0.65625rem] font-medium text-jade">
+          进行中
         </span>
       ) : null}
       {task.subtasks.length > 0 ? (

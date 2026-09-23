@@ -132,7 +132,7 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
   }, [open])
 
   const doneToday = today.filter((t) => t.status === 'done').length
-  const pending = today.filter((t) => t.status === 'todo').length
+  const pending = today.filter((t) => t.status !== 'done').length
   const line = morningLine(pending, overdue.length, doneToday)
 
   const togglePick = (id: number) => {
@@ -217,12 +217,12 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
         ) : null}
 
         {/* 今日 */}
-        <Section title="今日到期" count={today.filter((t) => t.status === 'todo').length} tone="accent">
-          {today.filter((t) => t.status === 'todo').length === 0 ? (
+        <Section title="今日到期" count={today.filter((t) => t.status !== 'done').length} tone="accent">
+          {today.filter((t) => t.status !== 'done').length === 0 ? (
             <p className="px-1 py-2 text-[0.78125rem] text-ink-3">今天没有排定的事项，或可挑一件真正要紧的来做。</p>
           ) : (
             today
-              .filter((t) => t.status === 'todo')
+              .filter((t) => t.status !== 'done')
               .map((t) => (
                 <PlanRow
                   key={t.id}
@@ -638,7 +638,7 @@ function FocusPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
             >
               <option value="">不关联</option>
               {tasks
-                .filter((t) => t.status === 'todo')
+                .filter((t) => t.status !== 'done')
                 .slice(0, 60)
                 .map((t) => (
                   <option key={t.id} value={t.id}>

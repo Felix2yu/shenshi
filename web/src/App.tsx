@@ -176,7 +176,7 @@ export default function App() {
         <footer className="hidden shrink-0 items-center gap-3 border-t border-line px-5 py-1.5 text-[0.65625rem] text-ink-3 md:flex">
           <span>{boot?.app ?? '慎始'} · {boot?.motto ?? '慎始而敬终，行稳致远'}</span>
           <span className="ml-auto tabular-nums">
-            {visible.filter((t) => t.status === 'todo').length} 待办 / 共 {visible.length} 项
+            {visible.filter((t) => t.status !== 'done').length} 待办 / 共 {visible.length} 项
           </span>
           <span className="text-ink-3/70">按 / 搜索 · Esc 退出</span>
         </footer>

@@ -82,7 +82,7 @@ export function QuadrantView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
     await updateTask(id, { important: q.important, urgent: q.urgent })
   }
 
-  const total = tasks.filter((t) => t.status === 'todo' && matchFilter(t, filter)).length
+  const total = tasks.filter((t) => t.status !== 'done' && matchFilter(t, filter)).length
 
   return (
     <div className="flex h-full flex-col">
@@ -136,7 +136,7 @@ export function QuadrantView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
           })}
         </div>
 
-        {tasks.filter((t) => t.status === 'todo').length === 0 ? (
+          {tasks.filter((t) => t.status !== 'done').length === 0 ? (
           <div className="pb-10">
             <EmptyState
               text={QUOTES.quadrant.text}

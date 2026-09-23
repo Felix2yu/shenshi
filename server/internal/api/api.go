@@ -149,6 +149,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/tasks/{id}/subtasks", h(s.addSubtask))
 	s.mux.HandleFunc("PATCH /api/subtasks/{id}", h(s.updateSubtask))
 	s.mux.HandleFunc("DELETE /api/subtasks/{id}", h(s.deleteSubtask))
+	s.mux.HandleFunc("POST /api/tasks/{id}/links", h(s.addTaskLink))
+	s.mux.HandleFunc("DELETE /api/task-links/{id}", h(s.deleteTaskLink))
 
 	// 撤销最近一次删除与操作历史
 	s.mux.HandleFunc("GET /api/undo", h(s.undoState))

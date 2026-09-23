@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"strconv"
 	"time"
 
@@ -9,11 +10,12 @@ import (
 
 // ReminderHit 是一条待投递的提醒。
 type ReminderHit struct {
-	Task     model.Task `json:"task"`
-	FireAt   string     `json:"fireAt"`   // RFC3339
-	Offset   int        `json:"offset"`   // 提前分钟数，0 表示准点
-	Overdue  bool       `json:"overdue"`  // 触发时刻已过
-	DueLabel string     `json:"dueLabel"` // 人类可读的到期描述
+	Task     model.Task    `json:"task"`
+	Subtask  *model.Subtask `json:"subtask,omitempty"` // 非空表示这是子任务自己的提醒
+	FireAt   string        `json:"fireAt"`            // RFC3339
+	Offset   int           `json:"offset"`            // 提前分钟数，0 表示准点
+	Overdue  bool          `json:"overdue"`           // 触发时刻已过
+	DueLabel string        `json:"dueLabel"`          // 人类可读的到期描述
 }
 
 // resolveDueTime 把「日期 + 可选时间」解析为本地时间点。
@@ -96,6 +98,51 @@ func (s *Store) DueReminders(now time.Time, lookahead, lookback time.Duration) (
 				DueLabel: describeDue(due, now),
 			})
 		}
+	}
+
+	// 子任务自己的提醒：父任务未收尾、子步骤未勾选、且单独设了日期与提醒点。
+	// 台账 key 用负数 id（-子任务ID），与任务 ID 空间隔离，避免 (id, fire_at) 撞车。
+	subRows, err := s.db.Query(`SELECT sb.id, sb.task_id, sb.title, sb.due_date, sb.reminders, sb.sort_order
+	      FROM subtasks sb JOIN tasks t ON t.id = sb.task_id
+	      WHERE sb.done = 0 AND sb.due_date IS NOT NULL AND sb.reminders <> '[]' AND t.status <> 'done'`)
+	if err != nil {
+		return nil, err
+	}
+	defer subRows.Close()
+	for subRows.Next() {
+		var sb model.Subtask
+		var reminders string
+		if err := subRows.Scan(&sb.ID, &sb.TaskID, &sb.Title, &sb.DueDate, &reminders, &sb.SortOrder); err != nil {
+			return nil, err
+		}
+		sb.Reminders = []int{}
+		if reminders != "" {
+			_ = json.Unmarshal([]byte(reminders), &sb.Reminders)
+		}
+		due, ok := resolveDueTime(*sb.DueDate, nil)
+		if !ok {
+			continue
+		}
+		for _, off := range sb.Reminders {
+			fireAt := due.Add(-time.Duration(off) * time.Minute)
+			if fireAt.After(now.Add(lookahead)) || fireAt.Before(now.Add(-lookback)) {
+				continue
+			}
+			fs := fireAt.Format(time.RFC3339)
+			if fired[key(-sb.ID, fs)] {
+				continue
+			}
+			hits = append(hits, ReminderHit{
+				Subtask:  &sb,
+				FireAt:   fs,
+				Offset:   off,
+				Overdue:  fireAt.Before(now),
+				DueLabel: describeDue(due, now),
+			})
+		}
+	}
+	if err := subRows.Err(); err != nil {
+		return nil, err
 	}
 	return hits, nil
 }
