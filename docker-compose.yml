@@ -8,9 +8,10 @@
 # 镜像由 GitHub Actions 在推送到 main 后构建并发布到 GHCR，amd64 / arm64 已合成
 # 多架构 manifest，服务器是什么架构都拉同一个 tag；公开仓库的镜像可匿名拉取。
 #
-# 数据放在具名卷里而不是绑定挂载：镜像里的 /data 属于容器内的 shenshi 用户（非 root），
-# 若改成 ./data:/data 这类绑定挂载，宿主目录的属主与容器内 uid 不一致会导致写入失败。
-# 确实想直接用宿主目录，请先 chown 100:100 ./data。
+# 数据放在具名卷里而不是绑定挂载：具名卷由 Docker 按容器内用户归属初始化，天然无权限问题。
+# 若确实想绑定挂载到宿主目录（如 ./data:/data），无需手动 chown —— 只要在下方 environment
+# 里设 PUID / PGID 为宿主目录的属主 uid/gid，容器入口脚本会自动把 shenshi 用户改到该身份
+# 并 chown /data，从而让 SQLite（WAL 模式，需对 /data 可写）正常写入。不设置时默认 1000:100。
 
 services:
   shenshi:
@@ -33,6 +34,11 @@ services:
       # 时区直接决定「今天」「逾期」「习惯打卡」的归属日，务必与使用者一致。
       TZ: ${TZ:-Asia/Shanghai}
       SHENSHI_DB: /data/shenshi.db
+      # 运行身份：绑定挂载到宿主目录时，设成宿主目录的属主 uid/gid，入口脚本会自动
+      # chown /data，避免 SQLite 报 unable to open database file (14)。
+      # 用 `id <你的用户>` 查宿主属主；不设则默认 1000:100。
+      # PUID: ${PUID:-1000}
+      # PGID: ${PGID:-100}
       # 访问口令。留空即不启用鉴权 —— 只适合完全可信的内网。
       # 用 `openssl rand -base64 24` 生成一个即可。
       SHENSHI_TOKEN: ${SHENSHI_TOKEN:?请先在 .env 设置 SHENSHI_TOKEN，或显式留空以关闭鉴权}

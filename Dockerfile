@@ -44,7 +44,7 @@ FROM alpine:3.24
 # tzdata 不是可选项：「慎始」的日期口径全部基于本机时区
 # （今天/逾期/习惯打卡都按本地自然日计算），容器里没有时区库就会退化成 UTC，
 # 于是东八区的晚八点会被算成第二天。ca-certificates 供将来对接外部服务时使用。
-RUN apk add --no-cache tzdata ca-certificates \
+RUN apk add --no-cache tzdata ca-certificates su-exec \
     && addgroup -S shenshi \
     && adduser -S -G shenshi -h /data shenshi
 
@@ -53,17 +53,21 @@ ENV TZ=Asia/Shanghai \
     SHENSHI_DB=/data/shenshi.db
 
 COPY --from=server /out/shenshi /usr/local/bin/shenshi
+# 入口脚本：按 PUID/PGID 调整运行身份并修正 /data 属主（详见 docker-entrypoint.sh）。
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # 数据落在挂载卷里，容器重建不丢数据。
 RUN mkdir -p /data && chown -R shenshi:shenshi /data
 VOLUME ["/data"]
 
-USER shenshi
 EXPOSE 8787
 
 # 健康检查走 /api/health：该接口即使启用了访问口令也免鉴权，探活不会被 401 挡住。
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget -q -O- http://127.0.0.1:8787/api/health >/dev/null || exit 1
 
-ENTRYPOINT ["shenshi"]
-CMD ["-addr", ":8787"]
+# 入口脚本先以 root 把 shenshi 用户的 uid/gid 改到 PUID/PGID（默认 1000:100）并 chown /data，
+# 再以 shenshi 身份 exec 实际命令；这样绑定挂载到宿主目录时也无需手动 chown。
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["shenshi", "-addr", ":8787"]
