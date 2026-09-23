@@ -104,13 +104,18 @@ func writePropPatchOK(w http.ResponseWriter, r *http.Request) {
 }
 
 // propPatchReq 用于取出请求里出现的属性名，好把它们逐个报成 200。
+//
+// 层级必须逐层单段 tag：encoding/xml 的多段路径（a>b>c）匹配不上实测请求体，
+// 写成 path 时 parsePropNames 恒返回空，207 里 <prop/> 也是空的。
 type propPatchReq struct {
-	Prop []struct {
-		XMLName xml.Name
-		Inner   []struct {
-			XMLName xml.Name `xml:",any"`
-		} `xml:",any"`
-	} `xml:"propertyupdate>set>prop"`
+	XMLName xml.Name
+	Set     []struct {
+		Prop []struct {
+			Inner []struct {
+				XMLName xml.Name
+			} `xml:",any"`
+		} `xml:"prop"`
+	} `xml:"set"`
 }
 
 func parsePropNames(raw []byte) []string {
@@ -120,14 +125,16 @@ func parsePropNames(raw []byte) []string {
 	}
 	out := []string{}
 	seen := map[string]bool{}
-	for _, p := range req.Prop {
-		for _, inner := range p.Inner {
-			name := inner.XMLName.Local
-			if name == "" || seen[name] {
-				continue
+	for _, set := range req.Set {
+		for _, p := range set.Prop {
+			for _, inner := range p.Inner {
+				name := inner.XMLName.Local
+				if name == "" || seen[name] {
+					continue
+				}
+				seen[name] = true
+				out = append(out, name)
 			}
-			seen[name] = true
-			out = append(out, name)
 		}
 	}
 	return out

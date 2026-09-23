@@ -66,7 +66,9 @@ func NewBackend(st *store.Store) *Backend { return &Backend{st: st} }
 var _ emcaldav.Backend = (*Backend)(nil)
 
 // CurrentUserPrincipal 返回当前用户主体路径。
-func (b *Backend) CurrentUserPrincipal(ctx context.Context) (string, error) { return PrincipalPath, nil }
+func (b *Backend) CurrentUserPrincipal(ctx context.Context) (string, error) {
+	return PrincipalPath, nil
+}
 
 // CalendarHomeSetPath 返回日历主目录。必须比主体深一层、比集合浅一层。
 func (b *Backend) CalendarHomeSetPath(ctx context.Context) (string, error) { return HomeSetPath, nil }
@@ -436,7 +438,8 @@ func taskEnd(t *model.Task, start time.Time) (time.Time, bool) {
 	if err != nil {
 		return time.Time{}, false
 	}
-	end := start.Add(time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
+	// EndTime 是当天钟点（与前端 toMinutes(endTime) 同口径），不是距开始的时长。
+	end := time.Date(start.Year(), start.Month(), start.Day(), h, m, 0, 0, start.Location())
 	// 结束早于开始多半是跨夜写错了，退化为一小时。
 	if !end.After(start) {
 		return start.Add(time.Hour), true

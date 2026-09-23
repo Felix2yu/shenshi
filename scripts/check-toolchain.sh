@@ -38,7 +38,7 @@ if [ -n "$nvmrc" ] && [ "$img_node" != "$nvmrc" ]; then
   echo "     一起改：Dockerfile、.nvmrc、web/package.json 的 engines（改完跑一次 npm install 同步 lockfile）"
 fi
 if [ -n "$nvmrc" ] && [ -n "$eng_node" ] && [ "$eng_node" -gt "$nvmrc" ]; then
-  bad "engines.node 的下限（>=$eng_node）高于 .nvmrc（$nvmrc）：声明的大版本自己就装不上"
+  bad "engines.node 的下限（>=${eng_node}）高于 .nvmrc（${nvmrc}）：声明的大版本自己就装不上"
 fi
 
 # ---------- Go ----------
@@ -57,7 +57,7 @@ if [ -z "$go_mod" ]; then
   bad "从 server/go.mod 读不到 go 指令"
 fi
 if [ -n "$go_mod" ] && [ -n "$img_go" ] && [ "$img_go_mm" != "$go_mm" ]; then
-  bad "Dockerfile 的 golang 是 $img_go，go.mod 的 go 指令是 $go_mod（按 major.minor 比）"
+  bad "Dockerfile 的 golang 是 ${img_go}，go.mod 的 go 指令是 ${go_mod}（按 major.minor 比）"
   echo "     一起改：Dockerfile 与 server/go.mod"
 fi
 

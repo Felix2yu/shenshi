@@ -55,10 +55,14 @@ jobs:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
 
-      # 纯函数单测（重复规则推演等），秒级，放在冒烟之前快速失败。
+      # 纯函数单测（重复规则推演、入库校验等），秒级，放在构建/冒烟之前快速失败。
+      #
+      # 只测 ./internal/...：main 包带着 //go:embed all:dist，而 dist 要到后面的
+      # build.sh 才产出——这一步跑 ./... 会因「no matching files found」编译失败；
+      # main 包本身也没有测试文件，排除掉不损失覆盖率。
       # -coverprofile 产出合并覆盖率文件，供下一步上传 Codecov。
       - name: 后端单元测试
-        run: go test ./... -coverprofile=coverage.out
+        run: go test ./internal/... -coverprofile=coverage.out
         working-directory: server
 
       # 覆盖率上传 Codecov：仓库需在 Secrets 里配 CODECOV_TOKEN（codecov.io 接入时给出）。

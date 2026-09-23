@@ -51,8 +51,8 @@ if [ -z "${NODE_BIN:-}" ]; then
 fi
 
 if [ -z "${NODE_BIN:-}" ] || [ ! -x "${NODE_BIN:-}" ]; then
-  echo "找不到 Node $REQ_MAJOR（当前 PATH 上的是 $(node -v 2>/dev/null || echo '无')）。" >&2
-  echo "请安装 Node $REQ_MAJOR（nvm install $REQ_MAJOR），或显式指定：NODE_BIN=/path/to/node $0" >&2
+  echo "找不到 Node ${REQ_MAJOR}（当前 PATH 上的是 $(node -v 2>/dev/null || echo '无')）。" >&2
+  echo "请安装 Node ${REQ_MAJOR}（nvm install ${REQ_MAJOR}），或显式指定：NODE_BIN=/path/to/node $0" >&2
   exit 1
 fi
 
@@ -65,7 +65,7 @@ fi
 # 有了这一条，「CI 里构建成功」本身就证明 CI 用的是够新的 Node，不必去翻日志。
 # 显式传 NODE_BIN 时同样会校验，避免用错版本编出与 CI 不一致的产物。
 if [ "$ACTUAL_MAJOR" -lt "$REQ_MAJOR" ]; then
-  echo "Node 大版本过低：.nvmrc 要求 $REQ_MAJOR，$NODE_BIN 是 $ACTUAL_MAJOR。" >&2
+  echo "Node 大版本过低：.nvmrc 要求 ${REQ_MAJOR}，$NODE_BIN 是 ${ACTUAL_MAJOR}。" >&2
   exit 1
 fi
 
@@ -89,8 +89,10 @@ fi
 
 say() { printf '\033[2m▸\033[0m %s\n' "$1"; }
 
-say "node $("$NODE_BIN" -v)（$NODE_BIN）"
-say "go   $("$GO_BIN" version | awk '{print $3}')（$GO_BIN）"
+# bash 3.2（macOS 自带）会把 $VAR 后紧跟的全角字符首字节吞进变量名，
+# 报 "unbound variable"——变量一律用 ${VAR} 显式闭合。
+say "node $("$NODE_BIN" -v)（${NODE_BIN}）"
+say "go   $("$GO_BIN" version | awk '{print $3}')（${GO_BIN}）"
 
 # 「.nvmrc 写 26、本机只装了 28」这类情况：能跑，但要让用的人知道自己用的不是声明的大版本。
 if [ "$ACTUAL_MAJOR" != "$REQ_MAJOR" ]; then
