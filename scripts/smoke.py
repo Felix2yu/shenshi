@@ -1051,14 +1051,19 @@ def run_extras(base: str) -> None:
         zbundle = json.loads(zf.read("shenshi-backup.json"))
     check("包内 JSON 是自洽备份", zbundle.get("app") == "慎始" and zbundle.get("tasks"), str(zbundle.get("app")))
 
-    # 只含 JSON 的包：用来验证「没带来文件」会被如实报出来，而不是假装恢复成功
+    # 只含 JSON 的包：用来验证「没带来文件」会被如实报出来，而不是假装恢复成功。
+    # 注意：删除任务现在走「可撤销删除」，附件文件会在磁盘上保留十分钟供撤销恢复，
+    # 所以不能再靠「删除即消失」来制造缺失；这里直接把存储名换成绝不可能存在的哨兵名。
+    for t in zbundle.get("tasks", []):
+        for a in (t.get("attachments") or []):
+            a["file"] = "__missing_on_purpose__.bin"
     json_only = io.BytesIO()
     with zipfile.ZipFile(json_only, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("shenshi-backup.json", json.dumps(zbundle, ensure_ascii=False))
 
     # 删掉原任务：之后恢复出来的附件只可能来自压缩包，不会是磁盘上的残留
     status, _ = call(base, "DELETE", f"/api/tasks/{zid}")
-    check("删掉原任务（连带清掉附件文件）", status == 200, str(status))
+    check("删掉原任务（连带清掉附件记录）", status == 200, str(status))
 
     status, res = call_multipart_blob(base, "/api/import/file?mode=merge", "json-only.zip", json_only.getvalue())
     check("只有 JSON 的压缩包也能导入", status == 200 and res.get("mode") == "merge", str(res))
@@ -1105,6 +1110,110 @@ def run_extras(base: str) -> None:
         zf.writestr("readme.txt", "这不是备份")
     status, res = call_multipart_blob(base, "/api/import/file?mode=merge", "junk.zip", junk.getvalue())
     check("不含 JSON 的压缩包被拒", status == 400, f"{status} {str(res)[:60]}")
+
+
+def run_new_features(base: str) -> None:
+    """补全特性（一/二/三/五）的端到端验证：智能清单新键、置顶/收藏、链接/开始日期、
+    克隆、清空已完成、撤销删除、操作历史、保存筛选、归档清单。"""
+    section("㉑ 补全特性：智能清单新键 / 置顶收藏 / 克隆 / 清空 / 撤销 / 历史 / 筛选 / 归档")
+
+    # 智能清单角标新增 tomorrow / week / high / starred
+    status, boot = call(base, "GET", "/api/bootstrap")
+    counts = (boot or {}).get("counts") or {}
+    for k in ("tomorrow", "week", "high", "starred"):
+        check(f"智能清单角标含「{k}」", k in counts, str(list(counts.keys())))
+
+    # 带新字段建任务
+    status, t = call(base, "POST", "/api/tasks", {
+        "title": "带链接与开始日期的任务",
+        "priority": 3,
+        "startDate": "2026-10-01",
+        "url": "https://example.com/ref",
+        "pinned": True,
+        "starred": True,
+    })
+    check("创建带置顶/收藏/开始日期/链接的任务", status in (200, 201) and t.get("id"), str(status))
+    tid = t.get("id")
+    check("置顶标记已保存", t.get("pinned") is True, str(t.get("pinned")))
+    check("收藏标记已保存", t.get("starred") is True, str(t.get("starred")))
+    check("开始日期已保存", t.get("startDate") == "2026-10-01", str(t.get("startDate")))
+    check("关联链接已保存", t.get("url") == "https://example.com/ref", str(t.get("url")))
+
+    # 收藏后 starred 角标至少为 1
+    status, boot2 = call(base, "GET", "/api/bootstrap")
+    check("收藏后 starred 计数 ≥ 1", (boot2 or {}).get("counts", {}).get("starred", 0) >= 1, str((boot2 or {}).get("counts")))
+
+    # 克隆任务
+    status, dup = call(base, "POST", f"/api/tasks/{tid}/duplicate")
+    check("克隆任务返回新记录", status in (200, 201) and dup.get("id") and dup.get("id") != tid, str(status))
+    check("克隆副本标题带「副本」", "副本" in (dup.get("title") or ""), str(dup.get("title")))
+    check("克隆副本不继承置顶", dup.get("pinned") is False, str(dup.get("pinned")))
+    check("克隆副本状态归零为未完成", dup.get("status") == "todo", str(dup.get("status")))
+    dup_id = dup.get("id")
+
+    # 完成再清空已完成
+    status, _ = call(base, "POST", f"/api/tasks/{dup_id}/toggle")
+    check("克隆副本可完成", status in (200, 201), str(status))
+    before_purge = (call(base, "GET", "/api/bootstrap")[1] or {}).get("counts", {}).get("done", 0)
+    status, purged = call(base, "POST", "/api/tasks/purge", {})
+    check("清空已完成返回受影响件数", status == 200 and (purged.get("affected") or 0) >= 1, str(purged))
+    after_purge = (call(base, "GET", "/api/bootstrap")[1] or {}).get("counts", {}).get("done", 0)
+    check("清空后已完成数量下降", after_purge < before_purge, f"{before_purge} -> {after_purge}")
+
+    # 保存筛选 CRUD
+    status, sf = call(base, "POST", "/api/saved-filters", {
+        "name": "高优先级",
+        "query": '{"priority":3,"tagIds":[],"tagMode":"any","status":"all","from":null,"to":null,"pinned":false,"starred":false}',
+    })
+    check("保存筛选可创建", status in (200, 201) and sf.get("id"), str(status))
+    sfid = sf.get("id")
+    status, sfs = call(base, "GET", "/api/saved-filters")
+    sfs_list = (sfs or {}).get("savedFilters") if isinstance(sfs, dict) else sfs
+    check("保存的筛选可被列出", status == 200 and isinstance(sfs_list, list) and any(x.get("id") == sfid for x in sfs_list), str(sfs))
+    status, _ = call(base, "PATCH", f"/api/saved-filters/{sfid}", {"name": "高优先级（改）"})
+    check("保存的筛选可改名", status in (200, 201), str(status))
+    status, _ = call(base, "DELETE", f"/api/saved-filters/{sfid}")
+    check("保存的筛选可删除", status in (200, 201), str(status))
+
+    # 撤销删除
+    status, t2 = call(base, "POST", "/api/tasks", {"title": "待撤销的任务"})
+    t2id = t2.get("id")
+    status, _ = call(base, "DELETE", f"/api/tasks/{t2id}")
+    check("删除任务返回成功", status == 200, str(status))
+    status, undo = call(base, "GET", "/api/undo")
+    check("撤销槽位标记为可用", (undo or {}).get("available") is True, str(undo))
+    check("撤销槽位记录被删任务数", (undo or {}).get("count", 0) >= 1, str(undo))
+    status, undo_resp = call(base, "POST", "/api/undo")
+    check("撤销删除使任务恢复", status == 200 and (undo_resp or {}).get("ok") is True and (undo_resp or {}).get("restored", 0) >= 1, str(undo_resp))
+    status, undo_after = call(base, "GET", "/api/undo")
+    check("撤销后槽位已清空", (undo_after or {}).get("available") is False, str(undo_after))
+    # Undo 恢复为「新记录」（id 会变），按标题找回新 id 并清理。
+    status, found_list = call(base, "GET", "/api/tasks?q=待撤销的任务")
+    new_t2id = None
+    if isinstance(found_list, dict):
+        for tt in (found_list.get("tasks") or []):
+            if tt.get("title") == "待撤销的任务":
+                new_t2id = tt.get("id")
+                break
+    check("撤销后任务重新可查", new_t2id is not None, str(new_t2id))
+    if new_t2id is not None:
+        call(base, "DELETE", f"/api/tasks/{new_t2id}")
+
+    # 操作历史
+    status, acts = call(base, "GET", "/api/activities")
+    check("操作历史可列出", status == 200 and isinstance((acts or {}).get("activities"), list), str(status))
+
+    # 归档清单：archived 标记翻转且不计入普通列表
+    status, lst = call(base, "POST", "/api/lists", {"name": "待归档清单"})
+    lid = lst.get("id")
+    check("创建清单成功", status in (200, 201) and lid, str(status))
+    status, _ = call(base, "PATCH", f"/api/lists/{lid}", {"archived": True})
+    check("清单可归档", status in (200, 201), str(status))
+    status, bl = call(base, "GET", "/api/bootstrap")
+    archived_list = next((x for x in (bl or {}).get("lists", []) if x.get("id") == lid), None)
+    check("归档清单 archived 为真", archived_list is not None and archived_list.get("archived") is True, str(archived_list))
+    status, _ = call(base, "PATCH", f"/api/lists/{lid}", {"archived": False})
+    check("清单可取消归档", status in (200, 201), str(status))
 
 
 def run_auth(base: str, token: str) -> None:
@@ -1196,6 +1305,7 @@ def main() -> int:
     try:
         run(base)
         run_extras(base)
+        run_new_features(base)
         if binary and tmp:
             # 鉴权需要独立实例：主实例是不带口令的，用来验证「不设口令时一切照旧」
             auth_proc, auth_base = spawn_instance(binary, repo_root, tmp, "test-token-9f3a2b7c")

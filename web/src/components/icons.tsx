@@ -398,6 +398,64 @@ export const IconFlame = (p: IconProps) => (
   </Base>
 )
 
+/** 图钉：置顶。稍微倾斜，才像真的钉在纸上。 */
+export const IconPin = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M9.5 3h5l-.8 5.2 3.3 3.3H7l3.3-3.3z" />
+    <path d="M12 11.5V21" />
+  </Base>
+)
+
+/** 链接：任务的外部出处。 */
+export const IconLink = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M10 13.8a3.6 3.6 0 0 0 5.1 0l2.6-2.6a3.6 3.6 0 0 0-5.1-5.1l-1.5 1.5" />
+    <path d="M14 10.2a3.6 3.6 0 0 0-5.1 0l-2.6 2.6a3.6 3.6 0 0 0 5.1 5.1l1.5-1.5" />
+  </Base>
+)
+
+/** 表格：单元格网格。 */
+export const IconTable = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="3" y="4.5" width="18" height="15" rx="2" />
+    <path d="M3 9.5h18M3 14.5h18M9.5 9.5v10M15 9.5v10" />
+  </Base>
+)
+
+/** 撤销：回头箭。 */
+export const IconUndo = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M4 9h9.5a5.5 5.5 0 0 1 0 11H8" />
+    <path d="M7.5 5.5 4 9l3.5 3.5" />
+  </Base>
+)
+
+/** 归档：带提手的收纳盒。 */
+export const IconArchive = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="3" y="4" width="18" height="4.5" rx="1.5" />
+    <path d="M4.8 8.5V19a1.5 1.5 0 0 0 1.5 1.5h11.4a1.5 1.5 0 0 0 1.5-1.5V8.5" />
+    <path d="M10 12.5h4" />
+  </Base>
+)
+
+/** 操作历史：表盘上倒着走的指针。 */
+export const IconHistory = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1" />
+    <path d="M3.5 4.5V9H8" />
+    <path d="M12 8v4.4l3 1.8" />
+  </Base>
+)
+
+/** 复制：两张叠起来的纸。 */
+export const IconCopy = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="9" y="9" width="11.5" height="11.5" rx="2" />
+    <path d="M15 6.2V5.5A1.5 1.5 0 0 0 13.5 4H5.5A1.5 1.5 0 0 0 4 5.5v8A1.5 1.5 0 0 0 5.5 15h.7" />
+  </Base>
+)
+
 /** 品牌印章：朱砂方印里一个「慎」字。 */
 export const SealLogo = ({ size = 34 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true" focusable="false">

@@ -13,6 +13,8 @@ import (
 //	weekly:1,3,5          // 0=周日 ... 6=周六
 //	monthly:15            // 每月 15 日
 //	monthly:last          // 每月最后一天
+//	monthly:lastworkday   // 每月最后一个工作日
+//	monthly:nth:3:0       // 每月第 3 个周日（0=周日）
 //	yearly:3-15           // 每年 3 月 15 日
 //	ebbinghaus:2          // 艾宾浩斯复习曲线，2 为下一次间隔下标
 //
@@ -79,6 +81,23 @@ func NextOccurrence(rule string, from time.Time) (next time.Time, nextRule strin
 		if arg == "last" {
 			return time.Date(base.Year(), base.Month(), daysInMonth(base.Year(), base.Month()), 0, 0, 0, 0, base.Location()), rule, true
 		}
+		// 每月最后一个工作日：末段先退到最近的工作日，落在周末就继续往回找。
+		if arg == "lastworkday" {
+			return lastWeekdayOfMonth(base.Year(), base.Month(), base.Location()), rule, true
+		}
+		// 每月第 N 个星期几：monthly:nth:3:0 —— 第三个周日（0=周日）。
+		if seg := strings.Split(arg, ":"); len(seg) == 3 && seg[0] == "nth" {
+			n, err1 := strconv.Atoi(seg[1])
+			wd, err2 := strconv.Atoi(seg[2])
+			if err1 != nil || err2 != nil || n < 1 || n > 5 || wd < 0 || wd > 6 {
+				return time.Time{}, "", false
+			}
+			hit, ok := nthWeekdayOfMonth(base.Year(), base.Month(), n, time.Weekday(wd), base.Location())
+			if !ok {
+				return time.Time{}, "", false
+			}
+			return hit, rule, true
+		}
 		day, err := strconv.Atoi(arg)
 		if err != nil || day < 1 || day > 31 {
 			return time.Time{}, "", false
@@ -142,8 +161,28 @@ func NextOccurrence(rule string, from time.Time) (next time.Time, nextRule strin
 	return time.Time{}, "", false
 }
 
-func addMonthClamped(d time.Time, n int) time.Time {
-	y, m, day := d.Date()
+// lastWeekdayOfMonth 返回某月最后一个工作日（周一至周五）。
+func lastWeekdayOfMonth(year int, month time.Month, loc *time.Location) time.Time {
+	d := time.Date(year, month, daysInMonth(year, month), 0, 0, 0, 0, loc)
+	for d.Weekday() == time.Saturday || d.Weekday() == time.Sunday {
+		d = d.AddDate(0, 0, -1)
+	}
+	return d
+}
+
+// nthWeekdayOfMonth 返回某月第 n 个指定的星期几。该月凑不满 n 个时返回 ok=false
+// （例如「第五个周一」，多数月份都没有）。
+func nthWeekdayOfMonth(year int, month time.Month, n int, wd time.Weekday, loc *time.Location) (time.Time, bool) {
+	first := time.Date(year, month, 1, 0, 0, 0, 0, loc)
+	delta := (int(wd) - int(first.Weekday()) + 7) % 7
+	d := first.AddDate(0, 0, delta+(n-1)*7)
+	if d.Month() != month {
+		return time.Time{}, false
+	}
+	return d, true
+}
+
+func addMonthClamped(d time.Time, n int) time.Time {	y, m, day := d.Date()
 	target := time.Date(y, m, 1, 0, 0, 0, 0, d.Location()).AddDate(0, n, 0)
 	day = min(day, daysInMonth(target.Year(), target.Month()))
 	return time.Date(target.Year(), target.Month(), day, 0, 0, 0, 0, d.Location())

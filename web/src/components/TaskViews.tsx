@@ -10,6 +10,7 @@ import {
   IconCheck,
   IconCircle,
   IconClock,
+  IconCopy,
   IconFlag,
   IconGrip,
   IconList,
@@ -17,10 +18,12 @@ import {
   IconMove,
   IconNote,
   IconPencil,
+  IconPin,
   IconPlus,
   IconRepeat,
   IconSearch,
   IconSparkle,
+  IconStar,
   IconSubtask,
   IconTag,
   IconTrash,
@@ -210,6 +213,16 @@ export function TaskRow({
         <div className="flex items-start gap-1.5">
           <div className="flex min-w-0 flex-1 items-center gap-1.5">
             <PriorityFlag priority={task.priority} />
+            {task.pinned ? (
+              <span title="已置顶" className="inline-flex shrink-0 text-seal">
+                <IconPin size={12} />
+              </span>
+            ) : null}
+            {task.starred ? (
+              <span title="已收藏" className="inline-flex shrink-0 text-[var(--p-mid)]">
+                <IconStar size={12} />
+              </span>
+            ) : null}
             {editing ? (
               <input
                 ref={inputRef}
@@ -243,6 +256,24 @@ export function TaskRow({
           </div>
 
           <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/row:opacity-100">
+            <IconButton
+              icon={IconPin}
+              label={task.pinned ? '取消置顶' : '置顶'}
+              size={13}
+              onClick={(e) => {
+                e.stopPropagation()
+                void updateTask(task.id, { pinned: !task.pinned })
+              }}
+            />
+            <IconButton
+              icon={IconStar}
+              label={task.starred ? '取消收藏' : '收藏'}
+              size={13}
+              onClick={(e) => {
+                e.stopPropagation()
+                void updateTask(task.id, { starred: !task.starred })
+              }}
+            />
             <IconButton
               icon={IconPencil}
               label="重命名"
@@ -294,7 +325,7 @@ function RowMenuItems({
   onOpen: () => void
   onDelete: () => void
 }) {
-  const { updateTask, confirm, moveTask, skipTask } = useStore()
+  const { updateTask, confirm, moveTask, skipTask, duplicateTask } = useStore()
   const today = todayStr()
 
   return (
@@ -352,6 +383,30 @@ function RowMenuItems({
         }}
       />
       <RowAction
+        icon={IconPin}
+        label={task.pinned ? '取消置顶' : '置顶'}
+        onClick={() => {
+          void updateTask(task.id, { pinned: !task.pinned })
+          onClose()
+        }}
+      />
+      <RowAction
+        icon={IconStar}
+        label={task.starred ? '取消收藏' : '收藏'}
+        onClick={() => {
+          void updateTask(task.id, { starred: !task.starred })
+          onClose()
+        }}
+      />
+      <RowAction
+        icon={IconCopy}
+        label="复制一份"
+        onClick={() => {
+          void duplicateTask(task.id)
+          onClose()
+        }}
+      />
+      <RowAction
         icon={IconPencil}
         label="编辑详情"
         onClick={() => {
@@ -378,7 +433,7 @@ function RowMenuItems({
         onClick={async () => {
           const ok = await confirm({
             title: `删除「${task.title}」`,
-            message: '删除后不可恢复。',
+            message: '删除后可在左下角撤销，超过 10 分钟才彻底消失。',
             confirmText: '删除',
             danger: true,
           })
@@ -602,9 +657,34 @@ export function TaskListView({
   emptyKey: keyof typeof QUOTES | string
   showQuickAdd?: boolean
 }) {
-  const { multiSelect, selectedIds, clearSelected, batch, lists, sortBy, reorderTasks } = useStore()
+  const {
+    multiSelect,
+    selectedIds,
+    clearSelected,
+    batch,
+    lists,
+    sortBy,
+    reorderTasks,
+    selection,
+    purgeCompleted,
+    confirm,
+  } = useStore()
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const buckets = useMemo(() => bucketize(tasks), [tasks])
+
+  /** 清空已完成：在清单内就只清这个清单，在智能视图里则清全部。 */
+  const purgeDone = async () => {
+    const listId = selection.kind === 'list' ? selection.id : undefined
+    const ok = await confirm({
+      title: '清空已完成任务',
+      message: listId
+        ? '将删除当前清单里所有已完成的任务。删除记录会留在操作历史中。'
+        : '将删除全部已完成的任务。删除记录会留在操作历史中。',
+      confirmText: '清空',
+      danger: true,
+    })
+    if (ok) await purgeCompleted(listId)
+  }
 
   // 手动排序仅在「手动」模式下开放，避免与其它排序规则打架。
   const sortable = sortBy === 'manual' && !multiSelect
@@ -640,24 +720,37 @@ export function TaskListView({
           <EmptyForView emptyKey={emptyKey} />
         ) : (          buckets.map((b) => (
             <section key={b.key} className="mb-1">
-              <button
-                type="button"
-                onClick={() => setCollapsed((prev) => ({ ...prev, [b.key]: !prev[b.key] }))}
-                className="mb-1 flex w-full items-center gap-2 px-3 pt-3 text-left"
-              >
-                <span
-                  className={cx(
-                    'text-[12px] font-semibold tracking-wide',
-                    b.tone === 'danger' ? 'text-p-high' : b.tone === 'accent' ? 'text-seal' : 'text-ink-2',
-                  )}
+              <div className="mb-1 flex w-full items-center gap-2 px-3 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setCollapsed((prev) => ({ ...prev, [b.key]: !prev[b.key] }))}
+                  className="flex flex-1 items-center gap-2 text-left"
                 >
-                  {b.label}
-                </span>
-                <span className="text-[11px] text-ink-3 tabular-nums">{b.tasks.length}</span>
-                {b.tone === 'danger' ? (
-                  <span className="text-[11px] text-ink-3">· 慎终如始，则无败事</span>
+                  <span
+                    className={cx(
+                      'text-[12px] font-semibold tracking-wide',
+                      b.tone === 'danger' ? 'text-p-high' : b.tone === 'accent' ? 'text-seal' : 'text-ink-2',
+                    )}
+                  >
+                    {b.label}
+                  </span>
+                  <span className="text-[11px] text-ink-3 tabular-nums">{b.tasks.length}</span>
+                  {b.tone === 'danger' ? (
+                    <span className="text-[11px] text-ink-3">· 慎终如始，则无败事</span>
+                  ) : null}
+                </button>
+                {b.key === 'done' ? (
+                  <button
+                    type="button"
+                    data-purge-completed
+                    onClick={() => void purgeDone()}
+                    title="删除已完成任务，只留下历史记录"
+                    className="rounded-md px-1.5 py-0.5 text-[11px] text-ink-3 transition-colors hover:bg-p-high/10 hover:text-p-high"
+                  >
+                    清空
+                  </button>
                 ) : null}
-              </button>
+              </div>
               {!collapsed[b.key] ? (
                 <div className="space-y-0.5">
                   {b.tasks.map((t) => (
@@ -752,7 +845,27 @@ export function TaskListView({
                 </option>
               ))}
             </select>
-            <Button variant="ghost" size="sm" icon={IconTrash} className="text-p-high" onClick={() => void batch('delete')}>
+            <Button variant="outline" size="sm" icon={IconPin} onClick={() => void batch('pin')}>
+              置顶
+            </Button>
+            <Button variant="outline" size="sm" icon={IconStar} onClick={() => void batch('star')}>
+              收藏
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={IconTrash}
+              className="text-p-high"
+              onClick={async () => {
+                const ok = await confirm({
+                  title: `删除已选的 ${selectedIds.length} 项`,
+                  message: '删除后可在左下角撤销，超过 10 分钟才彻底消失。',
+                  confirmText: '删除',
+                  danger: true,
+                })
+                if (ok) await batch('delete')
+              }}
+            >
               删除
             </Button>
             <IconButton icon={IconX} label="取消选择" onClick={clearSelected} />
@@ -768,9 +881,15 @@ export function TaskListView({
 const EMPTY_HINT: Record<string, string> = {
   inbox: '把脑子里的事先写下来，归属以后再定。',
   today: '今日无事，或可添一件真正要紧的。',
+  tomorrow: '明天尚无安排。',
+  week: '本周剩下的日子是空的。',
   next7: '未来七天还没有安排。',
   overdue: '没有逾期事项，节奏保持得不错。',
   nodate: '所有任务都已经排上了时间。',
+  high: '还没有标为高优先级的任务。',
+  starred: '点任务行右侧的星标，就能把它收到这里。',
+  updated: '最近没有改动过任何任务。',
+  recentdone: '这段时间还没有完成过什么。',
   all: '还没有任何任务。',
   done: '完成的任务会在这里留档。',
   list: '这个清单还是空的，从上面添加第一件事。',
@@ -779,6 +898,7 @@ const EMPTY_HINT: Record<string, string> = {
   search: '没有匹配的任务，换个关键词试试。',
   calendar: '这一段时间没有安排。',
   board: '这一列还是空的，把任务拖进来即可。',
+  table: '这张表还没有内容。',
 }
 
 export function EmptyForView({ emptyKey }: { emptyKey: keyof typeof QUOTES | string }) {

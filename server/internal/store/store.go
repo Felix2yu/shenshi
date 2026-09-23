@@ -77,6 +77,11 @@ func OpenWith(path string, opt Options) (*Store, error) {
 	if err := os.MkdirAll(s.backupDir, 0o755); err != nil {
 		return nil, fmt.Errorf("创建备份目录失败: %w", err)
 	}
+	// 撤销槽位是惰性过期的，进程重启后没人再来读它，这里主动清一次，
+	// 免得上次退出前删掉的任务，附件文件一直挂在磁盘上。
+	if err := s.expireUndo(); err != nil {
+		return nil, fmt.Errorf("清理撤销槽位失败: %w", err)
+	}
 	return s, nil
 }
 
@@ -123,11 +128,13 @@ func (s *Store) Close() error { return s.db.Close() }
 const schema = `
 CREATE TABLE IF NOT EXISTS folders (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  parent_id  INTEGER REFERENCES folders(id) ON DELETE SET NULL,
   name       TEXT    NOT NULL,
   color      TEXT    NOT NULL DEFAULT '#8a7c66',
   icon       TEXT    NOT NULL DEFAULT 'folder',
   sort_order INTEGER NOT NULL DEFAULT 0,
   collapsed  INTEGER NOT NULL DEFAULT 0,
+  archived   INTEGER NOT NULL DEFAULT 0,
   created_at TEXT    NOT NULL
 );
 
@@ -139,6 +146,8 @@ CREATE TABLE IF NOT EXISTS lists (
   icon       TEXT    NOT NULL DEFAULT 'list',
   sort_order INTEGER NOT NULL DEFAULT 0,
   is_inbox   INTEGER NOT NULL DEFAULT 0,
+  archived   INTEGER NOT NULL DEFAULT 0,
+  starred    INTEGER NOT NULL DEFAULT 0,
   created_at TEXT    NOT NULL
 );
 
@@ -149,13 +158,18 @@ CREATE TABLE IF NOT EXISTS tasks (
   notes       TEXT    NOT NULL DEFAULT '',
   status      TEXT    NOT NULL DEFAULT 'todo',
   priority    INTEGER NOT NULL DEFAULT 0,
+  start_date  TEXT,
   due_date    TEXT,
   due_time    TEXT,
   end_time    TEXT,
+  url         TEXT    NOT NULL DEFAULT '',
   reminders   TEXT    NOT NULL DEFAULT '[]',
   repeat_rule TEXT,
+  repeat_from TEXT    NOT NULL DEFAULT 'due',
   important   INTEGER NOT NULL DEFAULT 0,
   urgent      INTEGER NOT NULL DEFAULT 0,
+  pinned      INTEGER NOT NULL DEFAULT 0,
+  starred     INTEGER NOT NULL DEFAULT 0,
   completed_at TEXT,
   sort_order  REAL    NOT NULL DEFAULT 0,
   created_at  TEXT    NOT NULL,
@@ -164,6 +178,8 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_list   ON tasks(list_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_due    ON tasks(due_date);
+CREATE INDEX IF NOT EXISTS idx_tasks_pinned ON tasks(pinned);
+CREATE INDEX IF NOT EXISTS idx_tasks_starred ON tasks(starred);
 
 CREATE TABLE IF NOT EXISTS subtasks (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -317,11 +333,96 @@ CREATE TABLE IF NOT EXISTS caldav_changes (
   changed_at TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_caldav_collection ON caldav_changes(collection, seq);
+
+-- 保存下来的筛选条件：把「高优先级 + 本周 + 某标签」这类组合留在侧栏，一次点击即回到现场。
+CREATE TABLE IF NOT EXISTS saved_filters (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT    NOT NULL,
+  query      TEXT    NOT NULL,
+  sort_order REAL    NOT NULL DEFAULT 0,
+  created_at TEXT    NOT NULL
+);
+
+-- 操作历史：只记「值得回看」的动作（创建 / 完成 / 删除 / 移动 …），
+-- 不做逐字段流水账，否则改一次标题就刷一屏。
+CREATE TABLE IF NOT EXISTS activities (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind       TEXT    NOT NULL,
+  task_id    INTEGER,
+  title      TEXT    NOT NULL DEFAULT '',
+  detail     TEXT    NOT NULL DEFAULT '',
+  created_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_activities_id ON activities(id DESC);
+
+-- 撤销槽位：只保留最近一次可撤销的删除。整行备份成 JSON，附件文件暂缓清理，
+-- 撤销时按原存储名挂回去；槽位被顶替时才真正删除文件。
+CREATE TABLE IF NOT EXISTS undo_slot (
+  id         INTEGER PRIMARY KEY CHECK (id = 1),
+  label      TEXT    NOT NULL DEFAULT '',
+  payload    TEXT    NOT NULL DEFAULT '[]',
+  files      TEXT    NOT NULL DEFAULT '[]',
+  created_at TEXT    NOT NULL
+);
 `
+
+// 增量迁移：schema 里全是 CREATE TABLE IF NOT EXISTS，对已经建好的老库不会补列。
+// 这里逐条 ALTER，缺哪列补哪列，让升级不需要手工改库。
+var addColumns = []struct{ table, column, ddl string }{
+	{"folders", "parent_id", `ALTER TABLE folders ADD COLUMN parent_id INTEGER REFERENCES folders(id) ON DELETE SET NULL`},
+	{"folders", "archived", `ALTER TABLE folders ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`},
+	{"lists", "archived", `ALTER TABLE lists ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`},
+	{"lists", "starred", `ALTER TABLE lists ADD COLUMN starred INTEGER NOT NULL DEFAULT 0`},
+	{"tasks", "start_date", `ALTER TABLE tasks ADD COLUMN start_date TEXT`},
+	{"tasks", "url", `ALTER TABLE tasks ADD COLUMN url TEXT NOT NULL DEFAULT ''`},
+	{"tasks", "repeat_from", `ALTER TABLE tasks ADD COLUMN repeat_from TEXT NOT NULL DEFAULT 'due'`},
+	{"tasks", "pinned", `ALTER TABLE tasks ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`},
+	{"tasks", "starred", `ALTER TABLE tasks ADD COLUMN starred INTEGER NOT NULL DEFAULT 0`},
+}
 
 func (s *Store) migrate() error {
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("初始化表结构失败: %w", err)
+	}
+	for _, c := range addColumns {
+		if err := s.ensureColumn(c.table, c.column, c.ddl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureColumn 在列不存在时执行 ALTER。SQLite 没有 ADD COLUMN IF NOT EXISTS，
+// 只能先问 PRAGMA table_info。
+func (s *Store) ensureColumn(table, column, ddl string) error {
+	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == column {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	if found {
+		return nil
+	}
+	if _, err := s.db.Exec(ddl); err != nil {
+		return fmt.Errorf("为 %s 补列 %s 失败: %w", table, column, err)
 	}
 	return nil
 }

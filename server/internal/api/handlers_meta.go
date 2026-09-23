@@ -210,6 +210,58 @@ func (s *Server) deleteTag(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// ---------- 保存的筛选条件 ----------
+
+func (s *Server) listSavedFilters(w http.ResponseWriter, r *http.Request) error {
+	items, err := s.st.SavedFilters()
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"savedFilters": items})
+	return nil
+}
+
+func (s *Server) createSavedFilter(w http.ResponseWriter, r *http.Request) error {
+	var in store.SavedFilterInput
+	if err := decode(w, r, &in); err != nil {
+		return err
+	}
+	f, err := s.st.CreateSavedFilter(in)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusCreated, f)
+	return nil
+}
+
+func (s *Server) updateSavedFilter(w http.ResponseWriter, r *http.Request) error {
+	id, err := pathID(r, "id")
+	if err != nil {
+		return err
+	}
+	var in store.SavedFilterInput
+	if err := decode(w, r, &in); err != nil {
+		return err
+	}
+	if err := s.st.UpdateSavedFilter(id, in); err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
+	return nil
+}
+
+func (s *Server) deleteSavedFilter(w http.ResponseWriter, r *http.Request) error {
+	id, err := pathID(r, "id")
+	if err != nil {
+		return err
+	}
+	if err := s.st.DeleteSavedFilter(id); err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
+	return nil
+}
+
 // ---------- 设置 ----------
 
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) error {
@@ -379,6 +431,9 @@ func (s *Server) repeatMeta(w http.ResponseWriter, r *http.Request) error {
 		{Value: "every:2:week", Label: "每 2 周", Group: "间隔"},
 		{Value: "every:6:month", Label: "每 6 个月", Group: "间隔"},
 		{Value: "monthly:last", Label: "每月最后一天", Group: "星期与月末"},
+		{Value: "monthly:lastworkday", Label: "每月最后一个工作日", Group: "星期与月末"},
+		{Value: "monthly:nth:1:1", Label: "每月第一个周一", Group: "星期与月末"},
+		{Value: "monthly:nth:3:0", Label: "每月第三个周日", Group: "星期与月末"},
 		{Value: "weekly:1", Label: "每周一", Group: "星期与月末"},
 		{Value: "weekly:5", Label: "每周五", Group: "星期与月末"},
 		{Value: "weekly:1,3,5", Label: "每周一、三、五", Group: "星期与月末"},

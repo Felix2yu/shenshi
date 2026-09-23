@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 
 import { footnoteOfTheDay } from '../lib/quotes'
 import { fullDate, greeting, todayStr } from '../lib/date'
-import { describeFilter, isFilterActive, applyFilter, type TaskFilter } from '../lib/filter'
+import { describeFilter, isFilterActive, applyFilter, EMPTY_FILTER, type TaskFilter } from '../lib/filter'
 import { useStore } from '../store/AppStore'
 import type { TaskSort } from '../api/client'
 import type { SmartKey, ViewKind } from '../types'
@@ -13,10 +13,12 @@ import {
   IconFlag,
   IconGrid,
   IconList,
+  IconPin,
   IconSeedling,
   IconSort,
   IconSparkle,
   IconStar,
+  IconTable,
   IconX,
 } from './icons'
 import { SearchBar } from './TaskViews'
@@ -25,6 +27,7 @@ import { IconButton, Popover, cx } from './ui'
 const VIEW_TABS: { key: ViewKind; label: string; icon: typeof IconList }[] = [
   { key: 'list', label: '列表', icon: IconList },
   { key: 'board', label: '看板', icon: IconColumns },
+  { key: 'table', label: '表格', icon: IconTable },
   { key: 'calendar', label: '日历', icon: IconGrid },
   { key: 'quadrant', label: '四象限', icon: IconSparkle },
   { key: 'habits', label: '习惯', icon: IconSeedling },
@@ -36,6 +39,8 @@ const SORT_OPTIONS: { value: TaskSort; label: string; hint: string }[] = [
   { value: 'manual', label: '手动', hint: '拖动任务行调整' },
   { value: 'priority', label: '优先级', hint: '高在前' },
   { value: 'due', label: '到期时间', hint: '近在前' },
+  { value: 'updated', label: '最近修改', hint: '刚动过的在前' },
+  { value: 'completed', label: '最近完成', hint: '刚完成的在前' },
   { value: 'created', label: '创建时间', hint: '新在前' },
   { value: 'title', label: '标题', hint: '按字序' },
 ]
@@ -43,42 +48,97 @@ const SORT_OPTIONS: { value: TaskSort; label: string; hint: string }[] = [
 const SMART_SUBTITLE: Record<SmartKey, string> = {
   inbox: '未定归属的想法，先放在这里',
   today: '今日事，今日毕',
+  tomorrow: '明天到期的事，今天先看一眼',
+  week: '到本周日为止的安排',
   next7: '未来七天的安排',
   overdue: '慎终如始，则无败事',
   nodate: '尚未安排时间的事项',
+  high: '要紧的事，先摆到眼前',
+  starred: '自己圈出来的，需要常看几眼',
+  updated: '最近动过的，回想一下改到哪了',
+  recentdone: '近期收束的事项',
   all: '全部未完成与已完成的任务',
   done: '完成即是敬终',
 }
 
+const SMART_TITLE: Record<SmartKey, string> = {
+  inbox: '收集箱',
+  today: '今天',
+  tomorrow: '明天',
+  week: '本周',
+  next7: '最近 7 天',
+  overdue: '逾期',
+  nodate: '无日期',
+  high: '高优先级',
+  starred: '收藏',
+  updated: '最近修改',
+  recentdone: '最近完成',
+  all: '全部任务',
+  done: '已完成',
+}
+
+const STATUS_OPTIONS = [
+  { v: 'all', l: '全部' },
+  { v: 'todo', l: '未完成' },
+  { v: 'done', l: '已完成' },
+] as const
+
+/** 日期区间的快捷段落，省得每次去点两个日历控件。 */
+function rangePreset(kind: 'today' | 'week' | 'month'): { from: string; to: string } {
+  const base = new Date(`${todayStr()}T00:00:00`)
+  const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  if (kind === 'today') return { from: todayStr(), to: todayStr() }
+  if (kind === 'week') {
+    // 与设置里的周起始保持一致：默认周一。
+    const dow = (base.getDay() + 6) % 7
+    const start = new Date(base)
+    start.setDate(base.getDate() - dow)
+    const end = new Date(start)
+    end.setDate(start.getDate() + 6)
+    return { from: iso(start), to: iso(end) }
+  }
+  const start = new Date(base.getFullYear(), base.getMonth(), 1)
+  const end = new Date(base.getFullYear(), base.getMonth() + 1, 0)
+  return { from: iso(start), to: iso(end) }
+}
+
 export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters: (f: TaskFilter) => void }) {
-  const { selection, view, setView, tasks, multiSelect, setMultiSelect, lists, tags, keyword, sortBy, setSortBy } =
-    useStore()
+  const {
+    selection,
+    view,
+    setView,
+    tasks,
+    multiSelect,
+    setMultiSelect,
+    lists,
+    tags,
+    keyword,
+    sortBy,
+    setSortBy,
+    savedFilters,
+    saveFilter,
+    applySavedFilter,
+    deleteSavedFilter,
+  } = useStore()
   const [filterOpen, setFilterOpen] = useState(false)
   const [sortOpen, setSortOpen] = useState(false)
+  const [saveOpen, setSaveOpen] = useState(false)
+  const [saveName, setSaveName] = useState('')
   const priority = filters.priority
-  const tagId = filters.tagId
-  const setPriority = (v: number | null) => onFilters({ ...filters, priority: v })
-  const setTagId = (v: number | null) => onFilters({ ...filters, tagId: v })
+  const tagIds = filters.tagIds
+  const set = (patch: Partial<TaskFilter>) => onFilters({ ...filters, ...patch })
+  const toggleTag = (id: number) =>
+    set({ tagIds: tagIds.includes(id) ? tagIds.filter((x) => x !== id) : [...tagIds, id] })
 
   const title = useMemo(() => {
     if (keyword.trim()) return `搜索「${keyword.trim()}」`
     if (view === 'board') return '看板'
+    if (view === 'table') return '表格'
     if (view === 'calendar') return '日历'
     if (view === 'quadrant') return '四象限'
     if (view === 'habits') return '习惯打卡'
     if (view === 'stats') return '统计与复盘'
-    if (selection.kind === 'smart') {
-      const map: Record<SmartKey, string> = {
-        inbox: '收集箱',
-        today: '今天',
-        next7: '最近 7 天',
-        overdue: '逾期',
-        nodate: '无日期',
-        all: '全部任务',
-        done: '已完成',
-      }
-      return map[selection.key]
-    }
+    if (selection.kind === 'smart') return SMART_TITLE[selection.key]
     if (selection.kind === 'list') return lists.find((l) => l.id === selection.id)?.name ?? '清单'
     if (selection.kind === 'folder') return '分组'
     if (selection.kind === 'tag') return `#${tags.find((t) => t.id === selection.id)?.name ?? ''}`
@@ -90,6 +150,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
     if (view === 'calendar') return '按月或按周查看安排，可拖动任务改期'
     if (view === 'quadrant') return '按重要与紧急程度分配精力'
     if (view === 'board') return '横向铺开，按维度分组查看'
+    if (view === 'table') return '一眼看尽全部字段，可点列头排序'
     if (view === 'habits')
       return '日日不断之功，连续与积累都记在这张轨迹上'
     if (view === 'stats') return '数据与复盘，日计不足，岁计有余'
@@ -115,7 +176,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
           <h1 className="brand-serif truncate text-[21px] font-semibold leading-7 text-ink">{title}</h1>
           <p className="mt-0.5 flex flex-wrap items-center gap-2 text-[11.5px] text-ink-3">
             <span>{subtitle}</span>
-            {view === 'list' || view === 'board' ? (
+            {view === 'list' || view === 'board' || view === 'table' ? (
               <span className="text-ink-3/80">
                 · 待办 {openCount}
                 {doneCount ? ` · 已完成 ${doneCount}` : ''}
@@ -150,12 +211,29 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
             <IconButton
               icon={IconFlag}
               label="筛选"
-              active={priority !== null || tagId !== null}
+              active={isFilterActive(filters)}
               onClick={() => setFilterOpen((v) => !v)}
             />
-            <Popover open={filterOpen} onClose={() => setFilterOpen(false)} align="right" width={230}>
+            <Popover open={filterOpen} onClose={() => setFilterOpen(false)} align="right" width={272}>
               <div className="p-1.5">
-                <div className="px-1 pb-1 text-[11px] tracking-wide text-ink-3">优先级</div>
+                <div className="px-1 pb-1 text-[11px] tracking-wide text-ink-3">完成状态</div>
+                <div className="flex gap-1">
+                  {STATUS_OPTIONS.map((o) => (
+                    <button
+                      key={o.v}
+                      type="button"
+                      onClick={() => set({ status: o.v })}
+                      className={cx(
+                        'flex-1 rounded-md py-1 text-[12px] transition-colors',
+                        filters.status === o.v ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:bg-surface-2',
+                      )}
+                    >
+                      {o.l}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="px-1 pb-1 pt-2.5 text-[11px] tracking-wide text-ink-3">优先级</div>
                 <div className="flex gap-1">
                   {[
                     { v: null, l: '全部' },
@@ -167,7 +245,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                     <button
                       key={String(o.v)}
                       type="button"
-                      onClick={() => setPriority(o.v)}
+                      onClick={() => set({ priority: o.v })}
                       className={cx(
                         'flex-1 rounded-md py-1 text-[12px] transition-colors',
                         priority === o.v ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:bg-surface-2',
@@ -178,42 +256,214 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                   ))}
                 </div>
 
-                {tags.length > 0 ? (
-                  <>
-                    <div className="px-1 pb-1 pt-2.5 text-[11px] tracking-wide text-ink-3">标签</div>
-                    <div className="max-h-44 overflow-y-auto">
+                <div className="px-1 pb-1 pt-2.5 text-[11px] tracking-wide text-ink-3">到期区间</div>
+                <div className="flex gap-1">
+                  {[
+                    { l: '不限', p: null },
+                    { l: '今天', p: 'today' as const },
+                    { l: '本周', p: 'week' as const },
+                    { l: '本月', p: 'month' as const },
+                  ].map((o) => {
+                    const active =
+                      o.p === null
+                        ? filters.from === null && filters.to === null
+                        : (() => {
+                            const r = rangePreset(o.p)
+                            return filters.from === r.from && filters.to === r.to
+                          })()
+                    return (
                       <button
+                        key={o.l}
                         type="button"
-                        onClick={() => setTagId(null)}
+                        onClick={() => (o.p === null ? set({ from: null, to: null }) : set(rangePreset(o.p)))}
                         className={cx(
-                          'flex w-full items-center rounded-lg px-2 py-1 text-left text-[12.5px]',
-                          tagId === null ? 'bg-seal/10 text-seal' : 'text-ink-2 hover:bg-surface-2',
+                          'flex-1 rounded-md py-1 text-[12px] transition-colors',
+                          active ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:bg-surface-2',
                         )}
                       >
-                        不限标签
+                        {o.l}
                       </button>
-                      {tags.map((t) => (
+                    )
+                  })}
+                </div>
+                <div className="mt-1.5 flex items-center gap-1.5 px-0.5">
+                  <input
+                    type="date"
+                    value={filters.from ?? ''}
+                    onChange={(e) => set({ from: e.target.value || null })}
+                    className="min-w-0 flex-1 rounded-md border border-line bg-surface px-1.5 py-1 text-[11.5px] text-ink outline-none focus:border-seal/60"
+                  />
+                  <span className="shrink-0 text-[11px] text-ink-3">→</span>
+                  <input
+                    type="date"
+                    value={filters.to ?? ''}
+                    onChange={(e) => set({ to: e.target.value || null })}
+                    className="min-w-0 flex-1 rounded-md border border-line bg-surface px-1.5 py-1 text-[11.5px] text-ink outline-none focus:border-seal/60"
+                  />
+                </div>
+
+                {tags.length > 0 ? (
+                  <>
+                    <div className="flex items-center justify-between px-1 pb-1 pt-2.5">
+                      <span className="text-[11px] tracking-wide text-ink-3">标签</span>
+                      {tagIds.length > 1 ? (
                         <button
-                          key={t.id}
                           type="button"
-                          onClick={() => setTagId(t.id)}
-                          className={cx(
-                            'flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-[12.5px]',
-                            tagId === t.id ? 'bg-seal/10 text-seal' : 'text-ink-2 hover:bg-surface-2',
-                          )}
+                          onClick={() => set({ tagMode: filters.tagMode === 'all' ? 'any' : 'all' })}
+                          className="rounded-md px-1.5 py-0.5 text-[10.5px] text-seal transition-colors hover:bg-seal/10"
+                          title="切换多标签的组合方式"
                         >
-                          <span className="h-2 w-2 rounded-full" style={{ background: t.color }} />
-                          {t.name}
+                          {filters.tagMode === 'all' ? '须全部命中' : '任一命中即可'}
                         </button>
-                      ))}
+                      ) : null}
+                    </div>
+                    <div className="max-h-40 overflow-y-auto">
+                      {tags.map((t) => {
+                        const on = tagIds.includes(t.id)
+                        return (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onClick={() => toggleTag(t.id)}
+                            className={cx(
+                              'flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-[12.5px]',
+                              on ? 'bg-seal/10 text-seal' : 'text-ink-2 hover:bg-surface-2',
+                            )}
+                          >
+                            <span className="h-2 w-2 rounded-full" style={{ background: t.color }} />
+                            <span className="flex-1 truncate">{t.name}</span>
+                            {on ? <IconCheck size={12} /> : null}
+                          </button>
+                        )
+                      })}
                     </div>
                   </>
                 ) : null}
+
+                <div className="mt-2 flex gap-1 border-t border-line pt-2">
+                  <button
+                    type="button"
+                    onClick={() => set({ pinned: !filters.pinned })}
+                    className={cx(
+                      'inline-flex flex-1 items-center justify-center gap-1 rounded-md py-1 text-[12px] transition-colors',
+                      filters.pinned ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:bg-surface-2',
+                    )}
+                  >
+                    <IconPin size={12} />
+                    仅看置顶
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => set({ starred: !filters.starred })}
+                    className={cx(
+                      'inline-flex flex-1 items-center justify-center gap-1 rounded-md py-1 text-[12px] transition-colors',
+                      filters.starred ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:bg-surface-2',
+                    )}
+                  >
+                    <IconStar size={12} />
+                    仅看收藏
+                  </button>
+                </div>
+
+                <div className="mt-2 border-t border-line pt-2">
+                  <div className="flex items-center justify-between px-1 pb-1">
+                    <span className="text-[11px] tracking-wide text-ink-3">保存的条件</span>
+                    {isFilterActive(filters) && !saveOpen ? (
+                      <button
+                        type="button"
+                        onClick={() => setSaveOpen(true)}
+                        className="rounded-md px-1.5 py-0.5 text-[10.5px] text-seal transition-colors hover:bg-seal/10"
+                      >
+                        保存当前
+                      </button>
+                    ) : null}
+                  </div>
+                  {saveOpen ? (
+                    <div className="flex items-center gap-1 px-1 pb-1">
+                      <input
+                        autoFocus
+                        value={saveName}
+                        onChange={(e) => setSaveName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            void saveFilter(saveName).then((f) => {
+                              if (f) {
+                                setSaveOpen(false)
+                                setSaveName('')
+                              }
+                            })
+                          }
+                          if (e.key === 'Escape') setSaveOpen(false)
+                        }}
+                        placeholder="给这组条件起个名字"
+                        className="min-w-0 flex-1 rounded-md border border-line bg-surface px-1.5 py-1 text-[12px] text-ink outline-none focus:border-seal/60"
+                      />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void saveFilter(saveName).then((f) => {
+                            if (f) {
+                              setSaveOpen(false)
+                              setSaveName('')
+                            }
+                          })
+                        }
+                        className="rounded-md bg-seal/12 px-2 py-1 text-[11.5px] font-medium text-seal"
+                      >
+                        保存
+                      </button>
+                    </div>
+                  ) : savedFilters.length === 0 ? (
+                    <p className="px-2 pb-0.5 text-[11px] leading-relaxed text-ink-3">
+                      常用的组合可以存下来，下次一键套用。
+                    </p>
+                  ) : (
+                    <div className="max-h-36 overflow-y-auto">
+                      {savedFilters.map((f) => (
+                        <div key={f.id} className="group flex items-center gap-1 rounded-lg pr-1 hover:bg-surface-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              applySavedFilter(f)
+                              setFilterOpen(false)
+                            }}
+                            className="flex-1 truncate px-2 py-1 text-left text-[12.5px] text-ink-2"
+                            title={f.name}
+                          >
+                            {f.name}
+                          </button>
+                          <button
+                            type="button"
+                            title="删除这条筛选"
+                            onClick={() => void deleteSavedFilter(f.id)}
+                            className="rounded p-0.5 text-ink-3 opacity-0 transition-opacity hover:text-p-high group-hover:opacity-100"
+                          >
+                            <IconX size={11} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-1.5 flex items-center justify-between border-t border-line px-1 pt-2">
+                  <span className="text-[10.5px] text-ink-3">命中 {hitCount} 项</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onFilters(EMPTY_FILTER)
+                      setSaveOpen(false)
+                    }}
+                    className="text-[11px] text-seal transition-colors hover:underline"
+                  >
+                    全部清除
+                  </button>
+                </div>
               </div>
             </Popover>
           </div>
 
-          {view === 'list' ? (
+          {view === 'list' || view === 'table' ? (
             <div className="relative">
               <IconButton
                 icon={IconSort}
@@ -274,7 +524,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
           </span>
           <button
             type="button"
-            onClick={() => onFilters({ priority: null, tagId: null })}
+            onClick={() => onFilters(EMPTY_FILTER)}
             className="inline-flex items-center gap-1 text-[11.5px] text-seal hover:underline"
           >
             <IconX size={11} />

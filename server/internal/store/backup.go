@@ -28,32 +28,34 @@ const exportVersion = 1
 
 // ExportBundle 是全量备份的结构。Version 预留给将来做格式升级。
 type ExportBundle struct {
-	Version     int                  `json:"version"`
-	App         string               `json:"app"`
-	ExportedAt  string               `json:"exportedAt"`
-	InboxListID int64                `json:"inboxListId"`
-	Folders     []model.Folder       `json:"folders"`
-	Lists       []model.List         `json:"lists"`
-	Tasks       []model.Task         `json:"tasks"`
-	Tags        []model.Tag          `json:"tags"`
-	Reviews     []model.Review       `json:"reviews"`
-	Focus       []model.FocusSession `json:"focus"`
-	Habits      []model.Habit        `json:"habits"`
-	HabitLogs   []model.HabitLog     `json:"habitLogs"`
-	Settings    map[string]string    `json:"settings"`
+	Version      int                  `json:"version"`
+	App          string               `json:"app"`
+	ExportedAt   string               `json:"exportedAt"`
+	InboxListID  int64                `json:"inboxListId"`
+	Folders      []model.Folder       `json:"folders"`
+	Lists        []model.List         `json:"lists"`
+	Tasks        []model.Task         `json:"tasks"`
+	Tags         []model.Tag          `json:"tags"`
+	Reviews      []model.Review       `json:"reviews"`
+	Focus        []model.FocusSession `json:"focus"`
+	Habits       []model.Habit        `json:"habits"`
+	HabitLogs    []model.HabitLog     `json:"habitLogs"`
+	SavedFilters []model.SavedFilter  `json:"savedFilters"`
+	Settings     map[string]string    `json:"settings"`
 }
 
 // ImportResult 汇报各类数据的导入条数。
 type ImportResult struct {
-	Mode      string `json:"mode"`
-	Folders   int    `json:"folders"`
-	Lists     int    `json:"lists"`
-	Tasks     int    `json:"tasks"`
-	Tags      int    `json:"tags"`
-	Reviews   int    `json:"reviews"`
-	Focus     int    `json:"focus"`
-	Habits    int    `json:"habits"`
-	HabitLogs int    `json:"habitLogs"`
+	Mode         string `json:"mode"`
+	Folders      int    `json:"folders"`
+	Lists        int    `json:"lists"`
+	Tasks        int    `json:"tasks"`
+	Tags         int    `json:"tags"`
+	Reviews      int    `json:"reviews"`
+	Focus        int    `json:"focus"`
+	Habits       int    `json:"habits"`
+	HabitLogs    int    `json:"habitLogs"`
+	SavedFilters int    `json:"savedFilters"`
 	// 附件单独报数：裸 JSON 备份不带文件，恢复不出来是预期内的，
 	// 但不说一声用户会以为已经一并恢复了。
 	Attachments       int `json:"attachments"`
@@ -70,7 +72,8 @@ type txer interface {
 
 // Export 导出全量数据。任务一律含子任务与标签，保证备份是自洽的。
 func (s *Store) Export() (*ExportBundle, error) {
-	folders, err := s.Folders()
+	// 用扁平分组而非树：备份是「一张表一份数据」，嵌套结构在导入时还要再拆一次。
+	folders, err := s.flatFolders()
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +81,8 @@ func (s *Store) Export() (*ExportBundle, error) {
 	if err != nil {
 		return nil, err
 	}
-	tasks, err := s.ListTasks(TaskFilter{Status: "all", SortBy: "manual"})
+	// IncludeArchived：归档清单里的任务同样是数据，备份漏掉它们就等于悄悄丢东西。
+	tasks, err := s.ListTasks(TaskFilter{Status: "all", SortBy: "manual", IncludeArchived: true})
 	if err != nil {
 		return nil, err
 	}
@@ -107,30 +111,36 @@ func (s *Store) Export() (*ExportBundle, error) {
 	if err != nil {
 		return nil, err
 	}
+	savedFilters, err := s.SavedFilters()
+	if err != nil {
+		return nil, err
+	}
 	inbox, err := s.InboxListID()
 	if err != nil {
 		return nil, err
 	}
 
-	// 分组里嵌套的清单与顶层 lists 重复，导出时清掉。
+	// 分组不再嵌套子节点：父子关系由 ParentID 表达，导出两份会互相打架。
 	for i := range folders {
 		folders[i].Lists = nil
+		folders[i].Children = nil
 	}
 
 	return &ExportBundle{
-		Version:     exportVersion,
-		App:         "慎始",
-		ExportedAt:  model.Now(),
-		InboxListID: inbox,
-		Folders:     folders,
-		Lists:       lists,
-		Tasks:       tasks,
-		Tags:        tags,
-		Reviews:     reviews,
-		Focus:       focus,
-		Habits:      habits,
-		HabitLogs:   habitLogs,
-		Settings:    settings,
+		Version:      exportVersion,
+		App:          "慎始",
+		ExportedAt:   model.Now(),
+		InboxListID:  inbox,
+		Folders:      folders,
+		Lists:        lists,
+		Tasks:        tasks,
+		Tags:         tags,
+		Reviews:      reviews,
+		Focus:        focus,
+		Habits:       habits,
+		HabitLogs:    habitLogs,
+		SavedFilters: savedFilters,
+		Settings:     settings,
 	}, nil
 }
 
@@ -156,7 +166,7 @@ func (s *Store) ExportCSV() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	tasks, err := s.ListTasks(TaskFilter{Status: "all", SortBy: "manual"})
+	tasks, err := s.ListTasks(TaskFilter{Status: "all", SortBy: "manual", IncludeArchived: true})
 	if err != nil {
 		return nil, err
 	}
@@ -175,8 +185,8 @@ func (s *Store) ExportCSV() ([]byte, error) {
 	w := csv.NewWriter(&buf)
 
 	if err := w.Write([]string{
-		"id", "标题", "清单", "分组", "状态", "优先级",
-		"日期", "开始时间", "结束时间", "重复规则", "重要", "紧急",
+		"id", "标题", "清单", "分组", "状态", "优先级", "置顶", "收藏",
+		"开始日期", "日期", "开始时间", "结束时间", "链接", "重复规则", "重要", "紧急",
 		"标签", "子任务已完成", "子任务总数", "备注", "创建时间", "完成时间",
 	}); err != nil {
 		return nil, err
@@ -203,9 +213,13 @@ func (s *Store) ExportCSV() ([]byte, error) {
 			folder,
 			status,
 			priorityLabel[t.Priority],
+			boolWord(t.Pinned),
+			boolWord(t.Starred),
+			derefStr(t.StartDate, ""),
 			derefStr(t.DueDate, ""),
 			derefStr(t.DueTime, ""),
 			derefStr(t.EndTime, ""),
+			t.URL,
 			derefStr(t.RepeatRule, ""),
 			boolWord(t.Important),
 			boolWord(t.Urgent),
@@ -413,27 +427,39 @@ func importReplace(tx txer, b *ExportBundle, res *ImportResult, files map[string
 		`DELETE FROM habit_logs`,
 		`DELETE FROM habits`,
 		`DELETE FROM reminder_log`,
+		`DELETE FROM saved_filters`,
 	} {
 		if _, err := tx.Exec(stmt); err != nil {
 			return err
 		}
 	}
 
+	// 分组分两趟写：parent_id 可能指向后面才插入的分组，而外键是即时校验的，
+	// 一趟写完会在「子先父后」的顺序上直接失败。
 	for _, f := range b.Folders {
 		if _, err := tx.Exec(
-			`INSERT INTO folders(id, name, color, icon, sort_order, collapsed, created_at) VALUES(?,?,?,?,?,?,?)`,
-			f.ID, f.Name, f.Color, f.Icon, f.SortOrder, boolInt(f.Collapsed), stamp(f.CreatedAt),
+			`INSERT INTO folders(id, parent_id, name, color, icon, sort_order, collapsed, archived, created_at) VALUES(?,NULL,?,?,?,?,?,?,?)`,
+			f.ID, f.Name, f.Color, f.Icon, f.SortOrder, boolInt(f.Collapsed), boolInt(f.Archived), stamp(f.CreatedAt),
 		); err != nil {
 			return err
 		}
 		res.Folders++
 	}
+	for _, f := range b.Folders {
+		if f.ParentID == nil {
+			continue
+		}
+		if _, err := tx.Exec(`UPDATE folders SET parent_id = ? WHERE id = ?`, f.ParentID, f.ID); err != nil {
+			return err
+		}
+	}
 
 	valid := map[int64]bool{}
 	for _, l := range b.Lists {
 		if _, err := tx.Exec(
-			`INSERT INTO lists(id, folder_id, name, color, icon, sort_order, is_inbox, created_at) VALUES(?,?,?,?,?,?,?,?)`,
-			l.ID, l.FolderID, l.Name, l.Color, l.Icon, l.SortOrder, boolInt(l.ID == b.InboxListID), stamp(l.CreatedAt),
+			`INSERT INTO lists(id, folder_id, name, color, icon, sort_order, is_inbox, archived, starred, created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+			l.ID, l.FolderID, l.Name, l.Color, l.Icon, l.SortOrder, boolInt(l.ID == b.InboxListID),
+			boolInt(l.Archived), boolInt(l.Starred), stamp(l.CreatedAt),
 		); err != nil {
 			return err
 		}
@@ -493,6 +519,16 @@ func importReplace(tx txer, b *ExportBundle, res *ImportResult, files map[string
 		}
 	}
 
+	for _, f := range b.SavedFilters {
+		if _, err := tx.Exec(
+			`INSERT INTO saved_filters(id, name, query, sort_order, created_at) VALUES(?,?,?,?,?)`,
+			f.ID, f.Name, f.Query, f.SortOrder, stamp(f.CreatedAt),
+		); err != nil {
+			return err
+		}
+		res.SavedFilters++
+	}
+
 	habitOK := map[int64]bool{}
 	for _, h := range b.Habits {
 		if _, err := tx.Exec(`INSERT INTO habits(id, name, icon, color, cadence, weekdays, target, start_date, note, archived, sort_order, created_at, updated_at)
@@ -549,8 +585,8 @@ func importMerge(tx txer, b *ExportBundle, res *ImportResult, files map[string]s
 			}
 		}
 		r, err := tx.Exec(
-			`INSERT INTO lists(folder_id, name, color, icon, sort_order, is_inbox, created_at) VALUES(?,?,?,?,?,0,?)`,
-			fid, l.Name, l.Color, l.Icon, l.SortOrder, stamp(l.CreatedAt),
+			`INSERT INTO lists(folder_id, name, color, icon, sort_order, is_inbox, archived, starred, created_at) VALUES(?,?,?,?,?,0,?,?,?)`,
+			fid, l.Name, l.Color, l.Icon, l.SortOrder, boolInt(l.Archived), boolInt(l.Starred), stamp(l.CreatedAt),
 		)
 		if err != nil {
 			return err
@@ -639,6 +675,24 @@ func importMerge(tx txer, b *ExportBundle, res *ImportResult, files map[string]s
 		res.HabitLogs++
 	}
 
+	// 保存的筛选条件按名称去重：同名的保留本地那一份，避免合并后侧栏出现两条一样的。
+	for _, f := range b.SavedFilters {
+		var n int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM saved_filters WHERE name = ?`, f.Name).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO saved_filters(name, query, sort_order, created_at) VALUES(?,?,?,?)`,
+			f.Name, f.Query, f.SortOrder, stamp(f.CreatedAt),
+		); err != nil {
+			return err
+		}
+		res.SavedFilters++
+	}
+
 	return nil
 }
 
@@ -684,14 +738,20 @@ func mergeFolders(tx txer, folders []model.Folder, res *ImportResult) (map[int64
 	}
 
 	mapped := map[int64]int64{}
+	// 第一趟：分组先都插成顶层（parent_id 为空），并把待接的父子关系记下来。
+	type pending struct {
+		id     int64
+		parent int64
+	}
+	todo := []pending{}
 	for _, f := range folders {
 		if id, ok := existing[f.Name]; ok {
 			mapped[f.ID] = id
 			continue
 		}
 		r, err := tx.Exec(
-			`INSERT INTO folders(name, color, icon, sort_order, collapsed, created_at) VALUES(?,?,?,?,?,?)`,
-			f.Name, f.Color, f.Icon, f.SortOrder, boolInt(f.Collapsed), stamp(f.CreatedAt),
+			`INSERT INTO folders(parent_id, name, color, icon, sort_order, collapsed, archived, created_at) VALUES(NULL,?,?,?,?,?,?,?)`,
+			f.Name, f.Color, f.Icon, f.SortOrder, boolInt(f.Collapsed), boolInt(f.Archived), stamp(f.CreatedAt),
 		)
 		if err != nil {
 			return nil, err
@@ -700,6 +760,17 @@ func mergeFolders(tx txer, folders []model.Folder, res *ImportResult) (map[int64
 		mapped[f.ID] = id
 		existing[f.Name] = id
 		res.Folders++
+		if f.ParentID != nil {
+			todo = append(todo, pending{id: id, parent: *f.ParentID})
+		}
+	}
+	// 第二趟：父子关系补齐。按名称合并过的上级会走 mapped 映射，指向真正落库的那一条。
+	for _, p := range todo {
+		if parent, ok := mapped[p.parent]; ok {
+			if _, err := tx.Exec(`UPDATE folders SET parent_id = ? WHERE id = ?`, parent, p.id); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return mapped, nil
 }
@@ -767,11 +838,12 @@ func insertAttachments(tx txer, t model.Task, taskID int64, files map[string]str
 
 // insertTaskWithID 按原 id 精确复原一条任务（replace 模式）。
 func insertTaskWithID(tx txer, t model.Task) error {
-	if _, err := tx.Exec(`INSERT INTO tasks(id, list_id, title, notes, status, priority, due_date, due_time, end_time, reminders, repeat_rule, important, urgent, completed_at, sort_order, created_at, updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	if _, err := tx.Exec(`INSERT INTO tasks(id, list_id, title, notes, status, priority, start_date, due_date, due_time, end_time, url, reminders, repeat_rule, repeat_from, important, urgent, pinned, starred, completed_at, sort_order, created_at, updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		t.ID, t.ListID, t.Title, t.Notes, statusOr(t.Status), t.Priority,
-		t.DueDate, t.DueTime, t.EndTime, mustJSON(nonNil(t.Reminders)), t.RepeatRule,
-		boolInt(t.Important), boolInt(t.Urgent), t.CompletedAt, t.SortOrder,
+		t.StartDate, t.DueDate, t.DueTime, t.EndTime, t.URL,
+		mustJSON(nonNil(t.Reminders)), t.RepeatRule, normalizeRepeatFrom(t.RepeatFrom),
+		boolInt(t.Important), boolInt(t.Urgent), boolInt(t.Pinned), boolInt(t.Starred), t.CompletedAt, t.SortOrder,
 		stamp(t.CreatedAt), stamp(t.UpdatedAt),
 	); err != nil {
 		return err
@@ -787,13 +859,14 @@ func insertTaskWithID(tx txer, t model.Task) error {
 	return nil
 }
 
-// insertTaskCopy 追加一条任务副本，id 由数据库重新分配（merge 模式）。
+// insertTaskCopy 追加一条任务副本，id 由数据库重新分配（merge 模式 / 撤销恢复复用）。
 func insertTaskCopy(tx txer, t model.Task, listID int64) (int64, error) {
-	r, err := tx.Exec(`INSERT INTO tasks(list_id, title, notes, status, priority, due_date, due_time, end_time, reminders, repeat_rule, important, urgent, completed_at, sort_order, created_at, updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	r, err := tx.Exec(`INSERT INTO tasks(list_id, title, notes, status, priority, start_date, due_date, due_time, end_time, url, reminders, repeat_rule, repeat_from, important, urgent, pinned, starred, completed_at, sort_order, created_at, updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		listID, t.Title, t.Notes, statusOr(t.Status), t.Priority,
-		t.DueDate, t.DueTime, t.EndTime, mustJSON(nonNil(t.Reminders)), t.RepeatRule,
-		boolInt(t.Important), boolInt(t.Urgent), t.CompletedAt, t.SortOrder,
+		t.StartDate, t.DueDate, t.DueTime, t.EndTime, t.URL,
+		mustJSON(nonNil(t.Reminders)), t.RepeatRule, normalizeRepeatFrom(t.RepeatFrom),
+		boolInt(t.Important), boolInt(t.Urgent), boolInt(t.Pinned), boolInt(t.Starred), t.CompletedAt, t.SortOrder,
 		stamp(t.CreatedAt), stamp(t.UpdatedAt),
 	)
 	if err != nil {

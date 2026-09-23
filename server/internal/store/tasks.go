@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -16,14 +17,14 @@ var ErrNotFound = errors.New("记录不存在")
 
 const taskSelect = `
 SELECT t.id, t.list_id, t.title, t.notes, t.status, t.priority,
-       t.due_date, t.due_time, t.end_time, t.reminders, t.repeat_rule,
-       t.important, t.urgent, t.completed_at, t.sort_order, t.created_at, t.updated_at,
+       t.start_date, t.due_date, t.due_time, t.end_time, t.url, t.reminders, t.repeat_rule, t.repeat_from,
+       t.important, t.urgent, t.pinned, t.starred, t.completed_at, t.sort_order, t.created_at, t.updated_at,
        l.name, l.color, l.folder_id
 FROM tasks t JOIN lists l ON l.id = t.list_id`
 
 // TaskFilter 是任务查询条件。零值表示不过滤。
 type TaskFilter struct {
-	Smart    string // inbox|today|next7|overdue|all|done|nodate
+	Smart    string // inbox|today|tomorrow|week|next7|overdue|all|done|nodate|high|starred|updated|recentdone
 	ListID   *int64
 	FolderID *int64
 	Status   string // todo|done|all
@@ -33,8 +34,11 @@ type TaskFilter struct {
 	Priority *int
 	Quadrant string // 1=重要且紧急 2=重要不紧急 3=紧急不重要 4=都不
 	Search   string
-	SortBy   string // smart(默认)|manual|priority|due|created|title
+	SortBy   string // smart(默认)|manual|priority|due|created|updated|completed|title
 	Limit    int
+	// IncludeArchived 让被归档清单里的任务也参与查询。默认排除：
+	// 「归档」的语义就是「从日常视野里收起来」，否则智能清单会被旧事灌满。
+	IncludeArchived bool
 }
 
 // where 把过滤器翻译为 WHERE 子句与绑定参数。所有值均通过占位符绑定，杜绝注入。
@@ -53,8 +57,12 @@ func (f TaskFilter) whereCount() (string, []any) { return f.build(true) }
 func (f TaskFilter) build(countOnly bool) (string, []any) {
 	var where []string
 	var args []any
-	today := time.Now().Format("2006-01-02")
-	in7 := time.Now().AddDate(0, 0, 7).Format("2006-01-02")
+	now := time.Now()
+	today := now.Format("2006-01-02")
+	tomorrow := now.AddDate(0, 0, 1).Format("2006-01-02")
+	in7 := now.AddDate(0, 0, 7).Format("2006-01-02")
+	// 「本周」以周一为一周之始，取到本周日为止（今天恰是周日时即为今天）。
+	weekEnd := now.AddDate(0, 0, (7-int(now.Weekday()))%7).Format("2006-01-02")
 
 	status := f.Status
 	switch f.Smart {
@@ -68,6 +76,14 @@ func (f TaskFilter) build(countOnly bool) (string, []any) {
 		where = append(where, "t.due_date IS NOT NULL AND t.due_date <= ?")
 		args = append(args, today)
 		status = statusOpenWithTodayDone
+	case model.SmartTomorrow:
+		where = append(where, "t.due_date = ?")
+		args = append(args, tomorrow)
+		status = statusOpenWithTodayDone
+	case model.SmartWeek:
+		where = append(where, "t.due_date IS NOT NULL AND t.due_date >= ? AND t.due_date <= ?")
+		args = append(args, today, weekEnd)
+		status = statusOpenWithTodayDone
 	case model.SmartNext7:
 		where = append(where, "t.due_date IS NOT NULL AND t.due_date > ? AND t.due_date <= ?")
 		args = append(args, today, in7)
@@ -79,6 +95,20 @@ func (f TaskFilter) build(countOnly bool) (string, []any) {
 	case model.SmartNoDate:
 		where = append(where, "t.due_date IS NULL")
 		status = statusOpenWithTodayDone
+	case model.SmartHigh:
+		where = append(where, "t.priority = ?")
+		args = append(args, model.PriorityHigh)
+		status = statusOpenWithTodayDone
+	case model.SmartStarred:
+		where = append(where, "t.starred = 1")
+		status = statusOpenWithTodayDone
+	case model.SmartUpdated:
+		// 「最近修改」看的是全部状态（刚改过的往往是刚勾掉的），由排序决定读法。
+		if status == "" {
+			status = "all"
+		}
+	case model.SmartRecentDone:
+		status = model.StatusDone
 	case model.SmartDone:
 		status = model.StatusDone
 	case model.SmartAll:
@@ -97,10 +127,14 @@ func (f TaskFilter) build(countOnly bool) (string, []any) {
 	case model.StatusDone:
 		where = append(where, "t.status = 'done'")
 	case statusOpenWithTodayDone:
-		now := time.Now()
 		dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Format(time.RFC3339)
 		where = append(where, "(t.status = 'todo' OR (t.status = 'done' AND t.completed_at >= ?))")
 		args = append(args, dayStart)
+	}
+
+	// 归档清单里的任务默认不进入任何聚合视图；显式打开该清单时才算例外。
+	if !f.IncludeArchived && !(f.ListID != nil && f.Smart == "") {
+		where = append(where, "l.archived = 0")
 	}
 
 	if f.ListID != nil {
@@ -161,32 +195,45 @@ func (s *Store) CountTasks(f TaskFilter) (int, error) {
 	return n, nil
 }
 
-// 排序：已完成沉底；未完成按 到期日 → 时间 → 优先级 → 手工顺序。
-// 已完成任务一律沉底，这是所有排序模式的共同前提。
+// 排序：已完成沉底；未完成里置顶的排最前。已完成任务一律沉底，这是所有排序模式的共同前提。
 const doneLast = `CASE WHEN t.status = 'done' THEN 1 ELSE 0 END`
+
+// 置顶只对未完成的任务生效：勾掉之后就该沉到「已完成」分区，而不是继续压在顶上。
+const pinnedFirst = `CASE WHEN t.status <> 'done' AND t.pinned = 1 THEN 0 ELSE 1 END`
 
 // orderByFor 返回列表排序子句。
 //
 // 默认的 smart 模式让到期日与优先级主导顺序——这是「今天」这类视图应有的读法。
 // 但要支持手动拖拽排序，就必须有一个让 sort_order 说了算的模式，即 manual；
 // 否则用户拖完会发现顺序纹丝不动（sort_order 只是 smart 模式里的第五顺位）。
-func orderByFor(sortBy string) string {
+// smart 参数用于两个「按时间倒序才读得通」的智能清单：最近修改与最近完成。
+func orderByFor(sortBy, smart string) string {
 	switch sortBy {
 	case "manual":
-		return " ORDER BY " + doneLast + `, t.sort_order ASC, t.id ASC`
+		return " ORDER BY " + doneLast + ", " + pinnedFirst + `, t.sort_order ASC, t.id ASC`
 	case "priority":
-		return " ORDER BY " + doneLast + `, t.priority DESC, t.sort_order ASC, t.id ASC`
+		return " ORDER BY " + doneLast + ", " + pinnedFirst + `, t.priority DESC, t.sort_order ASC, t.id ASC`
 	case "due":
-		return " ORDER BY " + doneLast + `,
+		return " ORDER BY " + doneLast + ", " + pinnedFirst + `,
           CASE WHEN t.due_date IS NULL THEN 1 ELSE 0 END,
           t.due_date ASC, COALESCE(t.due_time, '99:99') ASC,
           t.sort_order ASC, t.id ASC`
 	case "created":
-		return " ORDER BY " + doneLast + `, t.created_at DESC, t.id DESC`
+		return " ORDER BY " + doneLast + ", " + pinnedFirst + `, t.created_at DESC, t.id DESC`
+	case "updated":
+		return " ORDER BY " + doneLast + ", " + pinnedFirst + `, t.updated_at DESC, t.id DESC`
+	case "completed":
+		return " ORDER BY " + doneLast + `, t.completed_at DESC, t.id DESC`
 	case "title":
-		return " ORDER BY " + doneLast + `, t.title COLLATE NOCASE ASC, t.id ASC`
+		return " ORDER BY " + doneLast + ", " + pinnedFirst + `, t.title COLLATE NOCASE ASC, t.id ASC`
 	default:
-		return " ORDER BY " + doneLast + `,
+		switch smart {
+		case model.SmartRecentDone:
+			return " ORDER BY " + doneLast + `, t.completed_at DESC, t.id DESC`
+		case model.SmartUpdated:
+			return " ORDER BY " + doneLast + ", " + pinnedFirst + `, t.updated_at DESC, t.id DESC`
+		}
+		return " ORDER BY " + doneLast + ", " + pinnedFirst + `,
           CASE WHEN t.due_date IS NULL THEN 1 ELSE 0 END,
           t.due_date ASC, COALESCE(t.due_time, '99:99') ASC,
           t.priority DESC, t.sort_order ASC, t.id ASC`
@@ -200,7 +247,7 @@ func (s *Store) ListTasks(f TaskFilter) ([]model.Task, error) {
 	if where != "" {
 		q += " WHERE " + where
 	}
-	q += orderByFor(f.SortBy)
+	q += orderByFor(f.SortBy, f.Smart)
 	if f.Limit > 0 {
 		q += " LIMIT " + strconv.Itoa(f.Limit)
 	}
@@ -272,18 +319,22 @@ type rowScanner interface {
 
 func scanTask(r rowScanner) (model.Task, error) {
 	var t model.Task
-	var dueDate, dueTime, endTime, repeatRule, completedAt sql.NullString
-	var reminders string
-	var important, urgent int
+	var startDate, dueDate, dueTime, endTime, repeatRule, completedAt sql.NullString
+	var reminders, url, repeatFrom string
+	var important, urgent, pinned, starred int
 	var listName, listColor sql.NullString
 	var folderID sql.NullInt64
 
 	err := r.Scan(&t.ID, &t.ListID, &t.Title, &t.Notes, &t.Status, &t.Priority,
-		&dueDate, &dueTime, &endTime, &reminders, &repeatRule,
-		&important, &urgent, &completedAt, &t.SortOrder, &t.CreatedAt, &t.UpdatedAt,
+		&startDate, &dueDate, &dueTime, &endTime, &url, &reminders, &repeatRule, &repeatFrom,
+		&important, &urgent, &pinned, &starred, &completedAt, &t.SortOrder, &t.CreatedAt, &t.UpdatedAt,
 		&listName, &listColor, &folderID)
 	if err != nil {
 		return t, err
+	}
+	if startDate.Valid {
+		v := startDate.String
+		t.StartDate = &v
 	}
 	if dueDate.Valid {
 		v := dueDate.String
@@ -305,8 +356,15 @@ func scanTask(r rowScanner) (model.Task, error) {
 		v := completedAt.String
 		t.CompletedAt = &v
 	}
+	t.URL = url
+	t.RepeatFrom = repeatFrom
+	if t.RepeatFrom == "" {
+		t.RepeatFrom = model.RepeatFromDue
+	}
 	t.Important = important == 1
 	t.Urgent = urgent == 1
+	t.Pinned = pinned == 1
+	t.Starred = starred == 1
 	t.ListName = listName.String
 	t.ListColor = listColor.String
 	if folderID.Valid {
@@ -407,13 +465,15 @@ func (s *Store) CreateTask(in model.TaskInput, defaultListID int64) (*model.Task
 	}
 
 	priority := deref(in.Priority, model.PriorityNone)
-	dueDate := derefPtr(in.DueDate, nil)
+	startDate := cleanDatePtr(derefPtr(in.StartDate, nil))
+	dueDate := cleanDatePtr(derefPtr(in.DueDate, nil))
 	dueTime := derefPtr(in.DueTime, nil)
 	endTime := derefPtr(in.EndTime, nil)
 	repeatRule := derefPtr(in.RepeatRule, nil)
 	if repeatRule != nil && strings.TrimSpace(*repeatRule) == "" {
 		repeatRule = nil
 	}
+	repeatFrom := normalizeRepeatFrom(deref(in.RepeatFrom, model.RepeatFromDue))
 
 	important := deriveImportant(priority)
 	if in.Important.Set {
@@ -443,10 +503,12 @@ func (s *Store) CreateTask(in model.TaskInput, defaultListID int64) (*model.Task
 	defer func() { _ = tx.Rollback() }()
 
 	ts := model.Now()
-	res, err := tx.Exec(`INSERT INTO tasks(list_id, title, notes, status, priority, due_date, due_time, end_time, reminders, repeat_rule, important, urgent, sort_order, created_at, updated_at)
-		VALUES(?,?,?,'todo',?,?,?,?,?,?,?,?,?,?,?)`,
-		listID, title, deref(in.Notes, ""), priority, ptrStr(dueDate), ptrStr(dueTime), ptrStr(endTime),
-		mustJSON(reminders), ptrStr(repeatRule), boolInt(important), boolInt(urgent), sortOrder, ts, ts)
+	res, err := tx.Exec(`INSERT INTO tasks(list_id, title, notes, status, priority, start_date, due_date, due_time, end_time, url, reminders, repeat_rule, repeat_from, important, urgent, pinned, starred, sort_order, created_at, updated_at)
+		VALUES(?,?,?,'todo',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		listID, title, deref(in.Notes, ""), priority, ptrStr(startDate), ptrStr(dueDate), ptrStr(dueTime), ptrStr(endTime),
+		deref(in.URL, ""), mustJSON(reminders), ptrStr(repeatRule), repeatFrom,
+		boolInt(important), boolInt(urgent), boolInt(deref(in.Pinned, false)), boolInt(deref(in.Starred, false)),
+		sortOrder, ts, ts)
 	if err != nil {
 		return nil, err
 	}
@@ -481,7 +543,27 @@ func (s *Store) CreateTask(in model.TaskInput, defaultListID int64) (*model.Task
 		return nil, err
 	}
 	s.emit(model.EventTaskCreated, t)
+	s.logActivity(model.ActCreated, t.ID, t.Title, "归入 "+t.ListName)
 	return t, nil
+}
+
+// cleanDatePtr 把空串日期归一为 nil，避免「空日期」在比较与展示上像模像样地存在。
+func cleanDatePtr(p *string) *string {
+	if p == nil {
+		return nil
+	}
+	if strings.TrimSpace(*p) == "" {
+		return nil
+	}
+	return p
+}
+
+// normalizeRepeatFrom 只接受两种取值，其余一律回落到「从原到期日生成」。
+func normalizeRepeatFrom(v string) string {
+	if v == model.RepeatFromDone {
+		return model.RepeatFromDone
+	}
+	return model.RepeatFromDue
 }
 
 // UpdateTask 按 PATCH 语义更新任务。
@@ -514,6 +596,9 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 	if in.Priority.Set {
 		add("priority = ?", in.Priority.Value)
 	}
+	if in.StartDate.Set {
+		add("start_date = ?", ptrStr(cleanDatePtr(in.StartDate.Value)))
+	}
 	if in.DueDate.Set {
 		add("due_date = ?", ptrStr(in.DueDate.Value))
 	}
@@ -522,6 +607,15 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 	}
 	if in.EndTime.Set {
 		add("end_time = ?", ptrStr(in.EndTime.Value))
+	}
+	if in.URL.Set {
+		add("url = ?", strings.TrimSpace(in.URL.Value))
+	}
+	if in.Pinned.Set {
+		add("pinned = ?", boolInt(in.Pinned.Value))
+	}
+	if in.Starred.Set {
+		add("starred = ?", boolInt(in.Starred.Value))
 	}
 	if in.Reminders.Set {
 		r := in.Reminders.Value
@@ -532,6 +626,9 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 	}
 	if in.RepeatRule.Set {
 		add("repeat_rule = ?", ptrStr(in.RepeatRule.Value))
+	}
+	if in.RepeatFrom.Set {
+		add("repeat_from = ?", normalizeRepeatFrom(in.RepeatFrom.Value))
 	}
 	if in.SortOrder.Set {
 		add("sort_order = ?", in.SortOrder.Value)
@@ -595,19 +692,36 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 	switch {
 	case cur.Status != t.Status && t.Status == model.StatusDone:
 		s.emit(model.EventTaskCompleted, t)
+		s.logActivity(model.ActCompleted, t.ID, t.Title, "在 "+t.ListName+" 中完成")
 	case cur.Status != t.Status && t.Status == model.StatusTodo:
 		s.emit(model.EventTaskReopened, t)
+		s.logActivity(model.ActReopened, t.ID, t.Title, "恢复为未完成")
+	case cur.ListID != t.ListID:
+		s.emit(model.EventTaskUpdated, t)
+		s.logActivity(model.ActMoved, t.ID, t.Title, cur.ListName+" → "+t.ListName)
 	default:
 		s.emit(model.EventTaskUpdated, t)
 	}
 	return t, nil
 }
 
-// DeleteTask 删除任务，连同它的附件。
+// DeleteTask 删除任务。删除前会把任务存进撤销槽位，附件文件暂缓清理，
+// 用户可在十分钟内反悔（见 undo.go）。
 func (s *Store) DeleteTask(id int64) error {
-	// 先取一份快照供事件消费（Webhook 与 CalDAV 都需要 id），取不到也继续删。
-	cur, _ := s.GetTask(id)
-	if err := s.deleteTaskAttachments(id); err != nil {
+	cur, err := s.GetTask(id)
+	if err != nil {
+		return err
+	}
+	if err := s.stageUndo("删除「"+cur.Title+"」", []model.Task{*cur}); err != nil {
+		return err
+	}
+	return s.deleteTaskRows(id, cur, false)
+}
+
+// deleteTaskRows 是真正落地的删除：记录删掉、文件留着交给撤销槽位管。
+// quiet 为 true 时不逐条记历史 —— 批量删除由调用方统一记一笔，否则日志会被刷满。
+func (s *Store) deleteTaskRows(id int64, cur *model.Task, quiet bool) error {
+	if err := s.dropTaskAttachments(id, false); err != nil {
 		return err
 	}
 	res, err := s.db.Exec(`DELETE FROM tasks WHERE id = ?`, id)
@@ -619,8 +733,89 @@ func (s *Store) DeleteTask(id int64) error {
 	}
 	if cur != nil {
 		s.emit(model.EventTaskDeleted, cur)
+		if !quiet {
+			s.logActivity(model.ActDeleted, cur.ID, cur.Title, "从 "+cur.ListName+" 删除")
+		}
 	}
 	return nil
+}
+
+// DuplicateTask 复制一条任务：结构照搬，状态归零。
+//
+// 复制出的新任务不继承「置顶」（置顶是对此刻的一个表态，不该自己长出来），
+// 子任务的勾选状态也一律清空 —— 副本的用处是再走一遍，而不是冒充走过了。
+func (s *Store) DuplicateTask(id int64) (*model.Task, error) {
+	cur, err := s.GetTask(id)
+	if err != nil {
+		return nil, err
+	}
+	subs := make([]model.Subtask, 0, len(cur.Subtasks))
+	for _, sub := range cur.Subtasks {
+		subs = append(subs, model.Subtask{Title: sub.Title, Done: false})
+	}
+	in := model.TaskInput{
+		Title:      optOf(cur.Title + "（副本）"),
+		Notes:      optOf(cur.Notes),
+		ListID:     optOf(cur.ListID),
+		Priority:   optOf(cur.Priority),
+		StartDate:  optOfPtr(cur.StartDate),
+		DueDate:    optOfPtr(cur.DueDate),
+		DueTime:    optOfPtr(cur.DueTime),
+		EndTime:    optOfPtr(cur.EndTime),
+		URL:        optOf(cur.URL),
+		Reminders:  optOf(cur.Reminders),
+		RepeatRule: optOfPtr(cur.RepeatRule),
+		RepeatFrom: optOf(cur.RepeatFrom),
+		Important:  optOf(cur.Important),
+		Urgent:     optOf(cur.Urgent),
+		Starred:    optOf(cur.Starred),
+		Subtasks:   optOf(subs),
+	}
+	nt, err := s.CreateTask(in, cur.ListID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0, len(cur.Tags))
+	for _, tg := range cur.Tags {
+		ids = append(ids, tg.ID)
+	}
+	if len(ids) > 0 {
+		if err := syncTaskTags(s.db, nt.ID, ids); err != nil {
+			return nil, err
+		}
+	}
+	s.logActivity(model.ActDuplicated, nt.ID, nt.Title, "复制自「"+cur.Title+"」")
+	return s.GetTask(nt.ID)
+}
+
+// PurgeCompleted 清空已完成任务。listID 为 nil 表示跨全部清单。
+func (s *Store) PurgeCompleted(listID *int64) (int, error) {
+	f := TaskFilter{Status: model.StatusDone, SortBy: "manual", IncludeArchived: true}
+	if listID != nil {
+		f.ListID = listID
+	}
+	tasks, err := s.ListTasks(f)
+	if err != nil {
+		return 0, err
+	}
+	if len(tasks) == 0 {
+		return 0, nil
+	}
+	label := "清空全部已完成任务"
+	if listID != nil {
+		label = "清空清单内已完成任务"
+	}
+	if err := s.stageUndo(label, tasks); err != nil {
+		return 0, err
+	}
+	n := 0
+	for i := range tasks {
+		if err := s.deleteTaskRows(tasks[i].ID, &tasks[i], true); err == nil {
+			n++
+		}
+	}
+	s.logActivity(model.ActPurged, tasks[0].ID, strconv.Itoa(n)+" 件已完成任务", label)
+	return n, nil
 }
 
 // ToggleResult 描述一次完成/恢复操作的结果。
@@ -632,7 +827,11 @@ type ToggleResult struct {
 
 // ToggleTask 切换完成状态。完成一个重复任务时，自动续期出下一次任务——
 // 「敬终」之后立即「慎始」，让循环不断。
-func (s *Store) ToggleTask(id int64) (*ToggleResult, error) {
+func (s *Store) ToggleTask(id int64) (*ToggleResult, error) { return s.toggleTask(id, false) }
+
+// toggleTask 是 ToggleTask 的内部实现。quiet 用于批量场景：
+// 一次勾掉三十件不该在操作历史里刷出三十行，由调用方记一笔汇总。
+func (s *Store) toggleTask(id int64, quiet bool) (*ToggleResult, error) {
 	cur, err := s.GetTask(id)
 	if err != nil {
 		return nil, err
@@ -644,24 +843,23 @@ func (s *Store) ToggleTask(id int64) (*ToggleResult, error) {
 		}
 		res := &ToggleResult{Completed: true}
 		if cur.RepeatRule != nil && *cur.RepeatRule != "" {
-			base := time.Now()
-			if cur.DueDate != nil {
-				if d, err := time.ParseInLocation("2006-01-02", *cur.DueDate, time.Local); err == nil {
-					base = d
-				}
-			}
-			if next, nextRule, ok := NextOccurrence(*cur.RepeatRule, base); ok {
+			if next, nextRule, ok := NextRepeat(*cur.RepeatRule, cur.StartDate, cur.DueDate, cur.RepeatFrom, time.Now()); ok {
 				nd := next.Format("2006-01-02")
 				in := model.TaskInput{
 					Title:      optOf(cur.Title),
 					Notes:      optOf(cur.Notes),
 					ListID:     optOf(cur.ListID),
 					Priority:   optOf(cur.Priority),
+					StartDate:  optOfPtr(shiftStart(cur.StartDate, cur.DueDate, nd)),
 					DueDate:    optOfPtr(&nd),
 					DueTime:    optOfPtr(cur.DueTime),
 					EndTime:    optOfPtr(cur.EndTime),
+					URL:        optOf(cur.URL),
 					Reminders:  optOf(cur.Reminders),
 					RepeatRule: optOfPtr(&nextRule),
+					RepeatFrom: optOf(cur.RepeatFrom),
+					Pinned:     optOf(cur.Pinned),
+					Starred:    optOf(cur.Starred),
 				}
 				in.Important = optOf(cur.Important)
 				in.Urgent = optOf(deriveUrgent(&nd, false))
@@ -682,6 +880,9 @@ func (s *Store) ToggleTask(id int64) (*ToggleResult, error) {
 			return nil, err
 		}
 		s.emit(model.EventTaskCompleted, res.Task)
+		if !quiet {
+			s.logActivity(model.ActCompleted, res.Task.ID, res.Task.Title, "在 "+res.Task.ListName+" 中完成")
+		}
 		return res, nil
 	}
 	if _, err := s.db.Exec(`UPDATE tasks SET status='todo', completed_at=NULL, updated_at=? WHERE id=?`, ts, id); err != nil {
@@ -692,7 +893,67 @@ func (s *Store) ToggleTask(id int64) (*ToggleResult, error) {
 		return nil, err
 	}
 	s.emit(model.EventTaskReopened, t)
+	if !quiet {
+		s.logActivity(model.ActReopened, t.ID, t.Title, "恢复为未完成")
+	}
 	return &ToggleResult{Task: t, Completed: false}, nil
+}
+
+// NextRepeat 计算下一次发生的日期，并处理两种续期基准。
+//
+// 「从原到期日生成」（默认）保持节奏不乱，长期逾期后完成时会把日期顺推到今天之后，
+// 否则次日就会冒出一条「昨天该做」的任务，越积越显得欠债。
+// 「从实际完成日生成」则适合「松一口气再排下一次」的安排。
+func NextRepeat(rule string, startDate, dueDate *string, repeatFrom string, now time.Time) (time.Time, string, bool) {
+	base := now
+	// 有开始日期时以开始日为锚，没有才退到到期日 —— 与「任务从哪天起算」的直觉一致。
+	for _, src := range []*string{startDate, dueDate} {
+		if src == nil {
+			continue
+		}
+		if d, err := time.ParseInLocation("2006-01-02", *src, time.Local); err == nil {
+			base = d
+			break
+		}
+	}
+	if normalizeRepeatFrom(repeatFrom) == model.RepeatFromDone {
+		base = now
+	}
+	next, nextRule, ok := NextOccurrence(rule, base)
+	if !ok {
+		return time.Time{}, "", false
+	}
+	// 从原到期日推的规则要避免「下一次落在过去」，否则逾期任务会永远补不完。
+	if normalizeRepeatFrom(repeatFrom) != model.RepeatFromDone {
+		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		for i := 0; i < 400 && next.Before(today); i++ {
+			n2, r2, ok2 := NextOccurrence(nextRule, next)
+			if !ok2 {
+				return time.Time{}, "", false
+			}
+			next, nextRule = n2, r2
+		}
+	}
+	return next, nextRule, true
+}
+
+// shiftStart 在续期时把开始日期按到期日平移相同天数，让「开始 — 截止」这段跨度保持稳定。
+func shiftStart(startDate, oldDue *string, newDue string) *string {
+	if startDate == nil || oldDue == nil {
+		return nil
+	}
+	from, err1 := time.ParseInLocation("2006-01-02", *oldDue, time.Local)
+	to, err2 := time.ParseInLocation("2006-01-02", newDue, time.Local)
+	if err1 != nil || err2 != nil {
+		return nil
+	}
+	d, err := time.ParseInLocation("2006-01-02", *startDate, time.Local)
+	if err != nil {
+		return nil
+	}
+	shifted := d.AddDate(0, 0, int(to.Sub(from).Hours()/24))
+	out := shifted.Format("2006-01-02")
+	return &out
 }
 
 // SkipTask 跳过重复任务的本次发生：只把日期推进到下一次，不记为完成。
@@ -706,20 +967,15 @@ func (s *Store) SkipTask(id int64) (*model.Task, error) {
 	if cur.RepeatRule == nil || strings.TrimSpace(*cur.RepeatRule) == "" {
 		return nil, ValidationError{Msg: "该任务没有重复规则，无法跳过本次"}
 	}
-	base := time.Now()
-	if cur.DueDate != nil {
-		if d, err := time.ParseInLocation("2006-01-02", *cur.DueDate, time.Local); err == nil {
-			base = d
-		}
-	}
-	next, nextRule, ok := NextOccurrence(*cur.RepeatRule, base)
+	// 跳过一律从原定日期往后推：这次不做，但不能把节奏带偏。
+	next, nextRule, ok := NextRepeat(*cur.RepeatRule, cur.StartDate, cur.DueDate, model.RepeatFromDue, time.Now())
 	if !ok {
 		return nil, ValidationError{Msg: "重复规则已无后续，无法跳过"}
 	}
 	nd := next.Format("2006-01-02")
 	if _, err := s.db.Exec(
-		`UPDATE tasks SET due_date = ?, repeat_rule = ?, urgent = ?, updated_at = ? WHERE id = ?`,
-		nd, nextRule, boolInt(deriveUrgent(&nd, false)), model.Now(), id,
+		`UPDATE tasks SET due_date = ?, start_date = ?, repeat_rule = ?, urgent = ?, updated_at = ? WHERE id = ?`,
+		nd, shiftStart(cur.StartDate, cur.DueDate, nd), nextRule, boolInt(deriveUrgent(&nd, false)), model.Now(), id,
 	); err != nil {
 		return nil, err
 	}
@@ -772,37 +1028,125 @@ func ptrStr(p *string) any {
 	return nullableStr(*p)
 }
 
-// BatchAction 批量操作：complete | reopen | delete | move。
+// BatchAction 批量操作：complete | reopen | delete | move | pin | unpin | star | unstar。
+//
+// 批量删除只占一个撤销槽位。逐个 stage 的话，最后一笔会把前面全盖掉，
+// 用户点「撤销」只能收回一件 —— 那不是撤销，那是捉弄人。
 func (s *Store) BatchAction(ids []int64, action string, listID *int64, dueDate *string) (int, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
+
+	if action == "delete" {
+		found := make([]model.Task, 0, len(ids))
+		for _, id := range ids {
+			if cur, err := s.GetTask(id); err == nil {
+				found = append(found, *cur)
+			}
+		}
+		if len(found) > 0 {
+			label := "删除「" + found[0].Title + "」"
+			if len(found) > 1 {
+				label = fmt.Sprintf("删除 %d 件任务", len(found))
+			}
+			if err := s.stageUndo(label, found); err != nil {
+				return 0, err
+			}
+		}
+		n := 0
+		for i := range found {
+			if err := s.deleteTaskRows(found[i].ID, &found[i], true); err == nil {
+				n++
+			} else if !errors.Is(err, ErrNotFound) {
+				return n, err
+			}
+		}
+		if n > 0 {
+			s.logActivity(model.ActDeleted, found[0].ID, found[0].Title, fmt.Sprintf("批量删除 %d 件任务", n))
+		}
+		return n, nil
+	}
+
 	n := 0
+	firstTitle := ""
 	for _, id := range ids {
 		var err error
 		switch action {
 		case "complete":
-			if _, err = s.ToggleTask(id); err == nil {
+			if _, err = s.toggleTask(id, true); err == nil {
 				n++
 			}
 		case "reopen":
 			if _, err = s.db.Exec(`UPDATE tasks SET status='todo', completed_at=NULL, updated_at=? WHERE id=?`, model.Now(), id); err == nil {
 				n++
 			}
-		case "delete":
-			if err = s.DeleteTask(id); err == nil {
-				n++
-			}
 		case "move":
 			if _, err = s.MoveTask(id, listID, dueDate, nil); err == nil {
+				n++
+			}
+		case "pin", "unpin", "star", "unstar":
+			col, val := "pinned", 1
+			if action == "unpin" || action == "unstar" {
+				val = 0
+			}
+			if action == "star" || action == "unstar" {
+				col = "starred"
+			}
+			if _, err = s.db.Exec(`UPDATE tasks SET `+col+` = ?, updated_at = ? WHERE id = ?`, val, model.Now(), id); err == nil {
 				n++
 			}
 		}
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return n, err
 		}
+		if firstTitle == "" {
+			if t, gerr := s.GetTask(id); gerr == nil {
+				firstTitle = t.Title
+			}
+		}
+	}
+
+	// 批量动作只记一笔汇总：逐条记会把操作历史变成一张流水账，反而看不出做过什么。
+	switch action {
+	case "complete":
+		s.logActivity(model.ActCompleted, ids[0], firstTitle, fmt.Sprintf("批量完成 %d 件任务", n))
+	case "reopen":
+		s.logActivity(model.ActReopened, ids[0], firstTitle, fmt.Sprintf("批量恢复 %d 件任务", n))
+	case "move":
+		if listID != nil {
+			name := ""
+			if l, err := s.List(*listID); err == nil {
+				name = l.Name
+			}
+			s.logActivity(model.ActMoved, ids[0], firstTitle, fmt.Sprintf("批量移动 %d 件任务到 %s", n, name))
+		}
 	}
 	return n, nil
+}
+
+// List 按 id 取单个清单。
+func (s *Store) List(id int64) (*model.List, error) {
+	rows, err := s.db.Query(`
+		SELECT l.id, l.folder_id, l.name, l.color, l.icon, l.sort_order, l.archived, l.starred, l.created_at,
+		       (SELECT COUNT(*) FROM tasks t WHERE t.list_id = l.id AND t.status = 'todo')
+		FROM lists l WHERE l.id = ?`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, ErrNotFound
+	}
+	var l model.List
+	var fid *int64
+	var archived, starred int
+	if err := rows.Scan(&l.ID, &fid, &l.Name, &l.Color, &l.Icon, &l.SortOrder, &archived, &starred, &l.CreatedAt, &l.TaskCount); err != nil {
+		return nil, err
+	}
+	l.FolderID = fid
+	l.Archived = archived == 1
+	l.Starred = starred == 1
+	return &l, rows.Err()
 }
 
 // ReorderTasks 按传入的 id 顺序重写 sort_order，供手动拖拽排序落库。

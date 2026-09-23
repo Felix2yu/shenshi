@@ -138,15 +138,30 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/tasks", h(s.createTask))
 	s.mux.HandleFunc("POST /api/tasks/batch", h(s.batchTasks))
 	s.mux.HandleFunc("POST /api/tasks/reorder", h(s.reorderTasks))
+	s.mux.HandleFunc("POST /api/tasks/purge", h(s.purgeCompleted))
 	s.mux.HandleFunc("GET /api/tasks/{id}", h(s.getTask))
 	s.mux.HandleFunc("PATCH /api/tasks/{id}", h(s.updateTask))
 	s.mux.HandleFunc("DELETE /api/tasks/{id}", h(s.deleteTask))
 	s.mux.HandleFunc("POST /api/tasks/{id}/toggle", h(s.toggleTask))
 	s.mux.HandleFunc("POST /api/tasks/{id}/skip", h(s.skipTask))
 	s.mux.HandleFunc("POST /api/tasks/{id}/move", h(s.moveTask))
+	s.mux.HandleFunc("POST /api/tasks/{id}/duplicate", h(s.duplicateTask))
 	s.mux.HandleFunc("POST /api/tasks/{id}/subtasks", h(s.addSubtask))
 	s.mux.HandleFunc("PATCH /api/subtasks/{id}", h(s.updateSubtask))
 	s.mux.HandleFunc("DELETE /api/subtasks/{id}", h(s.deleteSubtask))
+
+	// 撤销最近一次删除与操作历史
+	s.mux.HandleFunc("GET /api/undo", h(s.undoState))
+	s.mux.HandleFunc("POST /api/undo", h(s.undo))
+	s.mux.HandleFunc("DELETE /api/undo", h(s.dropUndo))
+	s.mux.HandleFunc("GET /api/activities", h(s.listActivities))
+	s.mux.HandleFunc("DELETE /api/activities", h(s.clearActivities))
+
+	// 保存的筛选条件
+	s.mux.HandleFunc("GET /api/saved-filters", h(s.listSavedFilters))
+	s.mux.HandleFunc("POST /api/saved-filters", h(s.createSavedFilter))
+	s.mux.HandleFunc("PATCH /api/saved-filters/{id}", h(s.updateSavedFilter))
+	s.mux.HandleFunc("DELETE /api/saved-filters/{id}", h(s.deleteSavedFilter))
 
 	s.mux.HandleFunc("GET /api/folders", h(s.listFolders))
 	s.mux.HandleFunc("POST /api/folders", h(s.createFolder))

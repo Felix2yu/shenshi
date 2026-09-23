@@ -23,13 +23,26 @@ const (
 
 // 智能清单（虚拟清单）标识。这些不是数据库实体，由查询条件驱动。
 const (
-	SmartInbox   = "inbox"
-	SmartToday   = "today"
-	SmartNext7   = "next7"
-	SmartOverdue = "overdue"
-	SmartAll     = "all"
-	SmartDone    = "done"
-	SmartNoDate  = "nodate"
+	SmartInbox      = "inbox"
+	SmartToday      = "today"
+	SmartTomorrow   = "tomorrow"   // 明天到期
+	SmartWeek       = "week"       // 本周内（至本周日）
+	SmartNext7      = "next7"
+	SmartOverdue    = "overdue"
+	SmartAll        = "all"
+	SmartDone       = "done"
+	SmartNoDate     = "nodate"
+	SmartHigh       = "high"       // 高优先级
+	SmartStarred    = "starred"    // 收藏
+	SmartUpdated    = "updated"    // 最近修改
+	SmartRecentDone = "recentdone" // 最近完成
+)
+
+// 重复任务的续期基准：从原到期日往后推，还是从实际完成日往后推。
+// 前者保持节奏不乱，后者适合「做完了再算下一次」的松散安排。
+const (
+	RepeatFromDue  = "due"
+	RepeatFromDone = "done"
 )
 
 // Now 返回本地时间的 RFC3339 字符串，全项目统一时间序列化格式。
@@ -43,15 +56,19 @@ func Offset(days int) string {
 }
 
 // Folder 清单分组：用于把若干清单归入同一主题（如「工作」「生活」）。
+// 分组可以再嵌套分组（ParentID），Children 是查询时装配出来的子树。
 type Folder struct {
 	ID        int64  `json:"id"`
+	ParentID  *int64 `json:"parentId"`
 	Name      string `json:"name"`
 	Color     string `json:"color"`
 	Icon      string `json:"icon"`
 	SortOrder int    `json:"sortOrder"`
 	Collapsed bool   `json:"collapsed"`
+	Archived  bool   `json:"archived"`
 	CreatedAt string `json:"createdAt"`
-	Lists     []List `json:"lists"`
+	Lists     []List   `json:"lists"`
+	Children  []Folder `json:"children"`
 }
 
 // List 清单：任务的直接归属容器。
@@ -62,6 +79,8 @@ type List struct {
 	Color     string `json:"color"`
 	Icon      string `json:"icon"`
 	SortOrder int    `json:"sortOrder"`
+	Archived  bool   `json:"archived"`
+	Starred   bool   `json:"starred"`
 	CreatedAt string `json:"createdAt"`
 	TaskCount int    `json:"taskCount"` // 未完成任务数
 }
@@ -74,13 +93,19 @@ type Task struct {
 	Notes      string  `json:"notes"`
 	Status     string  `json:"status"`
 	Priority   int     `json:"priority"`
-	DueDate    *string `json:"dueDate"` // YYYY-MM-DD
-	DueTime    *string `json:"dueTime"` // HH:MM
-	EndTime    *string `json:"endTime"` // HH:MM
+	StartDate  *string `json:"startDate"` // YYYY-MM-DD，计划开始日
+	DueDate    *string `json:"dueDate"`   // YYYY-MM-DD
+	DueTime    *string `json:"dueTime"`   // HH:MM
+	EndTime    *string `json:"endTime"`   // HH:MM
+	URL        string  `json:"url"`       // 关联链接（会议、文档、单号）
 	Reminders  []int   `json:"reminders"`
 	RepeatRule *string `json:"repeatRule"`
-	Important  bool    `json:"important"` // 四象限：重要
-	Urgent     bool    `json:"urgent"`    // 四象限：紧急
+	// 重复任务的续期基准：due（默认，从原到期日推）| done（从实际完成日推）。
+	RepeatFrom string `json:"repeatFrom"`
+	Important  bool   `json:"important"` // 四象限：重要
+	Urgent     bool   `json:"urgent"`    // 四象限：紧急
+	Pinned     bool   `json:"pinned"`    // 置顶：始终排在未完成列表最前
+	Starred    bool   `json:"starred"`   // 收藏：进入「收藏」智能清单
 
 	CompletedAt *string `json:"completedAt"`
 	SortOrder   float64 `json:"sortOrder"`
@@ -279,16 +304,56 @@ type TaskInput struct {
 	ListID     Opt[int64]     `json:"listId"`
 	Status     Opt[string]    `json:"status"`
 	Priority   Opt[int]       `json:"priority"`
+	StartDate  Opt[*string]   `json:"startDate"`
 	DueDate    Opt[*string]   `json:"dueDate"`
 	DueTime    Opt[*string]   `json:"dueTime"`
 	EndTime    Opt[*string]   `json:"endTime"`
+	URL        Opt[string]    `json:"url"`
 	Reminders  Opt[[]int]     `json:"reminders"`
 	RepeatRule Opt[*string]   `json:"repeatRule"`
+	RepeatFrom Opt[string]    `json:"repeatFrom"`
 	Important  Opt[bool]      `json:"important"`
 	Urgent     Opt[bool]      `json:"urgent"`
+	Pinned     Opt[bool]      `json:"pinned"`
+	Starred    Opt[bool]      `json:"starred"`
 	TagIDs     Opt[[]int64]   `json:"tagIds"`
 	Subtasks   Opt[[]Subtask] `json:"subtasks"`
 	SortOrder  Opt[float64]   `json:"sortOrder"`
+}
+
+// SavedFilter 保存下来的筛选条件。Query 存前端 TaskFilter 的 JSON 原文，
+// 服务端只负责保管与排序，不解释它的内容 —— 筛选维度会随版本变化，
+// 让两端各自解析一份是自找麻烦。
+type SavedFilter struct {
+	ID        int64   `json:"id"`
+	Name      string  `json:"name"`
+	Query     string  `json:"query"`
+	SortOrder float64 `json:"sortOrder"`
+	CreatedAt string  `json:"createdAt"`
+}
+
+// 操作历史的事件类型。只记「值得回看」的动作，不做逐字段的流水账。
+const (
+	ActCreated    = "created"
+	ActCompleted  = "completed"
+	ActReopened   = "reopened"
+	ActDeleted    = "deleted"
+	ActDuplicated = "duplicated"
+	ActMoved      = "moved"
+	ActPurged     = "purged"
+	ActUndone     = "undone"
+	ActArchived   = "archived"
+	ActUnarchived = "unarchived"
+)
+
+// Activity 一条操作历史。
+type Activity struct {
+	ID        int64  `json:"id"`
+	Kind      string `json:"kind"`
+	TaskID    *int64 `json:"taskId"`
+	Title     string `json:"title"`
+	Detail    string `json:"detail"`
+	CreatedAt string `json:"createdAt"`
 }
 
 // 习惯的重复节奏。

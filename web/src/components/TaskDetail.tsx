@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { api } from '../api/client'
-import { addDays, addMonths, fullDate, relativeTime, todayStr, weekday } from '../lib/date'
+import { addDays, addMonths, dayDiff, fullDate, relativeTime, todayStr, weekday } from '../lib/date'
 import { renderMarkdown } from '../lib/markdown'
 import { describeRepeat } from '../lib/nlp'
 import { useStore } from '../store/AppStore'
@@ -9,18 +9,23 @@ import type { Attachment, Priority, Task } from '../types'
 import {
   IconBell,
   IconCalendar,
+  IconCalendarRange,
   IconCheck,
   IconClock,
+  IconCopy,
   IconDownload,
   IconEye,
   IconFlag,
+  IconLink,
   IconList,
   IconMore,
   IconNote,
   IconPaperclip,
+  IconPin,
   IconPlus,
   IconRepeat,
   IconSparkle,
+  IconStar,
   IconSubtask,
   IconTag,
   IconTemplate,
@@ -63,6 +68,8 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
     createTag,
     startFocus,
     skipTask,
+    duplicateTask,
+    setSelectedTask,
     toast,
   } = useStore()
 
@@ -216,6 +223,18 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
           {done ? `完成于 ${relativeTime(task.completedAt)}` : `创建于 ${relativeTime(task.createdAt)}`}
         </span>
         <IconButton
+          icon={IconPin}
+          label={task.pinned ? '取消置顶' : '置顶'}
+          active={task.pinned}
+          onClick={() => void updateTask(task.id, { pinned: !task.pinned })}
+        />
+        <IconButton
+          icon={IconStar}
+          label={task.starred ? '取消收藏' : '收藏'}
+          active={task.starred}
+          onClick={() => void updateTask(task.id, { starred: !task.starred })}
+        />
+        <IconButton
           icon={IconTimer}
           label="开始专注 25 分钟"
           onClick={() => {
@@ -261,6 +280,18 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                 跳过本次
               </button>
             ) : null}
+            <button
+              type="button"
+              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-ink hover:bg-surface-2"
+              onClick={async () => {
+                setMoreOpen(false)
+                const copy = await duplicateTask(task.id)
+                if (copy) setSelectedTask(copy.id)
+              }}
+            >
+              <IconCopy size={13} className="text-ink-3" />
+              复制一份
+            </button>
             <div className="my-1 border-t border-line" />
             <button
               type="button"
@@ -269,7 +300,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                 setMoreOpen(false)
                 const ok = await confirm({
                   title: `删除「${task.title}」`,
-                  message: '删除后不可恢复。',
+                  message: '删除后可在左下角撤销，超过 10 分钟才彻底消失。',
                   confirmText: '删除',
                   danger: true,
                 })
@@ -372,6 +403,34 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
 
         {/* 属性区 */}
         <div className="mt-4 space-y-2.5 border-t border-line pt-4">
+          {/* 开始日期：只表明「打算从哪天动手」，不参与逾期判定 */}
+          <Row label="开始" icon={IconCalendarRange}>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <input
+                type="date"
+                className={inputClass}
+                value={task.startDate ?? ''}
+                onChange={(e) => void updateTask(task.id, { startDate: e.target.value || null })}
+              />
+              {task.startDate ? (
+                <>
+                  <span className="text-[11.5px] text-ink-3">
+                    {task.startDate <= todayStr() ? '已到动手日' : `还有 ${dayDiff(task.startDate, todayStr())} 天`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void updateTask(task.id, { startDate: null })}
+                    className="rounded-md border border-line px-2 py-1 text-[12px] text-ink-2 transition-colors hover:border-p-high/40 hover:text-p-high"
+                  >
+                    清除
+                  </button>
+                </>
+              ) : (
+                <span className="text-[11.5px] text-ink-3">未定动手日</span>
+              )}
+            </div>
+          </Row>
+
           {/* 日期与时间 */}
           <div className="relative">
             <Row label="日期" icon={IconCalendar}>
@@ -444,6 +503,11 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
               </Popover>
             </Row>
           </div>
+
+          {/* 链接：会议地址、工单、文档，与附件分开存放 */}
+          <Row label="链接" icon={IconLink}>
+            <UrlField value={task.url} onSave={(url) => void updateTask(task.id, { url })} />
+          </Row>
 
           {/* 提醒 */}
           <div className="relative">
@@ -521,6 +585,37 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                       <span className="text-[10.5px] text-ink-3">{o.group}</span>
                     </button>
                   ))}
+                  {task.repeatRule ? (
+                    <div className="border-t border-line px-2.5 pb-1 pt-2">
+                      <div className="pb-1 text-[11px] tracking-wide text-ink-3">下一次从哪天算</div>
+                      <div className="flex gap-1">
+                        {[
+                          { v: 'due' as const, l: '从原到期日', h: '节奏固定，不看实际完成时间' },
+                          { v: 'done' as const, l: '从完成日', h: '按实际完成时间往后排' },
+                        ].map((o) => (
+                          <button
+                            key={o.v}
+                            type="button"
+                            title={o.h}
+                            onClick={() => void updateTask(task.id, { repeatFrom: o.v })}
+                            className={cx(
+                              'flex-1 rounded-md border px-2 py-1 text-[11.5px] transition-colors',
+                              task.repeatFrom === o.v
+                                ? 'border-seal/45 bg-seal/10 font-medium text-seal'
+                                : 'border-line text-ink-2 hover:bg-surface-2',
+                            )}
+                          >
+                            {o.l}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="pt-1.5 text-[11px] leading-relaxed text-ink-3">
+                        {task.repeatFrom === 'done'
+                          ? '完成时才排下一次，适合「隔多久做一次」的事。'
+                          : '一到日子就推下一个周期，适合固定日子的例事。'}
+                      </p>
+                    </div>
+                  ) : null}
                   {repeatMeta?.ebbinghausOffsets.length ? (
                     <p className="border-t border-line px-2.5 pb-1 pt-2 text-[11px] leading-relaxed text-ink-3">
                       艾宾浩斯复习间隔（天）：{repeatMeta.ebbinghausOffsets.join(' / ')}
@@ -875,6 +970,80 @@ function Row({
         {label}
       </span>
       <div className="min-w-0 flex-1">{children}</div>
+    </div>
+  )
+}
+
+/** 链接输入：失焦或回车才落库，避免每敲一个字符打一次接口。 */
+function UrlField({ value, onSave }: { value: string; onSave: (url: string) => void }) {
+  const [draft, setDraft] = useState(value)
+  const [editing, setEditing] = useState(false)
+
+  useEffect(() => {
+    if (!editing) setDraft(value)
+  }, [value, editing])
+
+  const commit = () => {
+    setEditing(false)
+    const next = draft.trim()
+    if (next !== value) onSave(next)
+  }
+
+  if (!editing && !value) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className="rounded-lg border border-dashed border-line px-2 py-1 text-[12px] text-ink-3 transition-colors hover:border-seal/40 hover:text-seal"
+      >
+        添加链接
+      </button>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <input
+        value={draft}
+        autoFocus={editing}
+        onChange={(e) => {
+          setDraft(e.target.value)
+          setEditing(true)
+        }}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit()
+          if (e.key === 'Escape') {
+            setDraft(value)
+            setEditing(false)
+          }
+        }}
+        placeholder="https://…"
+        className={inputClass}
+      />
+      {value && !editing ? (
+        <>
+          <a
+            href={value}
+            target="_blank"
+            rel="noreferrer noopener"
+            onClick={(e) => e.stopPropagation()}
+            className="rounded-md border border-line px-1.5 py-1 text-[11.5px] text-seal transition-colors hover:bg-seal/10"
+          >
+            打开
+          </a>
+          <button
+            type="button"
+            onClick={() => {
+              setDraft('')
+              onSave('')
+            }}
+            className="rounded-md border border-line px-1.5 py-1 text-[11.5px] text-ink-3 transition-colors hover:border-p-high/40 hover:text-p-high"
+          >
+            清除
+          </button>
+        </>
+      ) : null}
     </div>
   )
 }

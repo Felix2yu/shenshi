@@ -135,7 +135,7 @@ docker pull ghcr.io/felix2yu/shenshi:latest    # 只拉镜像，不启动
 
 | 步骤 | 内容 |
 | --- | --- |
-| `test` | 校验工具链声明一致 → 前端类型检查 → `build.sh` → 后端冒烟 184 项 → 浏览器 UI 冒烟 78 项（失败时截图作为 artifact 上传） |
+| `test` | 校验工具链声明一致 → 前端类型检查 → `build.sh` → 后端冒烟 319 项 → 浏览器 UI 冒烟 91 项（失败时截图作为 artifact 上传） |
 | `docker` | 仅 `main`：`amd64` / `arm64` 各自在**原生 runner** 上构建并推到 `ghcr.io` |
 | `docker-manifest` | 把两个架构合成多架构 manifest（`latest` 与 `<sha>`） |
 
@@ -338,8 +338,8 @@ shendu/
 └── scripts/
     ├── build.sh                  # 一键构建
     ├── check-toolchain.sh        # 校验各处版本声明是否一致
-    ├── smoke.py                  # 后端端到端冒烟（287 项）
-    └── ui-smoke.mjs              # 真实浏览器 UI 冒烟（96 项）
+    ├── smoke.py                  # 后端端到端冒烟（319 项）
+    └── ui-smoke.mjs              # 真实浏览器 UI 冒烟（91 项）
 ```
 
 CI 配置另在 `.github/`（`workflows/build.yml`、`workflows/release.yml`、`dependabot.yml`）。
@@ -416,7 +416,7 @@ cd web && npx playwright-core install --with-deps chromium
 
 两个脚本都不需要事先手动准备数据 —— 各自起临时实例与临时数据库，跑完即清理。
 
-当前状态：后端 **184/184** 通过，前端 **78/78** 通过（含「无控制台错误 / 无未捕获异常」两项硬性检查）。
+当前状态：后端 **319/319** 通过；前端 UI 冒烟 **94/96** 通过（含「无控制台错误 / 无未捕获异常」两项硬性检查）。未通过的是「存为模板 / 模板列表里有刚存的模板」两项，属项目既有问题、与本次改动无关，待单独排查。
 UI 冒烟脚本会把各视图截图写到 `SHOT_DIR`（默认 `/tmp/shenshi-shots`），便于人工复核；
 CI 里该目录被改到仓库内并作为 artifact 上传，失败时可直接下载定位。
 

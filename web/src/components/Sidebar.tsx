@@ -1,37 +1,49 @@
 import { useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from 'react'
 
 import { EXPORT_URLS, api, type ImportMode } from '../api/client'
-import { humanDay, todayStr } from '../lib/date'
+import { humanDay, relativeTime, todayStr } from '../lib/date'
+import { describeFilter, filterFromQuery, isFilterActive } from '../lib/filter'
 import { requestPermission } from '../lib/notify'
 import { ACCENTS, PALETTE } from '../lib/palette'
 import { useStore } from '../store/AppStore'
-import type { Folder, List, SmartKey, Tag } from '../types'
+import { ACTIVITY_LABEL, type Folder, type List, type SmartKey, type Tag } from '../types'
 import { SORT_MIME } from './TaskViews'
 import {
+  IconArchive,
   IconBell,
   IconBook,
   IconCalendar,
+  IconCalendarRange,
   IconChart,
+  IconCheckCircle,
   IconChevronDown,
   IconChevronRight,
   IconCircle,
   IconColumns,
+  IconFilter,
+  IconFlag,
+  IconFolder,
   IconGrip,
   IconGrid,
+  IconHistory,
   IconInbox,
   IconList,
   IconMoon,
   IconMore,
   IconPencil,
+  IconPin,
   IconPlus,
   IconSearch,
   IconSeedling,
   IconSettings,
+  IconStar,
   IconSun,
   IconSunrise,
+  IconTable,
   IconTag,
   IconTimer,
   IconTrash,
+  IconUndo,
   IconX,
   SealLogo,
   type IconProps,
@@ -114,15 +126,23 @@ function downloadExport(url: string) {
 const SMARTS: { key: SmartKey; label: string; icon: IconCmp; countKey: string; ember?: boolean }[] = [
   { key: 'inbox', label: '收集箱', icon: IconInbox, countKey: 'inbox' },
   { key: 'today', label: '今天', icon: IconSun, countKey: 'today' },
+  { key: 'tomorrow', label: '明天', icon: IconSunrise, countKey: 'tomorrow' },
+  { key: 'week', label: '本周', icon: IconCalendarRange, countKey: 'week' },
   { key: 'next7', label: '最近 7 天', icon: IconCalendar, countKey: 'next7' },
   { key: 'overdue', label: '逾期', icon: IconBell, countKey: 'overdue', ember: true },
+  { key: 'high', label: '高优先级', icon: IconFlag, countKey: 'high' },
   { key: 'nodate', label: '无日期', icon: IconCircle, countKey: 'nodate' },
+  { key: 'starred', label: '收藏', icon: IconStar, countKey: 'starred' },
+  // 「最近修改 / 最近完成」不设角标：它们不是待办量，标上数字反而误导。
+  { key: 'updated', label: '最近修改', icon: IconPencil, countKey: '' },
+  { key: 'recentdone', label: '最近完成', icon: IconCheckCircle, countKey: '' },
   { key: 'all', label: '全部任务', icon: IconList, countKey: 'all' },
   { key: 'done', label: '已完成', icon: IconGrid, countKey: 'done' },
 ]
 
-const VIEWS: { key: 'board' | 'calendar' | 'quadrant' | 'habits' | 'stats'; label: string; icon: IconCmp }[] = [
+const VIEWS: { key: 'board' | 'table' | 'calendar' | 'quadrant' | 'habits' | 'stats'; label: string; icon: IconCmp }[] = [
   { key: 'board', label: '看板', icon: IconColumns },
+  { key: 'table', label: '表格', icon: IconTable },
   { key: 'calendar', label: '日历', icon: IconCalendar },
   { key: 'quadrant', label: '四象限', icon: IconGrid },
   { key: 'habits', label: '习惯打卡', icon: IconSeedling },
@@ -139,6 +159,21 @@ interface EntityDraft {
   name: string
   color: string
   folderId?: number | null
+  /** 新建子分组、或改写分组归属时使用 */
+  parentId?: number | null
+}
+
+/** 收集一个分组的全部后代 id。移动分组时用它挡住「把父分组塞进自己孙子」的环路。 */
+function descendantIds(f: Folder): number[] {
+  const out: number[] = []
+  const walk = (n: Folder) => {
+    for (const c of n.children ?? []) {
+      out.push(c.id)
+      walk(c)
+    }
+  }
+  walk(f)
+  return out
 }
 
 function EntityDialog({ draft, onClose }: { draft: EntityDraft | null; onClose: () => void }) {
@@ -159,11 +194,21 @@ function EntityDialog({ draft, onClose }: { draft: EntityDraft | null; onClose: 
   const [name, setName] = useState(draft?.name ?? '')
   const [color, setColor] = useState(draft?.color ?? PALETTE[0])
   const [folderId, setFolderId] = useState<number | null>(draft?.folderId ?? null)
+  const [parentId, setParentId] = useState<number | null>(draft?.parentId ?? null)
   const [busy, setBusy] = useState(false)
 
   if (!draft) return null
   const isNew = draft.id === undefined
   const kindLabel = draft.kind === 'folder' ? '分组' : draft.kind === 'list' ? '清单' : '标签'
+
+  /** 可选作父级的分组：不能是自己，也不能是自己的后代。 */
+  const parentCandidates = useMemo(() => {
+    if (draft?.kind !== 'folder') return []
+    if (draft.id === undefined) return folders
+    const self = folders.find((f) => f.id === draft.id)
+    const blocked = new Set<number>([draft.id, ...(self ? descendantIds(self) : [])])
+    return folders.filter((f) => !blocked.has(f.id))
+  }, [draft, folders])
 
   const submit = async () => {
     const value = name.trim()
@@ -171,8 +216,15 @@ function EntityDialog({ draft, onClose }: { draft: EntityDraft | null; onClose: 
     setBusy(true)
     try {
       if (draft.kind === 'folder') {
-        if (isNew) await createFolder(value, color)
+        if (isNew) await createFolder(value, color, parentId ?? undefined)
         else await updateFolder(draft.id!, { name: value, color })
+        if (!isNew && draft.id !== undefined) {
+          const current = folders.find((f) => f.id === draft.id)
+          const wasParent = current?.parentId ?? null
+          if (parentId !== wasParent) {
+            await updateFolder(draft.id, parentId === null ? { moveToRoot: true } : { parentId })
+          }
+        }
       } else if (draft.kind === 'list') {
         if (isNew) await createList(value, folderId ?? undefined, color)
         else await updateList(draft.id!, { name: value, color, folderId: folderId ?? undefined, moveToRoot: folderId === null })
@@ -191,7 +243,7 @@ function EntityDialog({ draft, onClose }: { draft: EntityDraft | null; onClose: 
     if (isNew) return
     const note =
       draft.kind === 'folder'
-        ? '分组内的清单会回到顶层，其中的任务不受影响。'
+        ? '分组内的清单与子分组会提到上一层，其中的任务不受影响。'
         : draft.kind === 'list'
           ? '清单中的所有任务会被一并删除，此操作不可撤销。'
           : '标签会从所有任务上移除，任务本身不受影响。'
@@ -244,6 +296,23 @@ function EntityDialog({ draft, onClose }: { draft: EntityDraft | null; onClose: 
           />
         </Field>
 
+        {draft.kind === 'folder' ? (
+          <Field label="上级分组">
+            <select
+              className={inputClass}
+              value={parentId ?? ''}
+              onChange={(e) => setParentId(e.target.value ? Number(e.target.value) : null)}
+            >
+              <option value="">（最外层）</option>
+              {parentCandidates.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        ) : null}
+
         {draft.kind === 'list' ? (
           <Field label="所属分组">
             <select
@@ -252,11 +321,13 @@ function EntityDialog({ draft, onClose }: { draft: EntityDraft | null; onClose: 
               onChange={(e) => setFolderId(e.target.value ? Number(e.target.value) : null)}
             >
               <option value="">不归入分组</option>
-              {folders.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name}
-                </option>
-              ))}
+              {folders
+                .filter((f) => !f.archived)
+                .map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.name}
+                  </option>
+                ))}
             </select>
           </Field>
         ) : null}
@@ -299,6 +370,7 @@ export function Sidebar() {
     settings,
     saveSettings,
     updateFolder,
+    updateList,
     reorderFolders,
     reorderLists,
     updateTag,
@@ -307,6 +379,16 @@ export function Sidebar() {
     confirm,
     boot,
     reminders,
+    savedFilters,
+    applySavedFilter,
+    deleteSavedFilter,
+    filters,
+    undo,
+    undoDelete,
+    dropUndo,
+    activities,
+    loadActivities,
+    clearActivities,
   } = useStore()
 
   const [draft, setDraft] = useState<EntityDraft | null>(null)
@@ -314,13 +396,21 @@ export function Sidebar() {
   const [addingTag, setAddingTag] = useState(false)
   const [newTagName, setNewTagName] = useState('')
   const [appearanceOpen, setAppearanceOpen] = useState(false)
+  const [archivedOpen, setArchivedOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
 
   const inboxId = boot?.inboxListId ?? 0
-  const rootLists = useMemo(() => lists.filter((l) => l.id !== inboxId && l.folderId === null), [lists, inboxId])
+  // 归档的分组与清单不参与主列表，只出现在折叠起来的「已归档」里。
+  const liveFolders = useMemo(() => folders.filter((f) => !f.archived), [folders])
+  const archivedFolders = useMemo(() => folders.filter((f) => f.archived), [folders])
+  const liveLists = useMemo(() => lists.filter((l) => !l.archived && l.id !== inboxId), [lists, inboxId])
+  const starredLists = useMemo(() => liveLists.filter((l) => l.starred), [liveLists])
+  const archivedLists = useMemo(() => lists.filter((l) => l.archived && l.id !== inboxId), [lists, inboxId])
+  const rootLists = useMemo(() => liveLists.filter((l) => l.folderId === null), [liveLists])
 
   // 分组与顶层清单各有一份排序控制器；分组内的清单在 FolderNode 内部单独维护。
   const folderSort = useRowSort(
-    folders.map((f) => f.id),
+    liveFolders.filter((f) => f.parentId === null).map((f) => f.id),
     reorderFolders,
   )
   const rootListSort = useRowSort(
@@ -450,37 +540,111 @@ export function Sidebar() {
             })}
           </div>
 
+          {/* 收藏的清单 */}
+          {starredLists.length > 0 ? (
+            <div className="mt-1 border-t border-line pt-1">
+              <div className="px-2 pb-1 pt-3 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink-3">
+                收藏的清单
+              </div>
+              {starredLists.map((l) => (
+                <ListRow
+                  key={l.id}
+                  list={l}
+                  active={selection.kind === 'list' && selection.id === l.id && view === 'list'}
+                  onSelect={() => select({ kind: 'list', id: l.id })}
+                  onEdit={() => setDraft({ kind: 'list', id: l.id, name: l.name, color: l.color, folderId: l.folderId })}
+                  menu={menu}
+                  setMenu={setMenu}
+                  folders={liveFolders}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          {/* 保存的筛选：套用即把工具栏那套条件换掉 */}
+          {savedFilters.length > 0 ? (
+            <div className="mt-1 border-t border-line pt-1">
+              <div className="flex items-center gap-1 px-2 pb-1 pt-3">
+                <span className="flex-1 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink-3">
+                  保存的筛选
+                </span>
+                {isFilterActive(filters) ? (
+                  <span className="text-[10px] text-ink-3" title="当前工具栏已有筛选条件">
+                    筛选中
+                  </span>
+                ) : null}
+              </div>
+              {savedFilters.map((f) => (
+                <div key={f.id} className="group/filter flex items-center gap-1 rounded-lg pr-1.5 hover:bg-surface-2">
+                  <button
+                    type="button"
+                    data-saved-filter={f.id}
+                    onClick={() => applySavedFilter(f)}
+                    className="flex min-w-0 flex-1 items-start gap-2.5 py-[6px] pl-2.5 text-left"
+                  >
+                    <IconFilter size={13} className="mt-[3px] shrink-0 text-ink-3" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] text-ink-2">{f.name}</span>
+                      <span className="block truncate text-[10.5px] text-ink-3">
+                        {describeFilter(filterFromQuery(f.query), tags) || '无条件'}
+                      </span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    title="删除这条筛选"
+                    onClick={() => void deleteSavedFilter(f.id)}
+                    className="rounded p-0.5 text-ink-3 opacity-0 transition-opacity hover:text-p-high group-hover/filter:opacity-100"
+                  >
+                    <IconX size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
           {/* 分组 */}
           <div className="mt-1 border-t border-line pt-1">
             <SideHeader
               label="分组"
-              onAdd={() => setDraft({ kind: 'folder', name: '', color: PALETTE[2] })}
+              onAdd={() => setDraft({ kind: 'folder', name: '', color: PALETTE[2], parentId: null })}
               addLabel="新建分组"
             />
-            {folders.map((f) => (
-              <div
-                key={f.id}
-                {...folderSort.propsFor(f.id)}
-                className={cx('rounded-lg', dragClass(folderSort.overId === f.id))}
-              >
-                <FolderNode
-                  folder={f}
-                  lists={lists.filter((l) => l.folderId === f.id)}
-                  selection={selection}
-                  view={view}
-                  menu={menu}
-                  setMenu={setMenu}
-                  onSelectFolder={() => select({ kind: 'folder', id: f.id })}
-                  onSelectList={(id) => select({ kind: 'list', id })}
-                  onToggleCollapse={() => void updateFolder(f.id, { collapsed: !f.collapsed })}
-                  onEdit={() => setDraft({ kind: 'folder', id: f.id, name: f.name, color: f.color })}
-                  onAddList={() => setDraft({ kind: 'list', name: '', color: f.color, folderId: f.id })}
-                  onReorderLists={reorderLists}
-                />
-              </div>
-            ))}
+            {liveFolders
+              .filter((f) => f.parentId === null)
+              .map((f) => (
+                <div
+                  key={f.id}
+                  {...folderSort.propsFor(f.id)}
+                  className={cx('rounded-lg', dragClass(folderSort.overId === f.id))}
+                >
+                  <FolderNode
+                    folder={f}
+                    lists={liveLists.filter((l) => l.folderId === f.id)}
+                    selection={selection}
+                    view={view}
+                    menu={menu}
+                    setMenu={setMenu}
+                    onSelectFolder={(id) => select({ kind: 'folder', id })}
+                    onSelectList={(id) => select({ kind: 'list', id })}
+                    onToggleCollapse={(id, collapsed) => void updateFolder(id, { collapsed })}
+                    onEdit={() => setDraft({ kind: 'folder', id: f.id, name: f.name, color: f.color, parentId: f.parentId })}
+                    onEditList={(l) =>
+                      setDraft({ kind: 'list', id: l.id, name: l.name, color: l.color, folderId: l.folderId })
+                    }
+                    onAddList={() => setDraft({ kind: 'list', name: '', color: f.color, folderId: f.id })}
+                    onAddSubfolder={(parentId) => setDraft({ kind: 'folder', name: '', color: f.color, parentId })}
+                    onToggleArchive={(id, archived) => void updateFolder(id, { archived })}
+                    onReorderLists={reorderLists}
+                  />
+                </div>
+              ))}
 
-            <SideHeader label="清单" onAdd={() => setDraft({ kind: 'list', name: '', color: PALETTE[0], folderId: null })} addLabel="新建清单" />
+            <SideHeader
+              label="清单"
+              onAdd={() => setDraft({ kind: 'list', name: '', color: PALETTE[0], folderId: null })}
+              addLabel="新建清单"
+            />
             {rootLists.map((l) => (
               <div
                 key={l.id}
@@ -494,11 +658,11 @@ export function Sidebar() {
                   onEdit={() => setDraft({ kind: 'list', id: l.id, name: l.name, color: l.color, folderId: l.folderId })}
                   menu={menu}
                   setMenu={setMenu}
-                  folders={folders}
+                  folders={liveFolders}
                 />
               </div>
             ))}
-            {rootLists.length === 0 && folders.length === 0 ? (
+            {rootLists.length === 0 && liveFolders.length === 0 ? (
               <p className="px-2.5 py-1 text-[11.5px] text-ink-3">还没有清单，点标题右侧的 + 开始。</p>
             ) : null}
           </div>
@@ -610,6 +774,51 @@ export function Sidebar() {
               </p>
             ) : null}
           </div>
+
+          {/* 已归档：折叠收纳，默认收起，避免淹没主列表 */}
+          {archivedFolders.length > 0 || archivedLists.length > 0 ? (
+            <div className="mt-1 border-t border-line pt-1">
+              <button
+                type="button"
+                onClick={() => setArchivedOpen((v) => !v)}
+                className="flex w-full items-center gap-2 px-2.5 py-1 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink-3 transition-colors hover:text-ink-2"
+              >
+                <IconChevronRight size={12} className={cx('transition-transform', archivedOpen && 'rotate-90')} />
+                已归档
+                <span className="text-[10px] font-normal normal-case tracking-normal">
+                  {archivedFolders.length + archivedLists.length}
+                </span>
+              </button>
+              {archivedOpen ? (
+                <div className="pb-1">
+                  {archivedFolders.map((f) => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => void updateFolder(f.id, { archived: false })}
+                      className="group/arc flex w-full items-center gap-2 rounded-lg px-2.5 py-[6px] text-left text-[12.5px] text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
+                    >
+                      <IconArchive size={12} className="shrink-0" />
+                      <span className="flex-1 truncate">{f.name}</span>
+                      <span className="text-[10px] opacity-0 transition-opacity group-hover/arc:opacity-100">恢复</span>
+                    </button>
+                  ))}
+                  {archivedLists.map((l) => (
+                    <button
+                      key={l.id}
+                      type="button"
+                      onClick={() => void updateList(l.id, { archived: false })}
+                      className="group/arc flex w-full items-center gap-2 rounded-lg px-2.5 py-[6px] text-left text-[12.5px] text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
+                    >
+                      <IconArchive size={12} className="shrink-0" />
+                      <span className="flex-1 truncate">{l.name}</span>
+                      <span className="text-[10px] opacity-0 transition-opacity group-hover/arc:opacity-100">恢复</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </nav>
 
         {/* 底部 */}
@@ -623,6 +832,21 @@ export function Sidebar() {
               <IconBook size={14} className="text-ink-3" />
               日省 · 今日复盘
             </button>
+            {undo?.available ? (
+              <IconButton
+                icon={IconUndo}
+                label={`撤销：${undo.label ?? '删除'}`}
+                onClick={() => void undoDelete()}
+              />
+            ) : null}
+            <IconButton
+              icon={IconHistory}
+              label="操作历史"
+              onClick={() => {
+                void loadActivities()
+                setHistoryOpen(true)
+              }}
+            />
             <IconButton
               icon={theme === 'dark' ? IconSun : IconMoon}
               label={theme === 'dark' ? '切换到浅色' : '切换到深色'}
@@ -644,6 +868,7 @@ export function Sidebar() {
 
       <EntityDialog key={draft ? `${draft.kind}-${draft.id ?? 'new'}` : 'none'} draft={draft} onClose={() => setDraft(null)} />
       <AppearanceDialog open={appearanceOpen} onClose={() => setAppearanceOpen(false)} />
+      <HistoryDialog open={historyOpen} onClose={() => setHistoryOpen(false)} />
     </>
   )
 }
@@ -670,7 +895,10 @@ function FolderNode({
   onSelectList,
   onToggleCollapse,
   onEdit,
+  onEditList,
   onAddList,
+  onAddSubfolder,
+  onToggleArchive,
   onReorderLists,
 }: {
   folder: Folder
@@ -679,11 +907,14 @@ function FolderNode({
   view: string
   menu: string | null
   setMenu: (k: string | null) => void
-  onSelectFolder: () => void
+  onSelectFolder: (id: number) => void
   onSelectList: (id: number) => void
-  onToggleCollapse: () => void
+  onToggleCollapse: (id: number, collapsed: boolean) => void
   onEdit: () => void
+  onEditList: (l: List) => void
   onAddList: () => void
+  onAddSubfolder: (parentId: number) => void
+  onToggleArchive: (id: number, archived: boolean) => void
   onReorderLists: (ids: number[]) => void
 }) {
   const key = `folder-${folder.id}`
@@ -702,7 +933,7 @@ function FolderNode({
       >
         <button
           type="button"
-          onClick={onToggleCollapse}
+          onClick={() => onToggleCollapse(folder.id, folder.collapsed)}
           aria-label={folder.collapsed ? '展开分组' : '折叠分组'}
           className="grid h-6 w-5 shrink-0 place-items-center rounded text-ink-3 hover:text-ink"
         >
@@ -710,7 +941,7 @@ function FolderNode({
         </button>
         <button
           type="button"
-          onClick={onSelectFolder}
+          onClick={() => onSelectFolder(folder.id)}
           className={cx(
             'flex min-w-0 flex-1 items-center gap-2 py-[7px] text-left text-[13px]',
             active ? 'font-medium text-seal' : 'text-ink',
@@ -718,6 +949,7 @@ function FolderNode({
         >
           <ColorDot color={folder.color} />
           <span className="truncate">{folder.name}</span>
+          {folder.archived ? <IconArchive size={12} className="shrink-0 text-ink-3" aria-label="已归档" /> : null}
           <span className="text-[10.5px] text-ink-3 tabular-nums">{lists.length || ''}</span>
         </button>
         <span className="opacity-0 transition-opacity group-hover/folder:opacity-100">
@@ -734,7 +966,7 @@ function FolderNode({
         >
           <IconMore size={13} className="text-ink-3" />
         </span>
-        <Popover open={menu === key} onClose={() => setMenu(null)} align="right" width={172}>
+        <Popover open={menu === key} onClose={() => setMenu(null)} align="right" width={186}>
           <MenuItem
             icon={IconPlus}
             onClick={() => {
@@ -743,6 +975,15 @@ function FolderNode({
             }}
           >
             在此新建清单
+          </MenuItem>
+          <MenuItem
+            icon={IconFolder}
+            onClick={() => {
+              onAddSubfolder(folder.id)
+              setMenu(null)
+            }}
+          >
+            新建子分组
           </MenuItem>
           <MenuItem
             icon={IconPencil}
@@ -756,11 +997,20 @@ function FolderNode({
           <MenuItem
             icon={folder.collapsed ? IconChevronDown : IconChevronRight}
             onClick={() => {
-              onToggleCollapse()
+              onToggleCollapse(folder.id, folder.collapsed)
               setMenu(null)
             }}
           >
             {folder.collapsed ? '展开分组' : '折叠分组'}
+          </MenuItem>
+          <MenuItem
+            icon={folder.archived ? IconFolder : IconArchive}
+            onClick={() => {
+              onToggleArchive(folder.id, !folder.archived)
+              setMenu(null)
+            }}
+          >
+            {folder.archived ? '取消归档' : '归档分组'}
           </MenuItem>
           <MenuItem
             icon={IconTrash}
@@ -787,7 +1037,7 @@ function FolderNode({
                 list={l}
                 active={selection.kind === 'list' && selection.id === l.id && view === 'list'}
                 onSelect={() => onSelectList(l.id)}
-                onEdit={onEdit}
+                onEdit={() => onEditList(l)}
                 menu={menu}
                 setMenu={setMenu}
               />
@@ -869,6 +1119,24 @@ function ListRow({
           }}
         >
           重命名与配色
+        </MenuItem>
+        <MenuItem
+          icon={IconStar}
+          onClick={() => {
+            void updateList(list.id, { starred: !list.starred })
+            setMenu(null)
+          }}
+        >
+          {list.starred ? '取消收藏' : '收藏'}
+        </MenuItem>
+        <MenuItem
+          icon={list.archived ? IconList : IconArchive}
+          onClick={() => {
+            void updateList(list.id, { archived: !list.archived })
+            setMenu(null)
+          }}
+        >
+          {list.archived ? '取消归档' : '归档清单'}
         </MenuItem>
         {folders && folders.length > 0 ? (
           <>
@@ -1136,6 +1404,62 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
         </div>
 
         <IntegrationsDialog open={integrationsOpen} onClose={() => setIntegrationsOpen(false)} />
+      </div>
+    </Modal>
+  )
+}
+
+/* ---------------- 操作历史 ---------------- */
+
+function HistoryDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { activities, clearActivities, toast, confirm } = useStore()
+  const clear = async () => {
+    const ok = await confirm({
+      title: '清空操作历史',
+      message: '历史记录仅作回顾，清空后不可恢复。',
+      confirmText: '清空',
+      danger: true,
+    })
+    if (!ok) return
+    try {
+      await clearActivities()
+      toast('操作历史已清空')
+    } catch {
+      toast('清空失败，请重试', 'error')
+    }
+  }
+  return (
+    <Modal open={open} onClose={onClose} title="操作历史" width={440} size="lg">
+      <div className="flex min-h-[200px] flex-col">
+        {activities.length === 0 ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 py-10 text-center text-ink-3">
+            <IconHistory size={28} className="opacity-50" />
+            <p className="text-[12.5px]">还没有记录。新建、完成、删除等动作会留在这里。</p>
+          </div>
+        ) : (
+          <ul className="max-h-[60vh] space-y-0.5 overflow-y-auto pr-1">
+            {activities.map((a) => (
+              <li key={a.id} className="flex items-start gap-2.5 rounded-lg px-2 py-1.5 text-[12.5px] hover:bg-surface-2">
+                <span className="mt-[2px] inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-surface-2 px-1.5 text-[10.5px] text-ink-2">
+                  {ACTIVITY_LABEL[a.kind] ?? a.kind}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-ink">{a.title}</span>
+                  {a.detail ? <span className="block truncate text-[11px] text-ink-3">{a.detail}</span> : null}
+                </span>
+                <span className="shrink-0 whitespace-nowrap text-[10.5px] text-ink-3 tabular-nums">
+                  {relativeTime(a.createdAt)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="mt-2 flex items-center justify-between border-t border-line pt-3">
+          <span className="text-[11px] text-ink-3">仅保留最近若干条，作为回顾之用</span>
+          <Button variant="outline" size="sm" className="text-p-high" icon={IconTrash} onClick={clear} disabled={activities.length === 0}>
+            清空历史
+          </Button>
+        </div>
       </div>
     </Modal>
   )

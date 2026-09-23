@@ -6,20 +6,21 @@ import { HabitsView } from './components/HabitsView'
 import { QuadrantView } from './components/QuadrantView'
 import { Sidebar } from './components/Sidebar'
 import { StatsView } from './components/StatsView'
+import { TableView } from './components/TableView'
 import { TaskDetail } from './components/TaskDetail'
 import { IconList, IconX, SealLogo } from './components/icons'
 import { AppOverlays } from './components/Overlays'
 import { TaskListView } from './components/TaskViews'
 import { Toolbar } from './components/Toolbar'
 import { Button, IconButton } from './components/ui'
-import { EMPTY_FILTER, applyFilter, type TaskFilter } from './lib/filter'
+import { applyFilter } from './lib/filter'
 import { useStore } from './store/AppStore'
 import type { Selection, Task, ViewKind } from './types'
 
 /**
  * 「慎始」主装配。
  * 布局：左侧清单树 · 中间视图 · 右侧任务详情；晨省/日省/专注/提醒等覆盖层统一挂在最末。
- * 设计上先求稳：一处细节改动不牵动全局，故筛选状态收敛在此，向下以 props 传递。
+ * 筛选状态收敛在 store 里（「保存的筛选」需要能直接改写它），此处只负责把它交给各视图。
  */
 export default function App() {
   const {
@@ -35,8 +36,9 @@ export default function App() {
     multiSelect,
     clearSelected,
     locked,
+    filters,
+    setFilters,
   } = useStore()
-  const [filters, setFilters] = useState<TaskFilter>(EMPTY_FILTER)
   const [navOpen, setNavOpen] = useState(false)
 
   const openTask = useCallback((t: Task) => setSelectedTask(t.id), [setSelectedTask])
@@ -149,9 +151,15 @@ export default function App() {
 
         <Toolbar filters={filters} onFilters={setFilters} />
 
-        <div className={view === 'list' ? 'min-h-0 flex-1 overflow-y-auto' : 'min-h-0 flex-1 overflow-hidden'}>
+        <div
+          className={
+            view === 'list' || view === 'table' ? 'min-h-0 flex-1 overflow-y-auto' : 'min-h-0 flex-1 overflow-hidden'
+          }
+        >
           {view === 'list' ? (
             <TaskListView tasks={visible} onOpen={openTask} emptyKey={emptyKey} />
+          ) : view === 'table' ? (
+            <TableView tasks={visible} onOpen={openTask} />
           ) : view === 'board' ? (
             <BoardView onOpen={openTask} filter={filters} />
           ) : view === 'calendar' ? (

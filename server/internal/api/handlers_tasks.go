@@ -11,10 +11,14 @@ import (
 )
 
 // smartCounts 计算侧边栏各智能清单的角标数量。
+//
+// 「最近修改」与「最近完成」刻意不算：它们的数量就是「全部」与「已完成的全部」，
+// 挂在侧栏只会变成一个永远很大的数字，没有信息量。
 func (s *Server) smartCounts() (map[string]int, error) {
 	smarts := []string{
-		model.SmartInbox, model.SmartToday, model.SmartNext7,
-		model.SmartOverdue, model.SmartNoDate, model.SmartAll, model.SmartDone,
+		model.SmartInbox, model.SmartToday, model.SmartTomorrow, model.SmartWeek,
+		model.SmartNext7, model.SmartOverdue, model.SmartNoDate, model.SmartAll,
+		model.SmartDone, model.SmartHigh, model.SmartStarred,
 	}
 	out := map[string]int{}
 	for _, name := range smarts {
@@ -62,16 +66,26 @@ func (s *Server) bootstrap(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	savedFilters, err := s.st.SavedFilters()
+	if err != nil {
+		return err
+	}
+	undo, err := s.st.UndoState()
+	if err != nil {
+		return err
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"app":         "慎始",
-		"motto":       "慎始而敬终，行稳致远",
-		"today":       time.Now().Format("2006-01-02"),
-		"folders":     folders,
-		"lists":       lists,
-		"tags":        tags,
-		"settings":    settings,
-		"inboxListId": inboxID,
-		"counts":      counts,
+		"app":          "慎始",
+		"motto":        "慎始而敬终，行稳致远",
+		"today":        time.Now().Format("2006-01-02"),
+		"folders":      folders,
+		"lists":        lists,
+		"tags":         tags,
+		"settings":     settings,
+		"inboxListId":  inboxID,
+		"counts":       counts,
+		"savedFilters": savedFilters,
+		"undo":         undo,
 	})
 	return nil
 }
@@ -266,6 +280,36 @@ func (s *Server) reorderTasks(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "count": len(body.IDs)})
+	return nil
+}
+
+// duplicateTask 复制一条任务：结构照搬，状态归零。用于「同一件事再做一遍」。
+func (s *Server) duplicateTask(w http.ResponseWriter, r *http.Request) error {
+	id, err := pathID(r, "id")
+	if err != nil {
+		return err
+	}
+	t, err := s.st.DuplicateTask(id)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusCreated, t)
+	return nil
+}
+
+// purgeCompleted 清空已完成任务。带 listId 时只清该清单内的。
+func (s *Server) purgeCompleted(w http.ResponseWriter, r *http.Request) error {
+	var body struct {
+		ListID *int64 `json:"listId"`
+	}
+	if err := decodeOptional(w, r, &body); err != nil {
+		return err
+	}
+	n, err := s.st.PurgeCompleted(body.ListID)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "affected": n})
 	return nil
 }
 

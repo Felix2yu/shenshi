@@ -1,8 +1,10 @@
 /** 极简 API 客户端：只做 fetch 的包装、错误规整与类型标注。 */
 
 import type {
+  Activity,
   Attachment,
   BackupStatus,
+  BatchAction,
   Bootstrap,
   FocusSession,
   Habit,
@@ -14,6 +16,7 @@ import type {
   ReminderHit,
   Review,
   RepeatMeta,
+  SavedFilter,
   Stats,
   Tag,
   Task,
@@ -21,6 +24,7 @@ import type {
   TaskTemplate,
   TemplatePatch,
   ToggleResult,
+  UndoState,
   Webhook,
   WebhookDelivery,
 } from '../types'
@@ -103,7 +107,7 @@ export interface TaskQuery {
 }
 
 /** 列表排序方式。smart 让到期日与优先级主导；manual 才由拖拽出的 sort_order 决定。 */
-export type TaskSort = 'smart' | 'manual' | 'priority' | 'due' | 'created' | 'title'
+export type TaskSort = 'smart' | 'manual' | 'priority' | 'due' | 'created' | 'updated' | 'completed' | 'title'
 
 /** 导入方式：merge 追加为副本，replace 清空后重建。 */
 export type ImportMode = 'merge' | 'replace'
@@ -144,9 +148,36 @@ export const api = {
   skipTask: (id: number) => request<Task>('POST', `/api/tasks/${id}/skip`),
   moveTask: (id: number, body: { listId?: number; dueDate?: string | null; dueTime?: string | null }) =>
     request<Task>('POST', `/api/tasks/${id}/move`, body),
-  batch: (ids: number[], action: 'complete' | 'reopen' | 'delete' | 'move', extra?: { listId?: number; dueDate?: string }) =>
-    request<{ ok: boolean; affected: number }>('POST', '/api/tasks/batch', { ids, action, ...extra }),
+  /** 复制任务：结构照搬，状态归零。 */
+  duplicateTask: (id: number) => request<Task>('POST', `/api/tasks/${id}/duplicate`),
+  batch: (
+    ids: number[],
+    action: BatchAction,
+    extra?: { listId?: number; dueDate?: string },
+  ) => request<{ ok: boolean; affected: number }>('POST', '/api/tasks/batch', { ids, action, ...extra }),
+  /** 清空已完成任务；传 listId 表示只清该清单内的。 */
+  purgeCompleted: (listId?: number) =>
+    request<{ ok: boolean; affected: number }>('POST', '/api/tasks/purge', listId ? { listId } : {}),
   reorderTasks: (ids: number[]) => request<{ ok: boolean; count: number }>('POST', '/api/tasks/reorder', { ids }),
+
+  // ---- 撤销与操作历史 ----
+  /** 最近一次删除是否还可以挽回。 */
+  undoState: () => request<UndoState>('GET', '/api/undo'),
+  /** 恢复最近一次删除掉的任务。 */
+  undo: () => request<{ ok: boolean; restored: number }>('POST', '/api/undo'),
+  /** 放弃撤销机会（附件此刻才真正从磁盘删除）。 */
+  dropUndo: () => request<{ ok: boolean }>('DELETE', '/api/undo'),
+  listActivities: (limit = 120) =>
+    request<{ activities: Activity[] }>('GET', `/api/activities?limit=${limit}`),
+  clearActivities: () => request<{ ok: boolean }>('DELETE', '/api/activities'),
+
+  // ---- 保存的筛选条件 ----
+  listSavedFilters: () => request<{ savedFilters: SavedFilter[] }>('GET', '/api/saved-filters'),
+  createSavedFilter: (body: { name: string; query: string; sortOrder?: number }) =>
+    request<SavedFilter>('POST', '/api/saved-filters', body),
+  updateSavedFilter: (id: number, body: Partial<{ name: string; query: string; sortOrder: number }>) =>
+    request<{ ok: boolean }>('PATCH', `/api/saved-filters/${id}`, body),
+  deleteSavedFilter: (id: number) => request<{ ok: boolean }>('DELETE', `/api/saved-filters/${id}`),
 
   addSubtask: (taskId: number, title: string) =>
     request<{ id: number }>('POST', `/api/tasks/${taskId}/subtasks`, { title }),
@@ -155,10 +186,21 @@ export const api = {
   deleteSubtask: (id: number) => request<{ ok: boolean }>('DELETE', `/api/subtasks/${id}`),
 
   listFolders: () => request<{ folders: Folder[] }>('GET', '/api/folders'),
-  createFolder: (body: { name: string; color?: string; icon?: string }) =>
+  createFolder: (body: { name: string; color?: string; icon?: string; parentId?: number }) =>
     request<Folder>('POST', '/api/folders', body),
-  updateFolder: (id: number, body: Partial<{ name: string; color: string; icon: string; sortOrder: number; collapsed: boolean }>) =>
-    request<{ ok: boolean }>('PATCH', `/api/folders/${id}`, body),
+  updateFolder: (
+    id: number,
+    body: Partial<{
+      name: string
+      color: string
+      icon: string
+      sortOrder: number
+      collapsed: boolean
+      archived: boolean
+      parentId: number | null
+      moveToRoot: boolean
+    }>,
+  ) => request<{ ok: boolean }>('PATCH', `/api/folders/${id}`, body),
   deleteFolder: (id: number) => request<{ ok: boolean }>('DELETE', `/api/folders/${id}`),
   reorderFolders: (ids: number[]) => request<{ ok: boolean; count: number }>('PUT', '/api/folders/reorder', { ids }),
 
@@ -167,7 +209,16 @@ export const api = {
     request<List>('POST', '/api/lists', body),
   updateList: (
     id: number,
-    body: Partial<{ name: string; color: string; icon: string; sortOrder: number; folderId: number; moveToRoot: boolean }>,
+    body: Partial<{
+      name: string
+      color: string
+      icon: string
+      sortOrder: number
+      folderId: number
+      moveToRoot: boolean
+      archived: boolean
+      starred: boolean
+    }>,
   ) => request<{ ok: boolean }>('PATCH', `/api/lists/${id}`, body),
   deleteList: (id: number) => request<{ ok: boolean }>('DELETE', `/api/lists/${id}`),
   reorderLists: (ids: number[]) => request<{ ok: boolean; count: number }>('PUT', '/api/lists/reorder', { ids }),

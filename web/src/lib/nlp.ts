@@ -164,6 +164,17 @@ export function parseQuickAdd(input: string, ctx: ParseContext = {}): ParsedInpu
   const repeatPatterns: { re: RegExp; build: (m: RegExpExecArray) => string | null; label: string }[] = [
     { re: /艾宾浩斯/u, build: () => 'ebbinghaus:0', label: '艾宾浩斯记忆曲线' },
     { re: /每个?工作日/u, build: () => 'weekdays', label: '每个工作日' },
+    { re: /每月(?:的)?最后一个工作日/u, build: () => 'monthly:lastworkday', label: '每月最后一个工作日' },
+    {
+      // 「每月第三个周日」这类「第 n 个某星期几」，与具体的某日不同，要单独成规则。
+      re: /每月(?:的)?第(\d{1,2}|[一二三四五六七八九十]{1,3})个?(周[一二三四五六日天])/u,
+      build: (m) => {
+        const n = cn2num(m[1])
+        const wd = WEEKDAY_MAP[m[2].slice(1)]
+        return n && n >= 1 && n <= 5 && wd !== undefined ? `monthly:nth:${n}:${wd}` : null
+      },
+      label: '每月第几个星期几',
+    },
     { re: /每月(最后一天|末)/u, build: () => 'monthly:last', label: '每月最后一天' },
     {
       re: /每月(\d{1,2}|[一二三四五六七八九十]{1,3})[日号]/u,
@@ -450,6 +461,14 @@ export function describeRepeat(rule: string | null | undefined): string {
     case 'monthly':
       if (!arg) return '每月'
       if (arg === 'last') return '每月最后一天'
+      if (arg === 'lastworkday') return '每月最后一个工作日'
+      if (arg.startsWith('nth:')) {
+        const [, n, wd] = arg.split(':')
+        const idx = Number(n)
+        const wdName = '日一二三四五六'[Number(wd)] ?? wd
+        const ord: Record<number, string> = { 1: '第一', 2: '第二', 3: '第三', 4: '第四', 5: '第五' }
+        return `每月${ord[idx] ?? `第 ${idx}`}个周${wdName}`
+      }
       return `每月 ${arg} 日`
     case 'yearly':
       if (!arg) return '每年'

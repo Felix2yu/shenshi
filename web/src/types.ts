@@ -32,13 +32,23 @@ export interface Task {
   notes: string
   status: 'todo' | 'done'
   priority: Priority
+  /** 计划开始日 YYYY-MM-DD */
+  startDate: string | null
   dueDate: string | null
   dueTime: string | null
   endTime: string | null
+  /** 关联链接（会议、文档、单号），与附件分开存放 */
+  url: string
   reminders: number[]
   repeatRule: string | null
+  /** 重复任务的续期基准：due=从原到期日推，done=从实际完成日推 */
+  repeatFrom: 'due' | 'done'
   important: boolean
   urgent: boolean
+  /** 置顶：始终排在未完成列表最前 */
+  pinned: boolean
+  /** 收藏：进入「收藏」智能清单 */
+  starred: boolean
   completedAt: string | null
   sortOrder: number
   createdAt: string
@@ -164,29 +174,81 @@ export interface List {
   color: string
   icon: string
   sortOrder: number
+  archived: boolean
+  starred: boolean
   createdAt: string
   taskCount: number
 }
 
 export interface Folder {
   id: number
+  parentId: number | null
   name: string
   color: string
   icon: string
   sortOrder: number
   collapsed: boolean
+  archived: boolean
   createdAt: string
   lists: List[]
+  /** 子分组：分组可以再套分组 */
+  children: Folder[]
 }
 
 export type SmartKey =
   | 'inbox'
   | 'today'
+  | 'tomorrow'
+  | 'week'
   | 'next7'
   | 'overdue'
   | 'nodate'
+  | 'high'
+  | 'starred'
+  | 'updated'
+  | 'recentdone'
   | 'all'
   | 'done'
+
+/** 保存下来的筛选条件。query 是 TaskFilter 的 JSON 原文，由前端自行解释。 */
+export interface SavedFilter {
+  id: number
+  name: string
+  query: string
+  sortOrder: number
+  createdAt: string
+}
+
+/** 撤销槽位状态：最近一次删除是否还可以挽回。 */
+export interface UndoState {
+  available: boolean
+  label: string
+  count: number
+  at: string
+}
+
+/** 一条操作历史。 */
+export interface Activity {
+  id: number
+  kind: string
+  taskId: number | null
+  title: string
+  detail: string
+  createdAt: string
+}
+
+export const ACTIVITY_LABEL: Record<string, string> = {
+  created: '新建',
+  completed: '完成',
+  reopened: '恢复',
+  deleted: '删除',
+  duplicated: '复制',
+  moved: '移动',
+  purged: '清空',
+  undone: '撤销',
+  archived: '归档',
+  unarchived: '取消归档',
+}
 
 export interface Bootstrap {
   app: string
@@ -198,6 +260,8 @@ export interface Bootstrap {
   settings: Record<string, string>
   inboxListId: number
   counts: Record<string, number>
+  savedFilters: SavedFilter[]
+  undo: UndoState
 }
 
 export interface TrendPoint {
@@ -276,7 +340,7 @@ export interface RepeatMeta {
 }
 
 /** 列表视图类型 */
-export type ViewKind = 'list' | 'board' | 'calendar' | 'quadrant' | 'stats' | 'habits'
+export type ViewKind = 'list' | 'board' | 'table' | 'calendar' | 'quadrant' | 'stats' | 'habits'
 
 /** 当前侧边栏选中的目标 */
 export type Selection =
@@ -361,17 +425,33 @@ export interface TaskPatch {
   listId?: number
   status?: 'todo' | 'done'
   priority?: Priority
+  startDate?: string | null
   dueDate?: string | null
   dueTime?: string | null
   endTime?: string | null
+  url?: string
   reminders?: number[]
   repeatRule?: string | null
+  repeatFrom?: 'due' | 'done'
   important?: boolean
   urgent?: boolean
+  pinned?: boolean
+  starred?: boolean
   tagIds?: number[]
   subtasks?: { title: string; done: boolean; sortOrder: number }[]
   sortOrder?: number
 }
+
+/** 批量操作的 action 取值。 */
+export type BatchAction =
+  | 'complete'
+  | 'reopen'
+  | 'delete'
+  | 'move'
+  | 'pin'
+  | 'unpin'
+  | 'star'
+  | 'unstar'
 
 export interface Settings {
   theme?: 'light' | 'dark'

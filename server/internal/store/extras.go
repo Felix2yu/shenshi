@@ -136,12 +136,22 @@ func (s *Store) DeleteAttachment(id int64) error {
 
 // deleteTaskAttachments 清空一个任务上的全部附件（删除任务前调用）。
 func (s *Store) deleteTaskAttachments(taskID int64) error {
+	return s.dropTaskAttachments(taskID, true)
+}
+
+// dropTaskAttachments 清掉任务名下的附件记录。
+//
+// removeFiles 为 false 时只删库里的行、把文件留在磁盘上 —— 这是「可撤销删除」需要的行为：
+// 撤销时记录会按原存储名挂回来，文件还在就还能打开；直到撤销槽位被顶替才真正删文件。
+func (s *Store) dropTaskAttachments(taskID int64, removeFiles bool) error {
 	list, err := s.ListAttachments(taskID)
 	if err != nil {
 		return err
 	}
-	for i := range list {
-		_ = os.Remove(s.AttachmentPath(&list[i]))
+	if removeFiles {
+		for i := range list {
+			_ = os.Remove(s.AttachmentPath(&list[i]))
+		}
 	}
 	_, err = s.db.Exec(`DELETE FROM attachments WHERE task_id = ?`, taskID)
 	return err

@@ -11,14 +11,18 @@ import {
 
 import { ApiError, api, setUnauthorizedHandler, type TaskQuery, type TaskSort } from '../api/client'
 import { todayStr } from '../lib/date'
+import { EMPTY_FILTER, filterFromQuery, filterToQuery, isFilterActive, type TaskFilter } from '../lib/filter'
 import { playChime, playTick, pushNotification } from '../lib/notify'
 import type {
+  Activity,
+  BatchAction,
   Bootstrap,
   DailyFocus,
   Folder,
   List,
   ReminderHit,
   RepeatMeta,
+  SavedFilter,
   Selection,
   Settings,
   SmartKey,
@@ -26,6 +30,7 @@ import type {
   Tag,
   Task,
   TaskPatch,
+  UndoState,
   ViewKind,
 } from '../types'
 
@@ -60,6 +65,8 @@ interface StoreShape {
   selection: Selection
   view: ViewKind
   keyword: string
+  /** 工具栏筛选条件。收敛在 store 里，是为了让「保存的筛选」这类入口能直接改写它。 */
+  filters: TaskFilter
   settings: Settings
   toasts: Toast[]
   reminders: ReminderHit[]
@@ -75,6 +82,11 @@ interface StoreShape {
   tags: Tag[]
   counts: Record<string, number>
   todayFocusIds: number[]
+  savedFilters: SavedFilter[]
+  /** 最近一次删除是否还能挽回；null 表示尚未问过服务端。 */
+  undo: UndoState | null
+  activities: Activity[]
+  activitiesLoaded: boolean
   /** 每次写操作对账后自增。日历、统计等自持数据的视图据此重新拉取。 */
   version: number
 
@@ -82,6 +94,8 @@ interface StoreShape {
   selectSmart: (key: SmartKey) => void
   setView: (v: ViewKind) => void
   setKeyword: (k: string) => void
+  setFilters: (f: TaskFilter) => void
+  resetFilters: () => void
   setSelectedTask: (id: number | null) => void
   setMultiSelect: (on: boolean) => void
   toggleSelected: (id: number) => void
@@ -97,8 +111,28 @@ interface StoreShape {
   toggleTask: (id: number) => Promise<{ task: Task; nextTask: Task | null } | null>
   moveTask: (id: number, body: { listId?: number; dueDate?: string | null; dueTime?: string | null }) => Promise<void>
   skipTask: (id: number) => Promise<void>
-  batch: (action: 'complete' | 'reopen' | 'delete' | 'move', extra?: { listId?: number; dueDate?: string }) => Promise<void>
+  /** 复制一份任务：结构照搬，状态归零。 */
+  duplicateTask: (id: number) => Promise<Task | null>
+  batch: (action: BatchAction, extra?: { listId?: number; dueDate?: string }) => Promise<void>
+  /**
+   * 清空已完成任务。传 listId 表示只清该清单内的。
+   * 这会把「剩多少件」直接归零，调用方必须先做过二次确认。
+   */
+  purgeCompleted: (listId?: number) => Promise<number>
   reorderTasks: (ids: number[]) => Promise<void>
+
+  /** 把最近一次删除恢复回来。 */
+  undoDelete: () => Promise<void>
+  /** 主动放弃撤销机会：此刻附件才真正从磁盘上消失。 */
+  dropUndo: () => Promise<void>
+
+  loadActivities: () => Promise<void>
+  clearActivities: () => Promise<void>
+
+  saveFilter: (name: string) => Promise<SavedFilter | null>
+  applySavedFilter: (f: SavedFilter) => void
+  renameSavedFilter: (id: number, name: string) => Promise<void>
+  deleteSavedFilter: (id: number) => Promise<void>
 
   /** 启用访问口令后，会话失效时置为 true，由 App 渲染解锁界面。 */
   locked: boolean
@@ -109,12 +143,33 @@ interface StoreShape {
   updateSubtask: (id: number, patch: { title?: string; done?: boolean }) => Promise<void>
   deleteSubtask: (id: number) => Promise<void>
 
-  createFolder: (name: string, color?: string) => Promise<Folder | null>
-  updateFolder: (id: number, patch: Partial<{ name: string; color: string; collapsed: boolean }>) => Promise<void>
+  createFolder: (name: string, color?: string, parentId?: number) => Promise<Folder | null>
+  updateFolder: (
+    id: number,
+    patch: Partial<{
+      name: string
+      color: string
+      collapsed: boolean
+      archived: boolean
+      parentId: number | null
+      moveToRoot: boolean
+    }>,
+  ) => Promise<void>
   deleteFolder: (id: number) => Promise<void>
   reorderFolders: (ids: number[]) => Promise<void>
   createList: (name: string, folderId?: number, color?: string) => Promise<List | null>
-  updateList: (id: number, patch: Partial<{ name: string; color: string; folderId: number; moveToRoot: boolean }>) => Promise<void>
+  updateList: (
+    id: number,
+    patch: Partial<{
+      name: string
+      color: string
+      icon: string
+      folderId: number
+      moveToRoot: boolean
+      archived: boolean
+      starred: boolean
+    }>,
+  ) => Promise<void>
   deleteList: (id: number) => Promise<void>
   reorderLists: (ids: number[]) => Promise<void>
 
@@ -196,6 +251,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [selection, setSelection] = useState<Selection>(DEFAULT_SELECTION)
   const [view, setView] = useState<ViewKind>('list')
   const [keyword, setKeywordState] = useState('')
+  const [filters, setFiltersState] = useState<TaskFilter>(EMPTY_FILTER)
   const [settings, setSettings] = useState<Settings>({})
   // 排序方式随设置持久化。默认「智能」，由到期日与优先级主导；
   // 只有切到「手动」时，用户拖拽出的 sort_order 才会真正决定顺序。
@@ -204,6 +260,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [reminders, setReminders] = useState<ReminderHit[]>([])
   const [stats, setStats] = useState<Stats | null>(null)
   const [repeatMeta, setRepeatMeta] = useState<RepeatMeta | null>(null)
+  const [savedFilters, setSavedFilters] = useState<SavedFilter[]>([])
+  const [undo, setUndo] = useState<UndoState | null>(null)
+  const [activities, setActivities] = useState<Activity[]>([])
+  const [activitiesLoaded, setActivitiesLoaded] = useState(false)
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null)
   const [selectedIds, setSelectedIds] = useState<number[]>([])
   const [multiSelect, setMultiSelect] = useState(false)
@@ -266,6 +326,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const b = await api.bootstrap()
       setBoot(b)
       setSettings((prev) => ({ ...prev, ...b.settings }))
+      // 角标与撤销槽位同批返回：删除之后不需要额外一次请求，提示条就能亮起来。
+      setSavedFilters(b.savedFilters ?? [])
+      setUndo(b.undo ?? null)
     } catch (e) {
       handleError(e, '加载基础数据失败')
     }
@@ -310,6 +373,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (!alive) return
         setBoot(b)
         setRepeatMeta(meta)
+        setSavedFilters(b.savedFilters ?? [])
+        setUndo(b.undo ?? null)
         // 未设置过外观时，跟随系统偏好，避免第一次打开就与系统主题相逆。
         const stored = b.settings ?? {}
         const theme: 'light' | 'dark' =
@@ -377,6 +442,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const t = window.setInterval(() => void poll(), 30_000)
     return () => window.clearInterval(t)
   }, [loading, settings.soundOn])
+
+  // 撤销槽位带时效（10 分钟），提示条亮着的时候隔一会儿问一次，过期就自己收起来。
+  useEffect(() => {
+    if (!undo?.available) return
+    const t = window.setInterval(() => {
+      void api
+        .undoState()
+        .then(setUndo)
+        .catch(() => undefined)
+    }, 30_000)
+    return () => window.clearInterval(t)
+  }, [undo?.available])
 
   // 专注计时
   const tickFocus = useCallback(() => {
@@ -516,7 +593,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setTasks((prev) => prev.filter((t) => t.id !== id))
         if (selectedTaskId === id) setSelectedTaskId(null)
         setSelectedIds((prev) => prev.filter((x) => x !== id))
-        toast('已删除')
+        toast('已删除，左下角可撤销')
         reconcile()
       } catch (e) {
         handleError(e, '删除失败')
@@ -586,7 +663,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 
   const batch = useCallback(
-    async (action: 'complete' | 'reopen' | 'delete' | 'move', extra?: { listId?: number; dueDate?: string }) => {
+    async (action: BatchAction, extra?: { listId?: number; dueDate?: string }) => {
       if (!selectedIds.length) return
       try {
         const r = await api.batch(selectedIds, action, extra)
@@ -599,6 +676,149 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     },
     [selectedIds, toast, reconcile, handleError],
+  )
+
+  /** 复制任务：副本落在原任务之后，标题带「（副本）」以便一眼分辨。 */
+  const duplicateTask = useCallback(
+    async (id: number) => {
+      try {
+        const t = await api.duplicateTask(id)
+        toast(`已复制为「${t.title}」`)
+        reconcile()
+        return t
+      } catch (e) {
+        handleError(e, '复制任务失败')
+        return null
+      }
+    },
+    [toast, reconcile, handleError],
+  )
+
+  /**
+   * 清空已完成任务。只清当前清单还是清全部，由调用方决定并负责二次确认——
+   * 这是一条真的会删数据的路，store 不该自作主张。
+   */
+  const purgeCompleted = useCallback(
+    async (listId?: number) => {
+      try {
+        const r = await api.purgeCompleted(listId)
+        if (r.affected > 0) toast(`已清空 ${r.affected} 项已完成任务`)
+        else toast('没有可以清空的已完成任务', 'info')
+        reconcile()
+        return r.affected
+      } catch (e) {
+        handleError(e, '清空失败')
+        return 0
+      }
+    },
+    [toast, reconcile, handleError],
+  )
+
+  // ---------- 撤销与操作历史 ----------
+
+  const undoDelete = useCallback(async () => {
+    try {
+      const r = await api.undo()
+      toast(`已恢复 ${r.restored} 项`)
+      reconcile()
+    } catch (e) {
+      handleError(e, '撤销失败')
+      // 槽位可能刚好过期，重新问一次服务端把提示条收起来。
+      void api
+        .undoState()
+        .then(setUndo)
+        .catch(() => undefined)
+    }
+  }, [toast, reconcile, handleError])
+
+  const dropUndo = useCallback(async () => {
+    setUndo(null)
+    try {
+      await api.dropUndo()
+    } catch {
+      /* 放弃撤销不是关键路径，失败也不打扰用户 */
+    }
+  }, [])
+
+  const loadActivities = useCallback(async () => {
+    try {
+      const r = await api.listActivities()
+      setActivities(r.activities ?? [])
+      setActivitiesLoaded(true)
+    } catch (e) {
+      handleError(e, '加载操作历史失败')
+    }
+  }, [handleError])
+
+  const clearActivities = useCallback(async () => {
+    try {
+      await api.clearActivities()
+      setActivities([])
+    } catch (e) {
+      handleError(e, '清空历史失败')
+    }
+  }, [handleError])
+
+  // ---------- 保存的筛选条件 ----------
+
+  const saveFilter = useCallback(
+    async (name: string) => {
+      const trimmed = name.trim()
+      if (!trimmed) {
+        toast('请给这组条件起个名字', 'error')
+        return null
+      }
+      if (!isFilterActive(filters)) {
+        toast('当前没有生效的筛选条件', 'info')
+        return null
+      }
+      try {
+        const f = await api.createSavedFilter({ name: trimmed, query: filterToQuery(filters) })
+        setSavedFilters((prev) => [...prev, f])
+        toast(`已保存筛选「${f.name}」`)
+        return f
+      } catch (e) {
+        handleError(e, '保存筛选失败')
+        return null
+      }
+    },
+    [filters, toast, handleError],
+  )
+
+  const applySavedFilter = useCallback(
+    (f: SavedFilter) => {
+      setFiltersState(filterFromQuery(f.query))
+      toast(`已套用筛选「${f.name}」`)
+    },
+    [toast],
+  )
+
+  const renameSavedFilter = useCallback(
+    async (id: number, name: string) => {
+      const trimmed = name.trim()
+      if (!trimmed) return
+      setSavedFilters((prev) => prev.map((f) => (f.id === id ? { ...f, name: trimmed } : f)))
+      try {
+        await api.updateSavedFilter(id, { name: trimmed })
+      } catch (e) {
+        handleError(e, '重命名失败')
+        void refreshBoot()
+      }
+    },
+    [handleError, refreshBoot],
+  )
+
+  const deleteSavedFilter = useCallback(
+    async (id: number) => {
+      setSavedFilters((prev) => prev.filter((f) => f.id !== id))
+      try {
+        await api.deleteSavedFilter(id)
+      } catch (e) {
+        handleError(e, '删除筛选失败')
+        void refreshBoot()
+      }
+    },
+    [handleError, refreshBoot],
   )
 
   // ---------- 子任务 ----------
@@ -646,9 +866,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // ---------- 组织 ----------
 
   const createFolder = useCallback(
-    async (name: string, color?: string) => {
+    async (name: string, color?: string, parentId?: number) => {
       try {
-        const f = await api.createFolder({ name, color })
+        const f = await api.createFolder({ name, color, parentId })
         await refreshBoot()
         toast(`已创建分组「${f.name}」`)
         return f
@@ -661,7 +881,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 
   const updateFolder = useCallback(
-    async (id: number, patch: Partial<{ name: string; color: string; collapsed: boolean }>) => {
+    async (
+      id: number,
+      patch: Partial<{
+        name: string
+        color: string
+        collapsed: boolean
+        archived: boolean
+        parentId: number | null
+        moveToRoot: boolean
+      }>,
+    ) => {
       // 折叠是高频交互，先本地生效再落库。
       if (patch.collapsed !== undefined) {
         setBoot((prev) =>
@@ -687,7 +917,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         await api.deleteFolder(id)
         if (selection.kind === 'folder' && selection.id === id) setSelection(DEFAULT_SELECTION)
         await refreshBoot()
-        toast('分组已删除，其中清单回到顶层')
+        toast('分组已删除，其中清单与子分组提到上一层')
       } catch (e) {
         handleError(e, '删除分组失败')
       }
@@ -712,7 +942,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 
   const updateList = useCallback(
-    async (id: number, patch: Partial<{ name: string; color: string; folderId: number; moveToRoot: boolean }>) => {
+    async (
+      id: number,
+      patch: Partial<{
+        name: string
+        color: string
+        icon: string
+        folderId: number
+        moveToRoot: boolean
+        archived: boolean
+        starred: boolean
+      }>,
+    ) => {
+      // 收藏是单点交互，先本地翻转再落库；失败时由 refreshBoot 拨回。
+      if (patch.starred !== undefined || patch.archived !== undefined) {
+        setBoot((prev) =>
+          prev
+            ? {
+                ...prev,
+                lists: prev.lists.map((l) =>
+                  l.id === id
+                    ? {
+                        ...l,
+                        starred: patch.starred ?? l.starred,
+                        archived: patch.archived ?? l.archived,
+                      }
+                    : l,
+                ),
+              }
+            : prev,
+        )
+      }
       try {
         await api.updateList(id, patch)
         await refreshBoot()
@@ -926,6 +1186,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const clearSelected = useCallback(() => setSelectedIds([]), [])
 
+  const setFilters = useCallback((f: TaskFilter) => setFiltersState(f), [])
+  const resetFilters = useCallback(() => setFiltersState(EMPTY_FILTER), [])
+
   const value: StoreShape = {
     loading,
     boot,
@@ -934,6 +1197,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     selection,
     view,
     keyword,
+    filters,
     settings,
     toasts,
     reminders,
@@ -949,12 +1213,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     tags: boot?.tags ?? [],
     counts: boot?.counts ?? {},
     todayFocusIds,
+    savedFilters,
+    undo,
+    activities,
+    activitiesLoaded,
     version,
 
     select,
     selectSmart,
     setView,
     setKeyword,
+    setFilters,
+    resetFilters,
     setSelectedTask: setSelectedTaskId,
     setMultiSelect,
     toggleSelected,
@@ -970,8 +1240,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     toggleTask,
     moveTask,
     skipTask,
+    duplicateTask,
     batch,
+    purgeCompleted,
     reorderTasks,
+
+    undoDelete,
+    dropUndo,
+
+    loadActivities,
+    clearActivities,
+
+    saveFilter,
+    applySavedFilter,
+    renameSavedFilter,
+    deleteSavedFilter,
 
     locked,
     unlock,
