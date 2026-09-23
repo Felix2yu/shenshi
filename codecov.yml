@@ -1,0 +1,24 @@
+# Codecov 覆盖率配置：https://app.codecov.io/gh/Felix2yu/shenshi
+#
+# 当前单测只覆盖纯函数（重复规则推演等），整体覆盖率尚低，
+# 因此 project / patch 状态都先设为 informational —— 只在 PR 上报告、不拦合入；
+# 待覆盖面铺开后再去掉 informational，让覆盖率回退成为硬性检查。
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+
+# PR 评论：只在覆盖率有变化时刷新，避免每次都打扰。
+comment:
+  behavior: default
+  require_changes: true
+
+# 忽略与测试无关、不该计入的文件：测试本身、构建产物、生成的前端包。
+ignore:
+  - "server/internal/store/repeat_test.go"
+  - "server/dist/**"
+  - "web/dist/**"

@@ -402,7 +402,7 @@ CI 配置另在 `.github/`（`workflows/build.yml`、`workflows/release.yml`、`
 ## 测试
 
 ```bash
-# 后端单元测试（重复规则推演等纯函数，秒回）
+# 后端单元测试（重复规则推演等纯函数，秒回；CI 会附带覆盖率并上传 Codecov）
 cd server && go test ./... && cd ..
 
 # 后端端到端（自建临时实例与数据库，逐条验证核心接口）
