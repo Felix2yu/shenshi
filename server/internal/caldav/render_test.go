@@ -95,12 +95,14 @@ func TestRenderCalendarVEVENT(t *testing.T) {
 	if dtstamp == nil {
 		t.Fatal("缺少 DTSTAMP")
 	}
+	// DTSTAMP 取 UpdatedAt 的墙钟时间。ical 序列化只保留墙钟数字、读回时按
+	// 本地时区解释，因此断言必须与所在时区无关（CI 是 UTC，本机是 +08）。
 	st, err := dtstamp.DateTime(time.Local)
 	if err != nil {
 		t.Fatalf("DTSTAMP: %v", err)
 	}
-	if st.Format(time.RFC3339) != "2026-09-23T12:00:00+08:00" {
-		t.Errorf("DTSTAMP = %s，应取 UpdatedAt", st.Format(time.RFC3339))
+	if got := st.Format("2006-01-02 15:04"); got != "2026-09-23 12:00" {
+		t.Errorf("DTSTAMP 墙钟 = %s，应取 UpdatedAt（2026-09-23 12:00）", got)
 	}
 }
 
