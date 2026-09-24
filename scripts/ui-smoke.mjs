@@ -624,9 +624,10 @@ async function main() {
     await arcHabit.locator('button[title="更多"]').first().click()
     await page.waitForTimeout(350)
     // 菜单项文案已简化为「归档」（原先带「（不再显示）」的括注）。
-    // 定位收窄到该行子树内：菜单是行内 Popover（absolute，未 portal），
-    // 全页 hasText 会与侧栏归档区的「恢复」等同类词撞车。
-    await arcHabit.locator('button', { hasText: '归档' }).first().click()
+    // 定位走浮层容器：Popover 自 2026-09-24 起 portal 到 body（fixed 定位），
+    // 不再是行的后代，row.locator(...) 会落空；而全页 hasText 又会与侧栏
+    // 归档区的「恢复」等同类词撞车。
+    await page.locator('div.fixed.z-40').last().locator('button', { hasText: '归档' }).first().click()
     await page.waitForTimeout(1100)
     check('归档后习惯默认隐藏', (await page.locator('[data-habit-row]').count()) === 0)
     await page.locator('[data-testid="toggle-archived-habits"]').first().click()
@@ -638,7 +639,7 @@ async function main() {
     await page.waitForTimeout(250)
     await archivedRow.locator('button[title="更多"]').first().click()
     await page.waitForTimeout(350)
-    await archivedRow.locator('button', { hasText: '恢复' }).first().click()
+    await page.locator('div.fixed.z-40').last().locator('button', { hasText: '恢复' }).first().click()
     await page.waitForTimeout(1100)
     const restoredRow = page.locator('[data-habit-row]').filter({ hasText: '晨起临帖' }).first()
     check('恢复后归档标记消失', (await restoredRow.getAttribute('data-habit-archived')) === '0')

@@ -348,18 +348,23 @@ export function Popover({
 }) {
   const ref = useRef<HTMLDivElement>(null)
 
-  // 实际生效的方向、高度上限与（贴边时的）纵向落点。
-  // 浮层用 fixed、跟着行内触发元素走，尺寸只有打开后才量得到；行靠近视口底部时
+  // 实际生效的方向、高度上限与落点。
+  // 浮层用 fixed + portal 挂到 body，尺寸只有打开后才量得到；行靠近视口底部时
   // 向下展开会溢出视口（要滚动页面才看得到），而上方的空白常常还很充裕。
   // 打开时量一次，按四档决策：本侧放得下 → 不动；另一侧放得下 → 翻转；
   // 两侧都放不下但整屏装得下 → 贴住空间更大一侧的视口边界一次显示完（不加滚动条）；
   // 整屏也装不下 → 收窄 + 内部滚动（同原生 <select> 的弹层）。
   //
-  // 为什么是 fixed 而不是 absolute：任务列表等容器是 `overflow-y-auto` 的滚动区，
-  // absolute 浮层会被它裁剪 —— 向上翻转后超出容器上沿的部分直接不见（DOM 里量着
-  // 696px 完整、渲染出来只剩下半截，实测踩过）。fixed 的包含块是视口，不受祖先
-  // overflow 影响。（前提：祖先没有 transform/filter/contain: paint，否则会退化成
-  // absolute。当前全站无此情况。）
+  // 为什么必须 `fixed` + `createPortal(…, document.body)`：
+  // 1) 任务列表等容器是 `overflow-y-auto` 的滚动区，`absolute` 浮层会被它裁剪 ——
+  //    向上翻转后超出容器上沿的部分直接不渲染（DOM 量着 696px 完整、渲染只剩半截）；
+  // 2) 只改 fixed 还不够：`Toolbar` 的 header 带 `backdrop-blur`，`filter` 类属性会
+  //    让后代 fixed 元素以它为包含块，于是"视口坐标"被整体偏移（实测 left 写 1141、
+  //    实际落在 1460，飞出视口）。
+  // 挂到 body 之下，两件事一起解决：祖先的 overflow 与 filter 都管不着它。
+  //
+  // 锚点取原位占位元素的 parentElement —— portal 之后面板的 parentElement 是 body，
+  // 拿不到"触发按钮所在的那个容器"，故在渲染位置留一个 display:none 的标记。
   const [pos, setPos] = useState<{
     side: 'bottom' | 'top'
     maxHeight?: number
@@ -367,15 +372,16 @@ export function Popover({
     top?: number
     left?: number
   }>({ side })
+  const hostRef = useRef<HTMLSpanElement>(null)
 
   useLayoutEffect(() => {
     if (!open) return
     const el = ref.current
     if (!el) return
     const place = () => {
-      // fixed 元素的 offsetParent 恒为 null，锚点取渲染位置的父元素
+      // fixed 元素的 offsetParent 恒为 null，锚点取原位标记的父元素
       //（调用方把 Popover 放在触发按钮旁边，父元素通常就是按钮的包裹容器）。
-      const anchor = el.parentElement
+      const anchor = hostRef.current?.parentElement ?? null
       const a = anchor?.getBoundingClientRect()
       if (!a) return
       const GAP = 6
@@ -498,30 +504,40 @@ export function Popover({
 
   if (!open) return null
   return (
-    // 落点全部由 style 精确给出（top / left / maxHeight 可能同时有值，React 会忽略
-    // 值为 undefined 的键）。fixed 定位，故纵横向都是视口坐标。
-    // 量测在 useLayoutEffect 里、paint 之前完成，理论上不会闪；仍用 visibility 兜底，
-    // 免得极端情况下第一帧画在视口左上角。
-    <div
-      ref={ref}
-      className={cx(
-        'fixed z-40 rounded-xl border border-line bg-surface p-2 shadow-[var(--shadow-md)]',
-        // 翻转时改用纯淡入：animate-rise 带 translateY(6px)，方向反了会看着别扭
-        pos.side === side ? 'animate-rise' : 'animate-fade-in',
-        // 仅当整屏也装不下时才收窄 + 内部滚动
-        pos.maxHeight !== undefined && 'overflow-y-auto',
-        className,
+    <>
+      {/*
+        原位标记：portal 之后面板的 parentElement 是 body，拿不到"触发按钮所在的容器"，
+        所以在这里留一个零尺寸、display:none 的锚点标记（`hidden` 不参与布局也不进无障碍树）。
+      */}
+      <span ref={hostRef} className="hidden" aria-hidden />
+      {createPortal(
+        // 落点全部由 style 精确给出（top / left / maxHeight 可能同时有值，React 会忽略
+        // 值为 undefined 的键）。挂在 body 下的 fixed 元素，纵横向都是视口坐标。
+        // 量测在 useLayoutEffect 里、paint 之前完成，理论上不会闪；仍用 visibility 兜底，
+        // 免得极端情况下第一帧画在视口左上角。
+        <div
+          ref={ref}
+          className={cx(
+            'fixed z-40 rounded-xl border border-line bg-surface p-2 shadow-[var(--shadow-md)]',
+            // 翻转时改用纯淡入：animate-rise 带 translateY(6px)，方向反了会看着别扭
+            pos.side === side ? 'animate-rise' : 'animate-fade-in',
+            // 仅当整屏也装不下时才收窄 + 内部滚动
+            pos.maxHeight !== undefined && 'overflow-y-auto',
+            className,
+          )}
+          style={{
+            width,
+            top: pos.top,
+            left: pos.left,
+            maxHeight: pos.maxHeight,
+            visibility: pos.top === undefined ? 'hidden' : undefined,
+          }}
+        >
+          {children}
+        </div>,
+        document.body,
       )}
-      style={{
-        width,
-        top: pos.top,
-        left: pos.left,
-        maxHeight: pos.maxHeight,
-        visibility: pos.top === undefined ? 'hidden' : undefined,
-      }}
-    >
-      {children}
-    </div>
+    </>
   )
 }
 
