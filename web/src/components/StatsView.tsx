@@ -71,9 +71,23 @@ export function StatsView() {
 
   const todayDone = stats.doneToday
   const openToday = stats.dueToday - stats.dueTodayDone
+  // 柱状图是纯视觉的，读屏读不到柱子高低 —— 这里算好概述给它当文本替代。
+  const trendDone = chart.rows.reduce((n, r) => n + r.done, 0)
+  const trendCreated = chart.rows.reduce((n, r) => n + r.created, 0)
+  const trendPeak = chart.rows.reduce<{ date: string; done: number }>(
+    (best, r) => (r.done > best.done ? { date: r.date, done: r.done } : best),
+    { date: '', done: 0 },
+  )
 
   return (
     <div className="h-full overflow-y-auto px-5 py-4">
+      {/* 刷新失败但手里还有旧数据：明说这是旧数，别让人拿昨天的数字做今天的判断 */}
+      {statsError ? (
+        <p className="mb-3 rounded-xl border border-p-high/25 bg-p-high/8 px-3 py-2 text-[0.75rem] text-ink-2">
+          统计刷新失败，以下为上一次成功加载的数据。
+        </p>
+      ) : null}
+
       {/* 概览 */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Kpi
@@ -125,6 +139,7 @@ export function StatsView() {
               <button
                 key={r.days}
                 type="button"
+                aria-pressed={days === r.days}
                 onClick={() => setDays(r.days)}
                 className={cx(
                   'rounded-md px-2.5 py-1 text-[0.75rem] transition-colors',
@@ -148,7 +163,13 @@ export function StatsView() {
           </span>
         </div>
 
-        <div className="mt-3 flex h-[150px] items-end gap-[3px] overflow-x-auto">
+        <div
+          role="img"
+          aria-label={`近 ${days} 天趋势：合计完成 ${trendDone} 件、新建 ${trendCreated} 件。${
+            trendPeak.done > 0 ? `完成最多的一天是 ${trendPeak.date}，${trendPeak.done} 件。` : ''
+          }`}
+          className="mt-3 flex h-[150px] items-end gap-[3px] overflow-x-auto"
+        >
           {chart.rows.map((r) => {
             const doneH = (r.done / chart.max) * 100
             const createdH = (r.created / chart.max) * 100

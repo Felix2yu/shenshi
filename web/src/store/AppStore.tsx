@@ -10,7 +10,7 @@ import {
 } from 'react'
 
 import { ApiError, api, setUnauthorizedHandler, type TaskQuery, type TaskSort } from '../api/client'
-import { todayStr } from '../lib/date'
+import { addDays, todayStr } from '../lib/date'
 import { EMPTY_FILTER, filterFromQuery, filterToQuery, isFilterActive, type TaskFilter } from '../lib/filter'
 import { playChime, playTick, pushNotification } from '../lib/notify'
 import {
@@ -393,17 +393,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // 「已完成 / 最近完成」这两个本来就是看完成记录的视图不受影响。
   const showCompleted = settings.showCompleted !== '0'
 
+  // 列表请求序号：搜索/切换视图时会有多个请求并发在途，
+  // 只允许"最新那次"写回结果，否则先发的慢响应会覆盖后发的快响应（搜索结果串台）。
+  const tasksSeq = useRef(0)
+
   const refreshTasks = useCallback(async () => {
+    const seq = ++tasksSeq.current
     setTasksLoading(true)
     try {
       const r = await api.listTasks(queryFor(selection, keyword, sortBy))
+      if (seq !== tasksSeq.current) return
       const doneView =
         selection.kind === 'smart' && (selection.key === 'done' || selection.key === 'recentdone')
       setTasks(!showCompleted && !doneView ? r.tasks.filter((t) => t.status !== 'done') : r.tasks)
     } catch (e) {
+      if (seq !== tasksSeq.current) return
       handleError(e, '加载任务失败')
     } finally {
-      setTasksLoading(false)
+      if (seq === tasksSeq.current) setTasksLoading(false)
     }
   }, [selection, keyword, sortBy, showCompleted, handleError])
 
@@ -675,9 +682,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const createTask = useCallback(
     async (patch: TaskPatch) => {
       try {
+        // 新建任务的归属：要让任务**留在当前视图里**，否则用户看到的是一条 toast
+        // 加一个空列表，第一反应是"没记上"。
         if (patch.listId === undefined && selection.kind === 'list') patch.listId = selection.id
+        if (patch.dueDate === undefined && patch.listId === undefined && selection.kind === 'smart') {
+          // 智能清单：能靠日期推断的补上日期（任务默认就是"今天做"的）
+          if (selection.key === 'today') patch.dueDate = todayStr()
+          else if (selection.key === 'tomorrow') patch.dueDate = addDays(todayStr(), 1)
+          else if (selection.key === 'week' || selection.key === 'next7') patch.dueDate = todayStr()
+        }
         const t = await api.createTask(patch)
-        toast(`已记下「${t.title}」`)
+        // 推断不出归属时（分组 / 标签 / 搜索 / 逾期等视图）如实说明它去了哪里
+        const home = selection.kind === 'list' ? '' : t.listName
+        toast(home ? `已记下「${t.title}」· 存入「${home}」` : `已记下「${t.title}」`)
         reconcile()
         return t
       } catch (e) {
@@ -784,7 +801,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (!selectedIds.length) return
       try {
         const r = await api.batch(selectedIds, action, extra)
-        toast(`已处理 ${r.affected} 项`)
+        // 「完成」是幂等的集合操作（已在服务端改为只对未完成项生效），
+        // 文案要与实际动作对应，不能一律含糊成"已处理"。
+        const label =
+          action === 'complete'
+            ? '已完成'
+            : action === 'reopen'
+              ? '已恢复'
+              : action === 'delete'
+                ? '已删除'
+                : action === 'archive'
+                  ? '已归档'
+                  : action === 'unarchive'
+                    ? '已取消归档'
+                    : '已处理'
+        toast(`${label} ${r.affected} 项`)
         setSelectedIds([])
         setMultiSelect(false)
         reconcile()

@@ -51,10 +51,13 @@ function colDefaults(groupBy: GroupBy, col: Column): TaskPatch | undefined {
 
 /** 看板视图：与列表共用同一批任务，只是换一种「横向」的读法。 */
 export function BoardView({ onOpen, filter }: { onOpen: (t: Task) => void; filter: TaskFilter }) {
-  const { tasks, tags, lists, updateTask } = useStore()
+  const { tasks, tags, lists, updateTask, toast } = useStore()
   const [groupBy, setGroupBy] = useState<GroupBy>('priority')
   const [dropCol, setDropCol] = useState<string | null>(null)
   const [quickCol, setQuickCol] = useState<string | null>(null)
+  // 拖拽起点所在列。按标签分组时同一个任务会出现在多列，
+  // 只有知道"从哪一列拖出来的"才能在放下列时正确替换而不是叠加。
+  const [dragFrom, setDragFrom] = useState<string | null>(null)
 
   const columns = useMemo<Column[]>(() => {
     const open = tasks.filter((t) => t.status !== 'done' && matchFilter(t, filter))
@@ -112,24 +115,44 @@ export function BoardView({ onOpen, filter }: { onOpen: (t: Task) => void; filte
   const onDrop = async (e: DragEvent<HTMLDivElement>, col: Column) => {
     e.preventDefault()
     setDropCol(null)
+    const from = dragFrom
+    setDragFrom(null)
     const id = Number(e.dataTransfer.getData(DRAG_MIME))
     if (!id) return
     if (groupBy === 'priority') {
-      await updateTask(id, { priority: Number(col.key) as 0 | 1 | 2 | 3 })
+      const p = Number(col.key) as 0 | 1 | 2 | 3
+      await updateTask(id, { priority: p })
+      toast(`优先级已改为「${col.label}」`)
       return
     }
     if (groupBy === 'list' && col.key.startsWith('list-')) {
       await updateTask(id, { listId: Number(col.key.slice(5)) })
+      toast(`已移入「${col.label}」`)
       return
     }
-    if (groupBy === 'tag' && col.key.startsWith('tag-')) {
-      const tagId = Number(col.key.slice(4))
-      if (Number.isFinite(tagId)) {
-        const task = tasks.find((t) => t.id === id)
-        if (task && !task.tags.some((x) => x.id === tagId)) {
-          await updateTask(id, { tagIds: [...task.tags.map((t) => t.id), tagId] })
-        }
+    if (groupBy === 'tag') {
+      const task = tasks.find((t) => t.id === id)
+      if (!task) return
+      const current = task.tags.map((x) => x.id)
+      if (col.key === 'tag-none') {
+        // 「无标签」列：此前因为没有数字后缀，Number('') 得 NaN 后被静默忽略，
+        // 卡片弹回原位却毫无提示。现在明确表达"清空标签"。
+        if (current.length === 0) return
+        await updateTask(id, { tagIds: [] })
+        toast('已移除全部标签')
+        return
       }
+      if (!col.key.startsWith('tag-')) return
+      const tagId = Number(col.key.slice(4))
+      if (!Number.isFinite(tagId)) return
+      // 从别的标签列拖过来算「换列」：移除来源列的标签再加目标标签。
+      // 只做追加的话，卡片会同时留在两列里，与"拖到哪列就归哪列"相悖。
+      const fromTagId = from && from.startsWith('tag-') && from !== 'tag-none' ? Number(from.slice(4)) : NaN
+      const base = Number.isFinite(fromTagId) ? current.filter((x) => x !== fromTagId) : current
+      const next = Array.from(new Set(base.concat(tagId)))
+      if (next.length === current.length) return
+      await updateTask(id, { tagIds: next })
+      toast(`已加入「${col.label}」`)
       return
     }
     if (groupBy === 'due') {
@@ -145,6 +168,7 @@ export function BoardView({ onOpen, filter }: { onOpen: (t: Task) => void; filte
         none: null,
       }
       await updateTask(id, { dueDate: map[col.key] ?? null })
+      toast(map[col.key] ? `到期日已改为 ${map[col.key]}` : '已清除到期日')
     }
   }
 
@@ -176,9 +200,12 @@ export function BoardView({ onOpen, filter }: { onOpen: (t: Task) => void; filte
           {columns.map((col) => (
             <div
               key={col.key}
+              onDragStart={() => setDragFrom(col.key)}
               onDragOver={(e) => {
                 e.preventDefault()
-                setDropCol(col.key)
+                // dragover 以 ~60Hz 触发：只在目标列真的变化时才 setState，
+                // 否则拖拽全程整块看板都在重渲染
+                if (dropCol !== col.key) setDropCol(col.key)
               }}
               onDragLeave={() => setDropCol(null)}
               onDrop={(e) => void onDrop(e, col)}
@@ -227,7 +254,8 @@ export function BoardView({ onOpen, filter }: { onOpen: (t: Task) => void; filte
         </div>
       </div>
 
-      {tasks.filter((t) => t.status !== 'done').length === 0 ? (
+      {/* 空态与列内数据同口径：套上筛选条件，否则筛掉全部内容时会显示"看板为空"的误导文案 */}
+      {tasks.filter((t) => t.status !== 'done' && matchFilter(t, filter)).length === 0 ? (
         <div className="pb-12">
           <div className="text-center">
             <p className="brand-serif text-[0.875rem] text-ink-2">{QUOTES.board.text}</p>

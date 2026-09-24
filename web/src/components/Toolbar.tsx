@@ -84,6 +84,9 @@ const STATUS_OPTIONS = [
   { v: 'done', l: '已完成' },
 ] as const
 
+/** 这些视图直接消费「按当前选择过滤后」的任务，所以顶部要标出作用域。 */
+const SCOPED_VIEWS: ViewKind[] = ['board', 'table', 'calendar', 'quadrant']
+
 /** 日期区间的快捷段落，省得每次去点两个日历控件。 */
 function rangePreset(kind: 'today' | 'week' | 'month'): { from: string; to: string } {
   const base = new Date(`${todayStr()}T00:00:00`)
@@ -112,6 +115,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
     multiSelect,
     setMultiSelect,
     lists,
+    folders,
     tags,
     keyword,
     sortBy,
@@ -165,6 +169,19 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
     return ''
   }, [selection, view, lists, keyword])
 
+  /**
+   * 看板 / 表格 / 日历 / 四象限都直接吃 store 里「按当前选择过滤后」的 tasks，
+   * 也就是它们各自带着一个作用域。顶部把这层作用域显式写出来，
+   * 用户才不会默认「切到四象限就是在看全部任务」。
+   */
+  const scopeLabel = useMemo(() => {
+    if (selection.kind === 'smart') return SMART_TITLE[selection.key]
+    if (selection.kind === 'list') return lists.find((l) => l.id === selection.id)?.name ?? '清单'
+    if (selection.kind === 'folder') return folders.find((f) => f.id === selection.id)?.name ?? '分组'
+    if (selection.kind === 'tag') return `#${tags.find((t) => t.id === selection.id)?.name ?? ''}`
+    return ''
+  }, [selection, lists, folders, tags])
+
   const openCount = tasks.filter((t) => t.status !== 'done').length
   const doneCount = tasks.filter((t) => t.status === 'done').length
   const hitCount = useMemo(() => applyFilter(tasks, filters).length, [tasks, filters])
@@ -178,6 +195,9 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
           <h1 className="brand-serif truncate text-[1.3125rem] font-semibold leading-7 text-ink">{title}</h1>
           <p className="mt-0.5 flex flex-wrap items-center gap-2 text-[0.71875rem] text-ink-3">
             <span>{subtitle}</span>
+            {SCOPED_VIEWS.includes(view) && scopeLabel ? (
+              <span className="text-ink-3/80">· 范围：{scopeLabel}</span>
+            ) : null}
             {view === 'list' || view === 'board' || view === 'table' ? (
               <span className="text-ink-3/80">
                 · 待办 {openCount}
@@ -191,11 +211,13 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
         <div className="flex items-center gap-2">
           <SearchBar />
 
-          <div className="flex rounded-lg border border-line bg-surface p-0.5">
+          <div role="group" aria-label="视图切换" className="flex rounded-lg border border-line bg-surface p-0.5">
             {VIEW_TABS.map((v) => (
               <button
                 key={v.key}
                 type="button"
+                aria-label={v.label}
+                aria-current={view === v.key ? 'page' : undefined}
                 title={v.label}
                 onClick={() => setView(v.key)}
                 className={cx(
@@ -224,6 +246,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                     <button
                       key={o.v}
                       type="button"
+                      aria-pressed={filters.status === o.v}
                       onClick={() => set({ status: o.v })}
                       className={cx(
                         'flex-1 rounded-md py-1 text-[0.75rem] transition-colors',
@@ -247,6 +270,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                     <button
                       key={String(o.v)}
                       type="button"
+                      aria-pressed={priority === o.v}
                       onClick={() => set({ priority: o.v })}
                       className={cx(
                         'flex-1 rounded-md py-1 text-[0.75rem] transition-colors',
@@ -277,6 +301,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                       <button
                         key={o.l}
                         type="button"
+                        aria-pressed={active}
                         onClick={() => (o.p === null ? set({ from: null, to: null }) : set(rangePreset(o.p)))}
                         className={cx(
                           'flex-1 rounded-md py-1 text-[0.75rem] transition-colors',
@@ -291,16 +316,18 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                 <div className="mt-1.5 flex items-center gap-1.5 px-0.5">
                   <input
                     type="date"
+                    aria-label="到期区间起点"
                     value={filters.from ?? ''}
                     onChange={(e) => set({ from: e.target.value || null })}
-                    className="min-w-0 flex-1 rounded-md border border-line bg-surface px-1.5 py-1 text-[0.71875rem] text-ink outline-none focus:border-seal/60"
+                    className="min-w-0 flex-1 rounded-md border border-control-line bg-surface px-1.5 py-1 text-[0.71875rem] text-ink outline-none focus:border-seal"
                   />
                   <span className="shrink-0 text-[0.6875rem] text-ink-3">→</span>
                   <input
                     type="date"
+                    aria-label="到期区间终点"
                     value={filters.to ?? ''}
                     onChange={(e) => set({ to: e.target.value || null })}
-                    className="min-w-0 flex-1 rounded-md border border-line bg-surface px-1.5 py-1 text-[0.71875rem] text-ink outline-none focus:border-seal/60"
+                    className="min-w-0 flex-1 rounded-md border border-control-line bg-surface px-1.5 py-1 text-[0.71875rem] text-ink outline-none focus:border-seal"
                   />
                 </div>
 
@@ -345,6 +372,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                 <div className="mt-2 flex gap-1 border-t border-line pt-2">
                   <button
                     type="button"
+                    aria-pressed={!!filters.pinned}
                     onClick={() => set({ pinned: !filters.pinned })}
                     className={cx(
                       'inline-flex flex-1 items-center justify-center gap-1 rounded-md py-1 text-[0.75rem] transition-colors',
@@ -356,6 +384,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                   </button>
                   <button
                     type="button"
+                    aria-pressed={!!filters.starred}
                     onClick={() => set({ starred: !filters.starred })}
                     className={cx(
                       'inline-flex flex-1 items-center justify-center gap-1 rounded-md py-1 text-[0.75rem] transition-colors',
@@ -399,8 +428,9 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                           }
                           if (e.key === 'Escape') setSaveOpen(false)
                         }}
+                        aria-label="筛选名称"
                         placeholder="给这组条件起个名字"
-                        className="min-w-0 flex-1 rounded-md border border-line bg-surface px-1.5 py-1 text-[0.75rem] text-ink outline-none focus:border-seal/60"
+                        className="min-w-0 flex-1 rounded-md border border-control-line bg-surface px-1.5 py-1 text-[0.75rem] text-ink outline-none focus:border-seal"
                       />
                       <button
                         type="button"
@@ -438,6 +468,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                           </button>
                           <button
                             type="button"
+                            aria-label={`删除筛选「${f.name}」`}
                             title="删除这条筛选"
                             onClick={() => void deleteSavedFilter(f.id)}
                             className="rounded p-0.5 text-ink-3 opacity-0 transition-opacity hover:text-p-high group-hover:opacity-100"
@@ -451,7 +482,10 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                 </div>
 
                 <div className="mt-1.5 flex items-center justify-between border-t border-line px-1 pt-2">
-                  <span className="text-[0.65625rem] text-ink-3">命中 {hitCount} 项</span>
+                  {/* 命中数随条件即时变化，读屏要靠 live region 才知道结果 */}
+                  <span role="status" aria-live="polite" className="text-[0.65625rem] text-ink-3">
+                    命中 {hitCount} 项
+                  </span>
                   <button
                     type="button"
                     onClick={() => {
@@ -482,6 +516,7 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
                     <button
                       key={o.value}
                       type="button"
+                      aria-current={sortBy === o.value ? 'true' : undefined}
                       onClick={() => {
                         setSortBy(o.value)
                         setSortOpen(false)

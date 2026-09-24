@@ -223,25 +223,39 @@ const pinnedFirst = `CASE WHEN t.status <> 'done' AND t.pinned = 1 THEN 0 ELSE 1
 // 但要支持手动拖拽排序，就必须有一个让 sort_order 说了算的模式，即 manual；
 // 否则用户拖完会发现顺序纹丝不动（sort_order 只是 smart 模式里的第五顺位）。
 // smart 参数用于两个「按时间倒序才读得通」的智能清单：最近修改与最近完成。
+// 带 _asc / _desc 后缀的是反向变体，供表格列头二次点击切换方向；
+// 基础值即该列的默认读法（优先级、更新时间默认降序，标题、到期日默认升序）。
 func orderByFor(sortBy, smart string) string {
 	switch sortBy {
 	case "manual":
 		return " ORDER BY " + doneLast + ", " + pinnedFirst + `, t.sort_order ASC, t.id ASC`
 	case "priority":
 		return " ORDER BY " + doneLast + ", " + pinnedFirst + `, t.priority DESC, t.sort_order ASC, t.id ASC`
+	case "priority_asc":
+		return " ORDER BY " + doneLast + ", " + pinnedFirst + `, t.priority ASC, t.sort_order ASC, t.id ASC`
 	case "due":
 		return " ORDER BY " + doneLast + ", " + pinnedFirst + `,
           CASE WHEN t.due_date IS NULL THEN 1 ELSE 0 END,
           t.due_date ASC, COALESCE(t.due_time, '99:99') ASC,
           t.sort_order ASC, t.id ASC`
+	case "due_desc":
+		// 远期的排前面；未排期（NULL）恒定沉底，不因方向翻转而跑到最上面。
+		return " ORDER BY " + doneLast + ", " + pinnedFirst + `,
+          CASE WHEN t.due_date IS NULL THEN 1 ELSE 0 END,
+          t.due_date DESC, COALESCE(t.due_time, '99:99') DESC,
+          t.sort_order ASC, t.id ASC`
 	case "created":
 		return " ORDER BY " + doneLast + ", " + pinnedFirst + `, t.created_at DESC, t.id DESC`
 	case "updated":
 		return " ORDER BY " + doneLast + ", " + pinnedFirst + `, t.updated_at DESC, t.id DESC`
+	case "updated_asc":
+		return " ORDER BY " + doneLast + ", " + pinnedFirst + `, t.updated_at ASC, t.id ASC`
 	case "completed":
 		return " ORDER BY " + doneLast + `, t.completed_at DESC, t.id DESC`
 	case "title":
 		return " ORDER BY " + doneLast + ", " + pinnedFirst + `, t.title COLLATE NOCASE ASC, t.id ASC`
+	case "title_desc":
+		return " ORDER BY " + doneLast + ", " + pinnedFirst + `, t.title COLLATE NOCASE DESC, t.id DESC`
 	default:
 		switch smart {
 		case model.SmartRecentDone:
@@ -721,6 +735,12 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 			return nil, err
 		}
 		add("due_date = ?", ptrStr(v))
+		// 清掉日期时连带清掉时刻：否则会留下"没有到期日、却还挂着 09:00"的脏数据，
+		// 而且此后任何一次设日期都会让那个旧时刻悄然复活。
+		// 调用方显式传了 dueTime 时以它为准，不在这里覆盖。
+		if v == nil && !in.DueTime.Set {
+			add("due_time = NULL")
+		}
 	}
 	if in.DueTime.Set {
 		if err := checkTime(in.DueTime.Value); err != nil {
@@ -1075,6 +1095,22 @@ func (s *Store) toggleTask(id int64, quiet bool) (*ToggleResult, error) {
 	return &ToggleResult{Task: t, Completed: false}, nil
 }
 
+// completeTask 幂等地把任务置为已完成：已经是 done 的任务原样返回，**不会**被翻回未完成。
+//
+// 批量「完成」需要这个语义——BatchAction 里若直接调 toggleTask，
+// 一批中已完成的那几项会被静默恢复，而提示却是"已处理 N 项"，与用户预期相反。
+// 并发安全由 toggleTask 内部的条件更新（WHERE status<>'done'）兜底。
+func (s *Store) completeTask(id int64, quiet bool) (*ToggleResult, error) {
+	cur, err := s.GetTask(id)
+	if err != nil {
+		return nil, err
+	}
+	if cur.Status == model.StatusDone {
+		return &ToggleResult{Task: cur, Completed: false}, nil
+	}
+	return s.toggleTask(id, quiet)
+}
+
 // spawnNextRepeat 为刚完成的重复任务生成下一次实例，并继承标签。
 // 返回新任务；非重复任务、算不出下次或续期失败时返回 nil。
 // 完成的入口有两条（/toggle 与 PATCH status），续期口径必须在这一处收拢，
@@ -1312,7 +1348,8 @@ func (s *Store) BatchAction(ids []int64, action string, listID *int64, dueDate *
 		var err error
 		switch action {
 		case "complete":
-			if _, err = s.toggleTask(id, true); err == nil {
+			// 幂等完成：已是 done 的项保持完成，不会被 toggle 翻回未完成。
+			if _, err = s.completeTask(id, true); err == nil {
 				n++
 			}
 		case "reopen":

@@ -52,7 +52,7 @@ const QUADRANTS = [
 ] as const
 
 export function QuadrantView({ onOpen, filter }: { onOpen: (t: Task) => void; filter: TaskFilter }) {
-  const { tasks, updateTask } = useStore()
+  const { tasks, updateTask, toast } = useStore()
   const [dropKey, setDropKey] = useState<number | null>(null)
   const [quickKey, setQuickKey] = useState<number | null>(null)
 
@@ -81,6 +81,9 @@ export function QuadrantView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
     const id = Number(e.dataTransfer.getData(DRAG_MIME))
     if (!id) return
     await updateTask(id, { important: q.important, urgent: q.urgent })
+    // 象限是由「重要 / 紧急」两个字段推导出来的，拖拽会直接改写它们，
+    // 必须把结果说出来——否则用户看到卡片跳过去却不知道改了什么属性。
+    toast(`已标为${q.important ? '重要' : '不重要'}且${q.urgent ? '紧急' : '不紧急'}`)
   }
 
   const total = tasks.filter((t) => t.status !== 'done' && matchFilter(t, filter)).length
@@ -104,7 +107,8 @@ export function QuadrantView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
                 key={q.key}
                 onDragOver={(e) => {
                   e.preventDefault()
-                  setDropKey(q.key)
+                  // 同看板：dragover 高频触发，仅在目标象限变化时更新高亮
+                  if (dropKey !== q.key) setDropKey(q.key)
                 }}
                 onDragLeave={() => setDropKey(null)}
                 onDrop={(e) => void onDrop(e, q)}

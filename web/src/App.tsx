@@ -14,6 +14,8 @@ import { BatchBar, TaskListView } from './components/TaskViews'
 import { Toolbar } from './components/Toolbar'
 import { Button, IconButton } from './components/ui'
 import { applyFilter } from './lib/filter'
+import { useEscapeArbiter } from './lib/escStack'
+import { useModalLayerActive } from './lib/modalLayer'
 import { useStore } from './store/AppStore'
 import type { Selection, Task, ViewKind } from './types'
 
@@ -41,6 +43,11 @@ export default function App() {
   } = useStore()
   const [navOpen, setNavOpen] = useState(false)
 
+  // document 上唯一的 Esc 仲裁器：让浮层之间的 Esc 处理"最上层优先"
+  useEscapeArbiter()
+  // 有弹窗打开时把背景标记为 inert
+  const modalOpen = useModalLayerActive()
+
   const openTask = useCallback((t: Task) => setSelectedTask(t.id), [setSelectedTask])
   const closeTask = useCallback(() => setSelectedTask(null), [setSelectedTask])
 
@@ -60,12 +67,15 @@ export default function App() {
         target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
 
       if (e.key === 'Escape') {
-        if (selectedTaskId !== null) {
-          closeTask()
-          return
-        }
+        // 输入中的 Esc 归输入组件自己处理（取消候选 / 还原草稿），不触发全局上下文动作。
+        // 浮层（Modal / Popover）已在各自的层里消费并 stopPropagation，不会走到这里。
+        if (typing) return
         if (multiSelect) {
           clearSelected()
+          return
+        }
+        if (selectedTaskId !== null) {
+          closeTask()
           return
         }
         setNavOpen(false)
@@ -123,6 +133,10 @@ export default function App() {
 
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-paper text-ink">
+      {/* 有弹窗打开时让背景整体 inert：不可聚焦、也不被读屏读到。
+          弹窗已 portal 到 body，不在此子树内，因此不受影响；
+          提醒中心 / 专注指示 / Toast 等自绘浮层留在外面，仍可交互。 */}
+      <div className="contents" inert={modalOpen}>
       {/* 清单树：桌面常驻，移动端为抽屉 */}
       <div
         className={
@@ -194,6 +208,7 @@ export default function App() {
         </>
       ) : null}
 
+      </div>
       <AppOverlays />
     </div>
   )
@@ -258,7 +273,8 @@ function LockScreen() {
   )
 }
 
-function emptyKeyFor(selection: Selection): string {  switch (selection.kind) {
+function emptyKeyFor(selection: Selection): string {
+  switch (selection.kind) {
     case 'smart':
       return selection.key
     case 'list':

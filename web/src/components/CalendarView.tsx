@@ -17,6 +17,7 @@ import {
 } from '../lib/date'
 import { applyFilter, type TaskFilter } from '../lib/filter'
 import { useIMEGuard } from '../lib/ime'
+import { parseQuickAdd } from '../lib/nlp'
 import { useStore } from '../store/AppStore'
 import type { Task } from '../types'
 import { IconChevronLeft, IconChevronRight, IconClock, IconPlus, IconRepeat, IconX } from './icons'
@@ -63,7 +64,7 @@ function placeDay(rows: { task: Task; start: number; end: number }[]) {
 
 /** 日历视图自持数据：它需要的是「一段时间范围内的全部任务」，与侧边栏选择无关。 */
 export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; filter: TaskFilter }) {
-  const { moveTask, version, createTask } = useStore()
+  const { moveTask, version, createTask, ensureTags, lists } = useStore()
   const [mode, setMode] = useState<Mode>('month')
   const [anchor, setAnchor] = useState(todayStr())
   const [items, setItems] = useState<Task[]>([])
@@ -126,34 +127,56 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
     await moveTask(id, { dueDate: day })
   }
 
-  const quickCreate = async (day: string) => {
-    const title = draft.trim()
+  /**
+   * 就地新建任务。
+   *
+   * 复用列表视图的快速添加解析：此前这里直接把输入当标题，
+   * `#标签` / `!高` / `@9:00` 会原样写进标题，与顶部输入框的行为不一致。
+   * 日期以格子（或时间轴）为准，标题里写的日期不覆盖它。
+   */
+  const submitDraft = async (base: { dueDate: string; dueTime?: string }) => {
+    const raw = draft.trim()
+    if (!raw) {
+      setDraft('')
+      setAdding(null)
+      return
+    }
+    const parsed = parseQuickAdd(raw, { lists: lists.map((l) => ({ id: l.id, name: l.name })) })
+    const title = parsed.title.trim()
     if (!title) {
       setDraft('')
       setAdding(null)
       return
     }
+    let tagIds: number[] | undefined
+    if (parsed.tagNames.length) {
+      const created = await ensureTags(parsed.tagNames)
+      if (created === null) return // 标签没建成：保留输入，错误已 toast
+      tagIds = created.map((t) => t.id)
+    }
     // 走 store 而不是直调 api：version 依赖会自动重拉本视图，
     // 清单/智能视图的对账也一并生效；失败时保留输入（store 已 toast）。
-    const t = await createTask({ title, dueDate: day })
+    const t = await createTask({
+      title,
+      dueDate: base.dueDate,
+      ...(base.dueTime ? { dueTime: base.dueTime } : {}),
+      ...(!base.dueTime && parsed.dueTime ? { dueTime: parsed.dueTime } : {}),
+      ...(parsed.repeatRule ? { repeatRule: parsed.repeatRule } : {}),
+      ...(parsed.priority !== null ? { priority: parsed.priority } : {}),
+      ...(parsed.important !== null ? { important: parsed.important } : {}),
+      ...(parsed.urgent !== null ? { urgent: parsed.urgent } : {}),
+      ...(parsed.listId !== null ? { listId: parsed.listId } : {}),
+      ...(tagIds ? { tagIds } : {}),
+    })
     if (!t) return
     setDraft('')
     setAdding(null)
   }
 
+  const quickCreate = (day: string) => submitDraft({ dueDate: day })
+
   /** 日视图：在某时刻落一件新任务。 */
-  const createAt = async (time: string) => {
-    const title = draft.trim()
-    if (!title) {
-      setDraft('')
-      setAdding(null)
-      return
-    }
-    const t = await createTask({ title, dueDate: anchor, dueTime: time })
-    if (!t) return
-    setDraft('')
-    setAdding(null)
-  }
+  const createAt = (time: string) => submitDraft({ dueDate: anchor, dueTime: time })
 
   /** 日视图：把任务拖到某个时刻，只改时间不动日期；传 null 表示退回「全天」。 */
   const moveToTime = async (id: number, time: string | null) => {
@@ -196,12 +219,13 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
           <span className="hidden text-[0.71875rem] text-ink-3 lg:block">
             {mode === 'day' ? '拖动任务到时间轴即可改时间，点空白处新建' : '拖动任务卡片可直接改期'}
           </span>
-          <div className="flex rounded-lg border border-line p-0.5">
+          <div role="group" aria-label="日历粒度" className="flex rounded-lg border border-line p-0.5">
             {(['day', 'week', 'month'] as Mode[]).map((m) => (
               <button
                 key={m}
                 type="button"
                 data-cal-mode={m}
+                aria-pressed={mode === m}
                 onClick={() => {
                   setMode(m)
                   // adding 在月/周视图存的是日期，在日视图存的是时刻，切模式必须清掉。
@@ -233,7 +257,10 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
       {/* 无日期抽屉 */}
       {noDate.length > 0 ? (
         <div className="flex items-center gap-2 overflow-x-auto border-b border-line bg-surface-2/50 px-5 py-2">
-          <span className="shrink-0 text-[0.71875rem] text-ink-3">未排期 {noDate.length} 项，可直接拖到日历上：</span>
+          <span className="shrink-0 text-[0.71875rem] text-ink-3">
+            {/* 只列前 12 项，从前不说明，用户会以为未排期只有这些 */}
+            未排期 {noDate.length} 项{noDate.length > 12 ? '（此处只列前 12 项）' : ''}，可直接拖到日历上：
+          </span>
           {noDate.slice(0, 12).map((t) => (
             <span
               key={t.id}
@@ -355,14 +382,22 @@ function DayCell({
   const { compositionProps, isComposing } = useIMEGuard()
   const isToday = day === today
   const overdue = dayDiff(day, today) < 0
-  const visible = tasks.slice(0, compact ? 6 : 3)
+  // 展开后显示当天全部任务。此前「还有 N 项」点下去打开的是第一个**被折叠**的任务，
+  // 文案承诺"展开"、行为却是打开某一项，属于文不对题。
+  const [showAll, setShowAll] = useState(false)
+  const cap = compact ? 6 : 3
+  const visible = showAll ? tasks : tasks.slice(0, cap)
   const rest = tasks.length - visible.length
 
   return (
     <div
+      // 读屏浏览日期格时先报「几月几日、有几件事」，否则一串裸数字无从辨识
+      role="group"
+      aria-label={`${Number(day.slice(5, 7))} 月 ${Number(day.slice(8, 10))} 日，${tasks.length} 项任务`}
       onDragOver={(e) => {
         e.preventDefault()
-        setDropDay(day)
+        // dragover 高频触发，只在进入新的日期格时才更新高亮
+        if (dropDay !== day) setDropDay(day)
       }}
       onDragLeave={() => setDropDay(null)}
       onDrop={(e) => void onDrop(e, day)}
@@ -385,15 +420,14 @@ function DayCell({
           {overdue && tasks.some((t) => t.status !== 'done') ? (
           <span className="text-[0.59375rem] text-p-high">逾期</span>
         ) : null}
-        <span
-          role="button"
-          tabIndex={-1}
+        <IconButton
+          icon={IconPlus}
+          label={`在 ${day} 添加任务`}
+          size={12}
+          aria-expanded={adding === day}
           onClick={() => setAdding(adding === day ? null : day)}
           className="ml-auto opacity-0 transition-opacity group-hover/day:opacity-100"
-          title="在这一天添加任务"
-        >
-          <IconPlus size={12} className="text-ink-3 hover:text-seal" />
-        </span>
+        />
       </div>
 
       {visible.map((t) => (
@@ -428,10 +462,19 @@ function DayCell({
       {rest > 0 ? (
         <button
           type="button"
-          onClick={() => onOpen(tasks[visible.length])}
+          onClick={() => setShowAll(true)}
+          title="展开当天全部任务"
           className="px-1 text-left text-[0.65625rem] text-ink-3 hover:text-seal"
         >
           还有 {rest} 项
+        </button>
+      ) : showAll && tasks.length > cap ? (
+        <button
+          type="button"
+          onClick={() => setShowAll(false)}
+          className="px-1 text-left text-[0.65625rem] text-ink-3 hover:text-seal"
+        >
+          收起
         </button>
       ) : null}
 
@@ -456,7 +499,7 @@ function DayCell({
             placeholder="标题，回车即存"
             className="min-w-0 flex-1 bg-transparent text-[0.71875rem] outline-none placeholder:text-ink-3"
           />
-          <IconX size={11} className="shrink-0 cursor-pointer text-ink-3" onClick={() => setAdding(null)} />
+          <IconButton icon={IconX} label="取消新建" size={11} onClick={() => setAdding(null)} className="shrink-0" />
         </form>
       ) : null}
     </div>
@@ -467,7 +510,7 @@ function MonthGrid(props: GridProps) {
   const weeks = monthMatrix(Number(props.anchor.slice(0, 4)), Number(props.anchor.slice(5, 7)) - 1, props.weekStart)
   const monthIdx = Number(props.anchor.slice(5, 7))
   return (
-    <div className="overflow-hidden rounded-xl border-l border-t border-line">
+    <div role="group" aria-label={`${monthIdx} 月日历`} className="overflow-hidden rounded-xl border-l border-t border-line">
       <div className="grid grid-cols-7">
         {weekdayHeaders(props.weekStart).map((w) => (
           <div key={w} className="border-b border-r border-line bg-surface-2 px-2 py-1.5 text-[0.71875rem] text-ink-3">
@@ -500,7 +543,11 @@ function MonthGrid(props: GridProps) {
 function WeekGrid(props: GridProps) {
   const days = weekDays(props.anchor, props.weekStart)
   return (
-    <div className="overflow-hidden rounded-xl border-l border-t border-line">
+    <div
+      role="group"
+      aria-label={`${days[0]} 至 ${days[days.length - 1]} 的周历`}
+      className="overflow-hidden rounded-xl border-l border-t border-line"
+    >
       <div className="grid grid-cols-7">
         {days.map((day) => (
           <div
@@ -606,8 +653,11 @@ function DayView(props: DayProps) {
 
   const onSurfaceClick = (e: ReactMouseEvent<HTMLDivElement>) => {
     const min = timeOf(e)
-    setDraft('')
-    setAdding(minutesToHM(min))
+    const next = minutesToHM(min)
+    // 只在新开一个输入框时清空草稿：draft 由月/周网格共用，
+    // 无条件清空会把别处已经敲了一半的内容抹掉。
+    if (adding !== next) setDraft('')
+    setAdding(next)
   }
 
   const onSurfaceDragOver = (e: DragEvent<HTMLDivElement>) => {
@@ -807,7 +857,7 @@ function DayView(props: DayProps) {
                   placeholder="标题，回车即存"
                   className="min-w-0 flex-1 bg-transparent text-[0.75rem] outline-none placeholder:text-ink-3"
                 />
-                <IconX size={12} className="shrink-0 cursor-pointer text-ink-3" onClick={() => setAdding(null)} />
+                <IconButton icon={IconX} label="取消新建" size={12} onClick={() => setAdding(null)} className="shrink-0" />
               </form>
             ) : null}
           </div>

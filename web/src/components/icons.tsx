@@ -255,6 +255,20 @@ export const IconArrowRight = (p: IconProps) => (
   </Base>
 )
 
+/** 排序方向指示：升序。 */
+export const IconArrowUp = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M12 19V5M6 11l6-6 6 6" />
+  </Base>
+)
+
+/** 排序方向指示：降序。 */
+export const IconArrowDown = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M12 5v14M18 13l-6 6-6-6" />
+  </Base>
+)
+
 export const IconColumns = (p: IconProps) => (
   <Base {...p}>
     <rect x="3" y="4" width="5.2" height="16" rx="1.8" />

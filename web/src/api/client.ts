@@ -109,8 +109,24 @@ export interface TaskQuery {
   limit?: number
 }
 
-/** 列表排序方式。smart 让到期日与优先级主导；manual 才由拖拽出的 sort_order 决定。 */
-export type TaskSort = 'smart' | 'manual' | 'priority' | 'due' | 'created' | 'updated' | 'completed' | 'title'
+/**
+ * 列表排序方式。smart 让到期日与优先级主导；manual 才由拖拽出的 sort_order 决定。
+ * 带 `_asc` / `_desc` 后缀的是**反向**变体：基础值即该列的默认读法
+ * （优先级与更新时间默认降序，标题与到期日默认升序），列头再点一下切到反向。
+ */
+export type TaskSort =
+  | 'smart'
+  | 'manual'
+  | 'priority'
+  | 'priority_asc'
+  | 'due'
+  | 'due_desc'
+  | 'created'
+  | 'updated'
+  | 'updated_asc'
+  | 'completed'
+  | 'title'
+  | 'title_desc'
 
 /** 导入方式：merge 追加为副本，replace 清空后重建。 */
 export type ImportMode = 'merge' | 'replace'

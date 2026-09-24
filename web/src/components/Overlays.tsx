@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 
 import { api } from '../api/client'
 import { addDays, fullDate, todayStr } from '../lib/date'
+import { useEscapeLayer } from '../lib/escStack'
 import { QUOTES, morningLine, reviewLine } from '../lib/quotes'
 import { useNotifyDiagnosis } from '../lib/notify'
 import { useStore } from '../store/AppStore'
@@ -419,7 +420,13 @@ function PlanRow({
         picked ? 'border-seal/40 bg-seal/8' : 'border-line bg-surface hover:border-line-strong',
       )}
     >
-      <RoundCheck checked={picked} onChange={onPick} color="var(--seal)" />
+      {/* 语义是"选为今日重点"，不是"标记完成"——读屏默认文案会说反，必须显式指定 */}
+      <RoundCheck
+        checked={picked}
+        onChange={onPick}
+        color="var(--seal)"
+        title={picked ? '移出今日重点' : '列入今日重点'}
+      />
       <div className="min-w-0 flex-1">
         <div className="truncate text-[0.8125rem] text-ink">{task.title}</div>
         <div className="text-[0.6875rem] text-ink-3">
@@ -451,29 +458,41 @@ function MiniButton({ children, onClick }: { children: React.ReactNode; onClick:
 const MOODS = ['稳', '顺', '疲', '滞', '躁']
 
 function DailyReview({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { stats, loadStats, saveSettings } = useStore()
+  const { stats, loadStats, saveSettings, toast } = useStore()
   const [date, setDate] = useState(todayStr())
   const [mood, setMood] = useState('')
   const [wins, setWins] = useState('')
   const [blockers, setBlockers] = useState('')
   const [tomorrow, setTomorrow] = useState('')
   const [busy, setBusy] = useState(false)
+  const dateId = useId()
 
+  // 打开时定格在「今天」，并预取概览数据
   useEffect(() => {
     if (!open) return
-    const d = todayStr()
-    setDate(d)
+    setDate(todayStr())
     void loadStats(7)
+  }, [open, loadStats])
+
+  // 复盘内容跟着日期走：页脚承诺「可随时补写或修改」，那就得真能翻到往日。
+  // alive 守卫避免快速切换日期时旧响应盖掉新内容。
+  useEffect(() => {
+    if (!open) return
+    let alive = true
     api
-      .getReview(d)
+      .getReview(date)
       .then((r) => {
+        if (!alive) return
         setMood(r.mood)
         setWins(r.wins)
         setBlockers(r.blockers)
         setTomorrow(r.tomorrow)
       })
       .catch(() => undefined)
-  }, [open, loadStats])
+    return () => {
+      alive = false
+    }
+  }, [open, date])
 
   const submit = async () => {
     setBusy(true)
@@ -481,6 +500,10 @@ function DailyReview({ open, onClose }: { open: boolean; onClose: () => void }) 
       await api.saveReview({ date, mood, wins, blockers, tomorrow })
       await saveSettings({ reviewDone: todayStr() })
       onClose()
+    } catch (e) {
+      // 以前这里只有 finally：保存失败时弹窗原地不动、没有任何提示，
+      // 而 busy 被复位后按钮看起来还能点，用户会以为"已经存上了"。
+      toast(e instanceof Error && e.message ? e.message : '日省保存失败，请重试', 'error')
     } finally {
       setBusy(false)
     }
@@ -508,17 +531,45 @@ function DailyReview({ open, onClose }: { open: boolean; onClose: () => void }) 
             稍后
           </Button>
           <Button variant="primary" icon={IconCheck} onClick={submit} disabled={busy}>
-            存下今天
+            {date === todayStr() ? '存下今天' : '存下这一天'}
           </Button>
         </>
       }
     >
       <div className="space-y-4">
+        {/* 页脚写着「可随时补写或修改」，这里就得有翻日期的入口，否则只能写今天 */}
+        <div className="flex flex-wrap items-center gap-2">
+          <label htmlFor={dateId} className="text-[0.71875rem] text-ink-3">
+            复盘日期
+          </label>
+          <input
+            id={dateId}
+            type="date"
+            value={date}
+            max={todayStr()}
+            onChange={(e) => setDate(e.target.value || todayStr())}
+            className="rounded-lg border border-control-line bg-surface px-2 py-1 text-[0.75rem] tabular-nums text-ink outline-none focus:border-seal"
+          />
+          {date !== todayStr() ? (
+            <button
+              type="button"
+              onClick={() => setDate(todayStr())}
+              className="rounded-md px-1.5 py-0.5 text-[0.6875rem] text-seal transition-colors hover:bg-seal/10"
+            >
+              回到今天
+            </button>
+          ) : null}
+        </div>
+
         <div className="grid grid-cols-3 gap-3">
           <Stat label="今日完成" value={done} tone="accent" />
           <Stat label="尚未了结" value={Math.max(0, open_)} />
           <Stat label="连续完成" value={`${stats?.streakDays ?? 0} 天`} />
         </div>
+
+        {date !== todayStr() ? (
+          <p className="text-[0.6875rem] text-ink-3">上方三项与结语始终是「今天」的口径，不随复盘日期变化。</p>
+        ) : null}
 
         <p className="brand-serif rounded-xl border border-line bg-surface-2/50 px-3.5 py-2.5 text-[0.8125rem] leading-relaxed text-ink-2">
           {reviewLine(done, Math.max(0, open_))}
@@ -531,6 +582,7 @@ function DailyReview({ open, onClose }: { open: boolean; onClose: () => void }) 
               <button
                 key={m}
                 type="button"
+                aria-pressed={mood === m}
                 onClick={() => setMood(mood === m ? '' : m)}
                 className={cx(
                   'brand-serif h-9 w-9 rounded-lg border text-[0.875rem] transition-colors',
@@ -705,6 +757,7 @@ function FocusPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
             </span>
             <select
               className={inputClass}
+              aria-label="关联任务"
               value={taskId}
               onChange={(e) => setTaskId(e.target.value ? Number(e.target.value) : '')}
             >
@@ -718,6 +771,11 @@ function FocusPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
                   </option>
                 ))}
             </select>
+            {tasks.filter((t) => t.status !== 'done').length > 60 ? (
+              <p className="mt-1 text-[0.6875rem] text-ink-3">
+                仅列出当前视图的前 60 项；先在列表里搜索可缩小范围
+              </p>
+            ) : null}
           </div>
         </div>
       )}
@@ -733,16 +791,26 @@ function ReminderCenter() {
   const { diag, request } = useNotifyDiagnosis()
   const [collapsed, setCollapsed] = useState(false)
 
+  // 这个浮层此前没有任何键盘退出方式：补一个 Esc 收起
+  useEscapeLayer(reminders.length > 0 && !collapsed, () => setCollapsed(true))
+
   if (reminders.length === 0) return null
 
   return (
-    <div className="fixed bottom-4 right-4 z-40 w-[330px] animate-rise">
+    // 提醒是异步冒出来的：接一个 live region，读屏才会念出新到的提醒
+    <div
+      aria-live="polite"
+      aria-atomic="false"
+      // 窄屏留出左侧专注指示条的位置：两个固定浮层曾互相覆盖
+      className="fixed bottom-4 right-4 z-40 w-[330px] max-w-[calc(100vw-9rem)] animate-rise"
+    >
       <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-lg)]">
         <header className="flex items-center gap-2 border-b border-line bg-seal/8 px-3 py-2">
           <IconBell size={15} className="text-seal" />
           <span className="brand-serif flex-1 text-[0.8125rem] font-semibold text-ink">提醒 · {reminders.length} 条</span>
           <button
             type="button"
+            aria-expanded={!collapsed}
             onClick={() => setCollapsed((v) => !v)}
             className="text-[0.71875rem] text-ink-3 transition-colors hover:text-ink"
           >
@@ -758,12 +826,23 @@ function ReminderCenter() {
               return (
                 <div key={key} className="rounded-xl border border-line bg-surface-2/40 px-2.5 py-2">
                   <div className="flex items-start gap-2">
-                    <RoundCheck checked={false} onChange={() => {
-                      // 子任务提醒勾选的是子步骤本身，不是父任务。
-                      if (h.subtask) void updateSubtask(h.subtask.id, { done: true })
-                      else void toggleTask(h.task.id)
-                      dismissReminder(key)
-                    }} />
+                    {/* 这里本质是"完成这一项"，不是"标记为已完成 / 未完成"的开关。
+                        原先用 checked={false} 的 RoundCheck，读屏恒读作「未按下」，
+                        语义与行为不符，改为明确的按钮。 */}
+                    <button
+                      type="button"
+                      aria-label={`完成「${title}」并关闭本条提醒`}
+                      title="完成并关闭提醒"
+                      onClick={() => {
+                        // 子任务提醒勾选的是子步骤本身，不是父任务。
+                        if (h.subtask) void updateSubtask(h.subtask.id, { done: true })
+                        else void toggleTask(h.task.id)
+                        dismissReminder(key)
+                      }}
+                      className="mt-[2px] grid h-[18px] w-[18px] shrink-0 place-items-center rounded-full border border-control-line text-ink-3 transition-colors hover:border-seal hover:text-seal"
+                    >
+                      <IconCheck size={11} strokeWidth={2.6} />
+                    </button>
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[0.8125rem] text-ink">{title}</div>
                       <div className="flex items-center gap-1.5 text-[0.6875rem] text-ink-3">
@@ -826,6 +905,9 @@ function ReminderCenter() {
 function ConfirmHost() {
   const { confirmState, resolveConfirm } = useStore()
   if (!confirmState) return null
+  // 危险操作的初始焦点必须落在「取消」上：否则焦点留在触发按钮上，
+  // 用户顺手再按一次 Enter 就把刚弹出的确认框直接确认掉了。
+  const cancelFirst = !!confirmState.danger
   return (
     <Modal
       open
@@ -834,11 +916,16 @@ function ConfirmHost() {
       width={400}
       footer={
         <>
-          <Button variant="ghost" onClick={() => resolveConfirm(false)}>
+          <Button
+            variant="ghost"
+            data-autofocus={cancelFirst || undefined}
+            onClick={() => resolveConfirm(false)}
+          >
             取消
           </Button>
           <Button
             variant={confirmState.danger ? 'danger' : 'primary'}
+            data-autofocus={cancelFirst ? undefined : true}
             onClick={() => resolveConfirm(true)}
           >
             {confirmState.confirmText}
@@ -855,9 +942,15 @@ function ConfirmHost() {
 
 function ToastHost() {
   const { toasts, dismissToast } = useStore()
-  if (toasts.length === 0) return null
+  // 容器常驻：live region 必须在使用之前就存在于 DOM 里，
+  // 若等第一条提示出现才挂载容器，读屏不会播报那一条。
   return (
-    <div className="pointer-events-none fixed left-1/2 top-4 z-50 flex -translate-x-1/2 flex-col items-center gap-2">
+    <div
+      role="status"
+      aria-live="polite"
+      aria-atomic="false"
+      className="pointer-events-none fixed left-1/2 top-4 z-50 flex -translate-x-1/2 flex-col items-center gap-2"
+    >
       {toasts.map((t) => (
         <button
           key={t.id}

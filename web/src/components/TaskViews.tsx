@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type SyntheticEvent } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type SyntheticEvent,
+} from 'react'
 
 import { dayDiff, dueLabel, isOverdue, relativeTime, todayStr, addDays } from '../lib/date'
 import { QUOTES } from '../lib/quotes'
@@ -162,7 +170,8 @@ export function TaskRow({
   onSortStart?: (id: number) => void
   onSortEnd?: () => void
 }) {
-  const { toggleTask, updateTask, deleteTask, multiSelect, selectedIds, toggleSelected, selectedTaskId } = useStore()
+  const { toggleTask, updateTask, deleteTask, multiSelect, selectedIds, toggleSelected, selectedTaskId, toast } =
+    useStore()
   const { compositionProps, isComposing } = useIMEGuard()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(task.title)
@@ -181,7 +190,14 @@ export function TaskRow({
   const commit = async () => {
     const value = draft.trim()
     setEditing(false)
-    if (value && value !== task.title) await updateTask(task.id, { title: value })
+    if (!value) {
+      // 空标题没有意义。原先只是静默还原，用户看到的是「改了但没生效」；
+      // 这里明确说一句，并把输入框内容恢复成原标题。
+      if (draft !== task.title) toast('标题不能为空，已还原', 'info')
+      setDraft(task.title)
+      return
+    }
+    if (value !== task.title) await updateTask(task.id, { title: value })
   }
 
   const onDragStart = (e: DragEvent<HTMLDivElement>) => {
@@ -193,15 +209,35 @@ export function TaskRow({
   return (
     <div
       data-task-row={task.id}
+      role="button"
+      tabIndex={0}
+      aria-label={`${task.title}${done ? '（已完成）' : ''}`}
       draggable={draggable && !editing}
       onDragStart={onDragStart}
       onClick={() => (multiSelect ? toggleSelected(task.id) : onOpen(task))}
+      onKeyDown={(e) => {
+        // 只处理落在行本身上的按键；子控件（勾选框、操作按钮）的按键由它们自己处理。
+        if (e.target !== e.currentTarget) return
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          if (multiSelect) toggleSelected(task.id)
+          else onOpen(task)
+          return
+        }
+        // 双击改名对键盘不可达，补一个 F2（与文件管理器、任务类工具的习惯一致）
+        if (e.key === 'F2') {
+          e.preventDefault()
+          setEditing(true)
+        }
+      }}
       className={cx(
         'group/row relative flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 transition-colors',
         dense ? 'py-1.5' : 'py-2.5',
-        selectedTaskId === task.id
-          ? 'border-seal/35 bg-seal/6'
-          : 'border-transparent hover:border-line hover:bg-surface-2/70',
+        multiSelect && selectedIds.includes(task.id)
+          ? 'border-seal/45 bg-seal/10'
+          : selectedTaskId === task.id
+            ? 'border-seal/35 bg-seal/6'
+            : 'border-transparent hover:border-line hover:bg-surface-2/70',
       )}
     >
       {sortable && !multiSelect ? (
@@ -271,6 +307,7 @@ export function TaskRow({
               />
             ) : (
               <span
+                title="双击改名（键盘：F2）"
                 onDoubleClick={(e) => {
                   e.stopPropagation()
                   setEditing(true)
@@ -316,14 +353,23 @@ export function TaskRow({
             <div className="relative">
               <IconButton
                 icon={IconMore}
-                label="更多"
+                label="更多操作"
                 size={13}
+                aria-haspopup="true"
+                aria-expanded={menuOpen}
                 onClick={(e) => {
                   e.stopPropagation()
                   setMenuOpen((v) => !v)
                 }}
+                onKeyDown={(e) => {
+                  // 选单约定的「↓ 打开并落到第一项」；其余按键交给全局处理
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault()
+                    setMenuOpen(true)
+                  }
+                }}
               />
-              <Popover open={menuOpen} onClose={() => setMenuOpen(false)} align="right" width={170}>
+              <Popover open={menuOpen} onClose={() => setMenuOpen(false)} align="right" width={200} menu>
                 <RowMenuItems task={task} onClose={() => setMenuOpen(false)} onOpen={() => onOpen(task)} onDelete={() => void deleteTask(task.id)} />
               </Popover>
             </div>
@@ -355,17 +401,32 @@ function RowMenuItems({
   onOpen: () => void
   onDelete: () => void
 }) {
-  const { updateTask, confirm, moveTask, skipTask, duplicateTask } = useStore()
+  const { updateTask, confirm, moveTask, skipTask, duplicateTask, lists, folders } = useStore()
   const today = todayStr()
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  /** ↑↓ 在菜单项之间移动焦点（标准选单的键盘约定），省得一路 Tab 穿过十几项。 */
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])
+    if (items.length === 0) return
+    e.preventDefault()
+    const i = items.indexOf(document.activeElement as HTMLElement)
+    const next = e.key === 'ArrowDown' ? (i + 1) % items.length : i <= 0 ? items.length - 1 : i - 1
+    items[next]?.focus()
+  }
+
+  const folderName = (l: List) => (l.folderId == null ? undefined : folders.find((f) => f.id === l.folderId)?.name)
 
   return (
-    <>
+    <div ref={menuRef} role="menu" aria-label={`「${task.title}」的操作`} onKeyDown={onKeyDown}>
       <div className="px-2.5 py-1.5 text-[0.75rem] text-ink-3">优先级</div>
-      <div className="flex gap-1 px-1.5 pb-1.5">
+      <div role="group" aria-label="优先级" className="flex gap-1 px-1.5 pb-1.5">
         {([0, 1, 2, 3] as Priority[]).map((p) => (
           <button
             key={p}
             type="button"
+            aria-pressed={task.priority === p}
             onClick={() => {
               void updateTask(task.id, { priority: p })
               onClose()
@@ -379,7 +440,7 @@ function RowMenuItems({
           </button>
         ))}
       </div>
-      <div className="my-1 border-t border-line" />
+      <div role="separator" className="my-1 border-t border-line" />
       <RowAction
         icon={IconClock}
         label="今天"
@@ -404,14 +465,50 @@ function RowMenuItems({
           onClose()
         }}
       />
+      {/* 重要与紧急原先是同一条「一起翻转」：只想改一个也会连带另一个。拆成两条独立开关。 */}
       <RowAction
         icon={IconSparkle}
-        label="切换重要 / 紧急"
+        label={task.important ? '取消「重要」' : '标为「重要」'}
         onClick={() => {
-          void updateTask(task.id, { important: !task.important, urgent: !task.urgent })
+          void updateTask(task.id, { important: !task.important })
           onClose()
         }}
       />
+      <RowAction
+        icon={IconClock}
+        label={task.urgent ? '取消「紧急」' : '标为「紧急」'}
+        onClick={() => {
+          void updateTask(task.id, { urgent: !task.urgent })
+          onClose()
+        }}
+      />
+      {/* 移动到其它清单：跨清单移动原先只能拖 —— 这里补的键盘等价入口 */}
+      <div role="group" aria-label="移动到清单" className="px-1.5 pb-1.5">
+        <div className="px-1 pb-1 text-[0.75rem] text-ink-3">移动到清单</div>
+        <div className="max-h-36 overflow-y-auto">
+          {lists.map((l) => (
+            <button
+              key={l.id}
+              type="button"
+              role="menuitem"
+              aria-current={l.id === task.listId ? 'true' : undefined}
+              onClick={() => {
+                if (l.id !== task.listId) void moveTask(task.id, { listId: l.id })
+                onClose()
+              }}
+              className={cx(
+                'flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-[0.78125rem] transition-colors',
+                l.id === task.listId ? 'bg-seal/10 text-seal' : 'text-ink-2 hover:bg-surface-2',
+              )}
+            >
+              <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: l.color }} />
+              <span className="flex-1 truncate">{l.name}</span>
+              {folderName(l) ? <span className="shrink-0 text-[0.6875rem] text-ink-3">{folderName(l)}</span> : null}
+              {l.id === task.listId ? <IconCheck size={12} className="shrink-0" /> : null}
+            </button>
+          ))}
+        </div>
+      </div>
       <RowAction
         icon={IconPin}
         label={task.pinned ? '取消置顶' : '置顶'}
@@ -455,7 +552,7 @@ function RowMenuItems({
           }}
         />
       ) : null}
-      <div className="my-1 border-t border-line" />
+      <div role="separator" className="my-1 border-t border-line" />
       <RowAction
         icon={IconTrash}
         label="删除"
@@ -471,7 +568,7 @@ function RowMenuItems({
           if (ok) onDelete()
         }}
       />
-    </>
+    </div>
   )
 }
 
@@ -489,6 +586,7 @@ function RowAction({
   return (
     <button
       type="button"
+      role="menuitem"
       onClick={(e) => {
         e.stopPropagation()
         onClick()
@@ -650,7 +748,7 @@ export function QuickAdd({
   /** 预填字段（列头新建用）。标题解析出的显式条件优先于 defaults。 */
   defaults?: TaskPatch
 }) {
-  const { createTask, ensureTags, lists, tags, folders, selection } = useStore()
+  const { createTask, ensureTags, lists, tags, folders, selection, toast } = useStore()
   const { compositionProps, isComposing } = useIMEGuard()
   const [text, setText] = useState('')
   const [expanded, setExpanded] = useState(false)
@@ -718,7 +816,11 @@ export function QuickAdd({
 
   const submit = async () => {
     const title = parsed.title.trim()
-    if (!title) return
+    if (!title) {
+      // 只敲了「#工作」这类记号、没写标题时，原先按回车毫无反应 —— 说清差什么。
+      if (text.trim()) toast('还差一个标题', 'info')
+      return
+    }
     let tagIds: number[] | undefined
     if (parsed.tagNames.length) {
       const created = await ensureTags(parsed.tagNames)
@@ -911,7 +1013,8 @@ export function QuickAdd({
 
       {/* 识别结果预览 */}
       {text && (parsed.chips.length > 0 || parsed.title) && !showSuggest ? (
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 px-1">
+        // 解析结果（标签/日期/归入哪张清单）过去只有视觉呈现，读屏用户完全不知道
+        <div role="status" aria-live="polite" className="mt-1.5 flex flex-wrap items-center gap-1.5 px-1">
           {parsed.chips.map((c, i) => {
             const Icon = chipIcon[c.kind]
             return (
@@ -959,7 +1062,23 @@ export function TaskListView({
     purgeCompleted,
     confirm,
   } = useStore()
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  // 折叠状态持久化：原先切走视图再回来会全部展开，每次都要重新收起一遍。
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
+    try {
+      const raw = localStorage.getItem('shenshi.collapsed.sections')
+      const parsed = raw ? (JSON.parse(raw) as unknown) : null
+      return parsed && typeof parsed === 'object' ? (parsed as Record<string, boolean>) : {}
+    } catch {
+      return {}
+    }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('shenshi.collapsed.sections', JSON.stringify(collapsed))
+    } catch {
+      // 隐私模式 / 配额满时不可写，静默降级为「本次会话内有效」
+    }
+  }, [collapsed])
   const buckets = useMemo(() => bucketize(tasks), [tasks])
 
   /** 清空已完成：在清单内就只清这个清单，在智能视图里则清全部。 */
@@ -1013,6 +1132,7 @@ export function TaskListView({
               <div className="mb-1 flex w-full items-center gap-2 px-3 pt-3">
                 <button
                   type="button"
+                  aria-expanded={!collapsed[b.key]}
                   onClick={() => setCollapsed((prev) => ({ ...prev, [b.key]: !prev[b.key] }))}
                   className="flex flex-1 items-center gap-2 text-left"
                 >
@@ -1108,12 +1228,36 @@ export function TaskListView({
  * 列表/表格/看板/四象限/日历进入多选后都能用（原先后台挂在列表视图内部，
  * 其它视图开了多选也看不到操作入口）。
  */
+/**
+ * 把清单按所属分组组织成 optgroup。
+ * 分组是树（子分组可有任意层级），所以必须递归 —— 只列根级会让子分组下的清单
+ * 在这一处直接消失，和侧栏看到的层级对不上。
+ */
+function groupListsForSelect(tree: Folder[], lists: List[]): { label: string; items: List[] }[] {
+  const out: { label: string; items: List[] }[] = []
+  const walk = (nodes: Folder[], prefix: string) => {
+    for (const f of nodes) {
+      const path = prefix ? `${prefix} / ${f.name}` : f.name
+      const items = lists.filter((l) => l.folderId === f.id)
+      if (items.length > 0) out.push({ label: path, items })
+      walk(f.children ?? [], path)
+    }
+  }
+  walk(tree, '')
+  const loose = lists.filter((l) => l.folderId == null)
+  if (loose.length > 0) out.unshift({ label: '未归入分组', items: loose })
+  return out
+}
+
 export function BatchBar() {
-  const { multiSelect, selectedIds, clearSelected, batch, lists, confirm } = useStore()
+  const { multiSelect, selectedIds, clearSelected, batch, lists, folders, confirm } = useStore()
   if (!multiSelect || selectedIds.length === 0) return null
+  const listGroups = groupListsForSelect(folders, lists)
   return (
-    <div className="pointer-events-none fixed bottom-6 left-1/2 z-30 -translate-x-1/2">
-      <div className="pointer-events-auto flex items-center gap-2 rounded-2xl border border-line bg-surface/95 px-3 py-2 shadow-[var(--shadow-lg)] backdrop-blur">
+    // 抬到底部两个固定浮层（专注指示条 / 提醒中心）之上，三者不再互相遮挡
+    <div className="pointer-events-none fixed inset-x-3 bottom-20 z-30 flex justify-center">
+      {/* 窄屏上操作条会横向溢出屏幕：改成可换行 + 限宽，宽屏观感不变 */}
+      <div className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-2 rounded-2xl border border-line bg-surface/95 px-3 py-2 shadow-[var(--shadow-lg)] backdrop-blur">
         <span className="px-1 text-[0.78125rem] text-ink-2">已选 {selectedIds.length} 项</span>
         <Button variant="primary" size="sm" icon={IconCheck} onClick={() => void batch('complete')}>
           完成
@@ -1133,7 +1277,8 @@ export function BatchBar() {
           移到今天
         </Button>
         <select
-          className="h-7 rounded-lg border border-line bg-surface px-1.5 text-[0.75rem]"
+          aria-label="移动到其它清单"
+          className="h-7 rounded-lg border border-control-line bg-surface px-1.5 text-[0.75rem]"
           defaultValue=""
           onChange={(e) => {
             if (!e.target.value) return
@@ -1142,10 +1287,14 @@ export function BatchBar() {
           }}
         >
           <option value="">移到清单…</option>
-          {lists.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.name}
-            </option>
+          {listGroups.map((g) => (
+            <optgroup key={g.label} label={g.label}>
+              {g.items.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
         <Button variant="outline" size="sm" icon={IconPin} onClick={() => void batch('pin')}>
@@ -1214,35 +1363,65 @@ export function EmptyForView({ emptyKey }: { emptyKey: keyof typeof QUOTES | str
 }
 
 export function SearchBar() {
-  const { keyword, setKeyword, refreshTasks } = useStore()
+  const { keyword, setKeyword } = useStore()
   const { compositionProps, isComposing } = useIMEGuard()
+  // 本地草稿 + 250ms 防抖：每敲一个字就打一次请求会让搜索明显发顿，
+  // 响应乱序时结果还会串台（store 侧另有请求序号兜底，这里是第一道闸）。
+  const [draft, setDraft] = useState(keyword)
+  const timer = useRef<number | null>(null)
+
+  // 外部改动关键词（清空、切换清单、快捷键）时同步回输入框
+  useEffect(() => {
+    setDraft(keyword)
+  }, [keyword])
+
+  useEffect(
+    () => () => {
+      if (timer.current !== null) window.clearTimeout(timer.current)
+    },
+    [],
+  )
+
+  const queue = (value: string) => {
+    if (timer.current !== null) window.clearTimeout(timer.current)
+    timer.current = window.setTimeout(() => setKeyword(value), 250)
+  }
+
+  const clear = () => {
+    if (timer.current !== null) window.clearTimeout(timer.current)
+    setDraft('')
+    setKeyword('')
+  }
+
   return (
     <div className="relative flex h-8 items-center gap-2 rounded-lg border border-line bg-surface px-2.5 focus-within:border-seal/50">
       <IconSearch size={14} className="text-ink-3" />
       <input
         id="shenshi-search"
         {...compositionProps}
-        value={keyword}
-        onChange={(e) => setKeyword(e.target.value)}
+        value={draft}
+        aria-label="搜索任务与备注"
+        onChange={(e) => {
+          setDraft(e.target.value)
+          // 输入法组合中先不提交：此刻的 value 还是拼音串
+          if (!(e.nativeEvent as InputEvent).isComposing) queue(e.target.value)
+        }}
         onKeyDown={(e) => {
           if (isComposing(e)) return
           if (e.key === 'Escape') {
-            setKeyword('')
+            clear()
             e.currentTarget.blur()
           }
         }}
         placeholder="搜索任务与备注"
         className="w-40 bg-transparent text-[0.8125rem] outline-none transition-all placeholder:text-ink-3 focus:w-56"
       />
-      {keyword ? (
+      {draft ? (
         <button
           type="button"
           aria-label="清空搜索"
           className="text-ink-3 hover:text-ink"
-          onClick={() => {
-            setKeyword('')
-            void refreshTasks()
-          }}
+          onClick={clear}
         >
           <IconX size={13} />
         </button>

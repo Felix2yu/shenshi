@@ -15,7 +15,7 @@ import { humanDay, relativeTime, todayStr } from '../lib/date'
 import { describeFilter, filterFromQuery, isFilterActive } from '../lib/filter'
 import { diagnoseNotifications, pushNotification, useNotifyDiagnosis, type NotifyState } from '../lib/notify'
 import { useIMEGuard } from '../lib/ime'
-import { ACCENTS, PALETTE } from '../lib/palette'
+import { ACCENTS, colorName, PALETTE } from '../lib/palette'
 import { useStore } from '../store/AppStore'
 import {
   ACTIVITY_LABEL,
@@ -220,6 +220,13 @@ function flattenFolders(
   return out
 }
 
+/**
+ * 侧栏归档区一次拉取的任务条数。
+ * 列表接口只返回本页数据、不带总数，所以「取满」只能推断为「可能还有更多」，
+ * 界面上照实提示条数上限，而不是假装归档里就这么多。
+ */
+const ARCHIVED_TASK_LIMIT = 50
+
 /** 递归剔除归档分组：整枝隐藏，子分组跟着父一起归档。 */
 function pruneArchived(tree: Folder[]): Folder[] {
   const out: Folder[] = []
@@ -291,11 +298,13 @@ function EntityDialog({ draft, onClose }: { draft: EntityDraft | null; onClose: 
   const [parentId, setParentId] = useState<number | null>(draft?.parentId ?? null)
   const [busy, setBusy] = useState(false)
 
-  if (!draft) return null
-  const isNew = draft.id === undefined
-  const kindLabel = draft.kind === 'folder' ? '分组' : draft.kind === 'list' ? '清单' : '标签'
-
-  /** 可选作父级的分组：拍平后包含所有层级，排除自己与自己的后代（防环路）。 */
+  /**
+   * 可选作父级的分组：拍平后包含所有层级，排除自己与自己的后代（防环路）。
+   *
+   * 必须排在 `if (!draft) return null` 之前 —— hooks 的调用次数不能随渲染变化。
+   * 它一度位于条件返回之后，靠父组件传的 key 强制重挂载才没触发
+   * "Rendered more hooks than during the previous render"，属侥幸正确。
+   */
   const parentCandidates = useMemo(() => {
     if (draft?.kind !== 'folder') return []
     const all = flattenFolders(folders)
@@ -304,6 +313,10 @@ function EntityDialog({ draft, onClose }: { draft: EntityDraft | null; onClose: 
     const blocked = new Set<number>([draft.id, ...(self ? descendantIds(self.folder) : [])])
     return all.filter((x) => !blocked.has(x.folder.id))
   }, [draft, folders])
+
+  if (!draft) return null
+  const isNew = draft.id === undefined
+  const kindLabel = draft.kind === 'folder' ? '分组' : draft.kind === 'list' ? '清单' : '标签'
 
   const submit = async () => {
     const value = name.trim()
@@ -343,7 +356,9 @@ function EntityDialog({ draft, onClose }: { draft: EntityDraft | null; onClose: 
       draft.kind === 'folder'
         ? '分组内的清单与子分组会提到上一层，其中的任务不受影响。'
         : draft.kind === 'list'
-          ? '清单中的所有任务会被一并删除，此操作不可撤销。'
+          ? // 清单删除后端会连同清单内的任务一起压进撤销槽位（org.go 的 DeleteList），
+            // 所以这里不能再说「不可撤销」—— 文案要与真正的行为一致，而不是更吓人。
+            '清单中的所有任务会被一并删除，可在底部状态栏撤销，超过 10 分钟才彻底消失。'
           : '标签会从所有任务上移除，任务本身不受影响。'
     const ok = await confirm({
       title: `删除${kindLabel}「${draft.name}」`,
@@ -444,7 +459,7 @@ function EntityDialog({ draft, onClose }: { draft: EntityDraft | null; onClose: 
                   color === c ? 'scale-110 border-ink/35' : 'border-transparent hover:scale-105',
                 )}
                 style={{ background: c }}
-                aria-label={c}
+                aria-label={colorName(c)}
               />
             ))}
           </div>
@@ -511,7 +526,7 @@ export function Sidebar() {
   useEffect(() => {
     let alive = true
     api
-      .listTasks({ archived: '1', sortBy: 'updated', limit: 50 })
+      .listTasks({ archived: '1', sortBy: 'updated', limit: ARCHIVED_TASK_LIMIT })
       .then((r) => {
         if (alive) setArchivedTasks(r.tasks)
       })
@@ -555,6 +570,7 @@ export function Sidebar() {
 
   const viewTitle = useMemo(() => {
     if (view === 'board') return '看板'
+    if (view === 'table') return '表格'
     if (view === 'calendar') return '日历'
     if (view === 'quadrant') return '四象限'
     if (view === 'habits') return '习惯打卡'
@@ -650,14 +666,12 @@ export function Sidebar() {
                 <button
                   key={v.key}
                   type="button"
+                  aria-current={active ? 'page' : undefined}
                   onClick={() => {
-                    if (v.key === 'quadrant') {
-                      // 四象限天然是全局视图，先切到「全部任务」再换视图。
-                      select({ kind: 'smart', key: 'all' })
-                      setView('quadrant')
-                    } else {
-                      setView(v.key)
-                    }
+                    // 一律保留当前选择：这些视图都吃「当前作用域」的任务，
+                    // 曾经四象限会偷偷把选择改成「全部任务」，于是同一竖排
+                    // 的入口点下去得到的范围各不相同。作用域改由工具栏顶部显式标注。
+                    setView(v.key)
                   }}
                   className={cx(
                     'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-left text-[0.8125rem] transition-colors',
@@ -671,11 +685,12 @@ export function Sidebar() {
             })}
           </div>
 
-          {/* 收藏的清单 */}
+          {/* 收藏的清单：同一张清单在主树里也会出现（收藏不是「移走」），
+              所以区块名里点明这是快捷入口，免得被当成重复渲染的 bug。 */}
           {starredLists.length > 0 ? (
             <div className="mt-1 border-t border-line pt-1">
               <div className="px-2 pb-1 pt-3 text-[0.65625rem] font-semibold uppercase tracking-[0.14em] text-ink-3">
-                收藏的清单
+                收藏的清单 · 快捷方式
               </div>
               {starredLists.map((l) => (
                 <ListRow
@@ -915,17 +930,17 @@ export function Sidebar() {
                       <span className="truncate">{t.name}</span>
                       {t.taskCount ? <span className="text-[0.65625rem] text-ink-3 tabular-nums">{t.taskCount}</span> : null}
                     </button>
-                    <span
-                      role="button"
-                      tabIndex={-1}
+                    <IconButton
+                      icon={IconMore}
+                      label={`「${t.name}」的更多操作`}
+                      size={13}
+                      aria-expanded={menu === key}
                       className="opacity-0 transition-opacity group-hover/tag:opacity-100"
                       onClick={(e) => {
                         e.stopPropagation()
                         setMenu(menu === key ? null : key)
                       }}
-                    >
-                      <IconMore size={13} className="text-ink-3" />
-                    </span>
+                    />
                   </div>
                   <Popover open={menu === key} onClose={() => setMenu(null)} align="right" width={150}>
                     <div className="flex flex-wrap gap-1 px-1.5 py-1.5">
@@ -933,7 +948,7 @@ export function Sidebar() {
                         <button
                           key={c}
                           type="button"
-                          aria-label={c}
+                          aria-label={colorName(c)}
                           onClick={() => {
                             void updateTag(t.id, { color: c })
                             setMenu(null)
@@ -976,6 +991,7 @@ export function Sidebar() {
             <div className="mt-1 border-t border-line pt-1">
               <button
                 type="button"
+                aria-expanded={archivedOpen}
                 onClick={() => setArchivedOpen((v) => !v)}
                 className="flex w-full items-center gap-2 px-2.5 py-1 text-[0.65625rem] font-semibold uppercase tracking-[0.14em] text-ink-3 transition-colors hover:text-ink-2"
               >
@@ -1023,6 +1039,11 @@ export function Sidebar() {
                       <span className="text-[0.625rem] opacity-0 transition-opacity group-hover/arc:opacity-100">恢复</span>
                     </button>
                   ))}
+                  {archivedTasks.length >= ARCHIVED_TASK_LIMIT ? (
+                    <p className="px-2.5 py-[6px] text-[0.6875rem] leading-relaxed text-ink-3">
+                      仅显示最近 {ARCHIVED_TASK_LIMIT} 条，恢复其中的任务后会自动往下补更早的。
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -1257,17 +1278,17 @@ function FolderNode({
         <span className="opacity-0 transition-opacity group-hover/folder:opacity-100">
           <IconGrip size={12} className="text-ink-3/50" />
         </span>
-        <span
-          role="button"
-          tabIndex={-1}
+        <IconButton
+          icon={IconMore}
+          label={`「${folder.name}」的更多操作`}
+          size={13}
+          aria-expanded={menu === key}
           className="opacity-0 transition-opacity group-hover/folder:opacity-100"
           onClick={(e) => {
             e.stopPropagation()
             setMenu(menu === key ? null : key)
           }}
-        >
-          <IconMore size={13} className="text-ink-3" />
-        </span>
+        />
         <Popover open={menu === key} onClose={() => setMenu(null)} align="right" width={186}>
           <MenuItem
             icon={IconPlus}
@@ -1314,15 +1335,15 @@ function FolderNode({
           >
             {folder.archived ? '取消归档' : '归档分组'}
           </MenuItem>
+          {/* 打开的是编辑弹窗（删除在其中），原先却挂着垃圾桶图标 + 危险色，语义误导 */}
           <MenuItem
-            icon={IconTrash}
-            danger
+            icon={IconPencil}
             onClick={() => {
               onEditFolder(folder)
               setMenu(null)
             }}
           >
-            管理分组…
+            编辑分组…
           </MenuItem>
         </Popover>
       </div>
@@ -1434,17 +1455,17 @@ function ListRow({
         <span className="opacity-0 transition-opacity group-hover/list:opacity-100">
           <IconGrip size={12} className="text-ink-3/50" />
         </span>
-        <span
-          role="button"
-          tabIndex={-1}
+        <IconButton
+          icon={IconMore}
+          label={`「${list.name}」的更多操作`}
+          size={13}
+          aria-expanded={menu === key}
           className="opacity-0 transition-opacity group-hover/list:opacity-100"
           onClick={(e) => {
             e.stopPropagation()
             setMenu(menu === key ? null : key)
           }}
-        >
-          <IconMore size={13} className="text-ink-3" />
-        </span>
+        />
       </div>
       <Popover open={menu === key} onClose={() => setMenu(null)} align="right" width={186}>
         <MenuItem
@@ -1823,8 +1844,20 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
             size="sm"
             className="shrink-0 whitespace-nowrap"
             onClick={async () => {
-              await api.resetReminders()
-              toast('提醒台账已重置')
+              const ok = await confirm({
+                title: '重置提醒台账',
+                message: '已提醒过的事项会重新参与提醒，可能立刻收到一批通知。',
+                confirmText: '重置',
+                danger: true,
+              })
+              if (!ok) return
+              try {
+                await api.resetReminders()
+                toast('提醒台账已重置')
+              } catch (e) {
+                // 原先没有 catch：失败时按钮静默无反应，用户会反复点
+                toast(e instanceof Error ? e.message : '重置失败，请稍后重试', 'error')
+              }
             }}
           >
             重置提醒

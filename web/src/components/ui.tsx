@@ -1,15 +1,25 @@
 /** 通用 UI 基元：按钮、弹层、勾选框、空状态。全部无第三方依赖。 */
 
 import {
+  useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
   type ButtonHTMLAttributes,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react'
+import { createPortal } from 'react-dom'
 
+import { useEscapeLayer } from '../lib/escStack'
+import { popModalLayer, pushModalLayer } from '../lib/modalLayer'
 import { IconCheck, IconX, type IconProps } from './icons'
+
+/** 可聚焦元素选择器：与浏览器的 Tab 顺序口径保持一致（排除 disabled 与 tabindex=-1）。 */
+const FOCUSABLE =
+  'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
 
 export function cx(...parts: (string | false | null | undefined)[]): string {
   return parts.filter(Boolean).join(' ')
@@ -29,7 +39,7 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 const VARIANTS: Record<ButtonVariant, string> = {
   primary:
     'bg-seal text-seal-contrast hover:brightness-110 active:brightness-95 shadow-[0_1px_2px_rgb(0_0_0/0.12)]',
-  outline: 'border border-line-strong text-ink hover:bg-surface-2',
+  outline: 'border border-control-line text-ink hover:bg-surface-2',
   ghost: 'text-ink-2 hover:bg-surface-2 hover:text-ink',
   subtle: 'bg-surface-2 text-ink hover:bg-surface-3',
   danger: 'bg-p-high text-white hover:brightness-110',
@@ -98,16 +108,20 @@ export function RoundCheck({
   color,
   size = 18,
   title,
+  disabled,
 }: {
   checked: boolean
   onChange: (next: boolean) => void
   color?: string
   size?: number
   title?: string
+  /** 请求在途时置灰并阻断重入（打卡这类操作连点会产生"记一次 + 撤一次"的竞态）。 */
+  disabled?: boolean
 }) {
   return (
     <button
       type="button"
+      disabled={disabled}
       title={title ?? (checked ? '标记为未完成' : '标记为已完成')}
       aria-pressed={checked}
       onClick={(e) => {
@@ -116,7 +130,8 @@ export function RoundCheck({
       }}
       className={cx(
         'group/check relative grid shrink-0 place-items-center rounded-full border transition-all duration-200',
-        checked ? 'border-transparent' : 'border-line-strong hover:border-seal',
+        checked ? 'border-transparent' : 'border-control-line hover:border-seal',
+        disabled && 'cursor-not-allowed opacity-50',
       )}
       style={{
         width: size,
@@ -158,7 +173,7 @@ export function Checkbox({
       <span
         className={cx(
           'grid h-4 w-4 place-items-center rounded-[5px] border transition-colors',
-          checked || indeterminate ? 'border-seal bg-seal text-white' : 'border-line-strong',
+          checked || indeterminate ? 'border-seal bg-seal text-white' : 'border-control-line',
         )}
       >
         {checked ? <IconCheck size={11} strokeWidth={3} /> : indeterminate ? <span className="h-0.5 w-2 rounded bg-white" /> : null}
@@ -187,20 +202,83 @@ export function Modal({
   footer?: ReactNode
   width?: number
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const restoreRef = useRef<HTMLElement | null>(null)
+  const labelledById = useId()
+
+  // 弹层计数：应用主内容据此进入 inert（不可聚焦、不被读屏读到）
   useEffect(() => {
     if (!open) return
-    const onKey = (e: KeyboardEvent) => {
+    pushModalLayer()
+    return popModalLayer
+  }, [open])
+
+  // 焦点管理：打开时把焦点移入弹窗；关闭时归还给触发它的元素
+  useEffect(() => {
+    if (!open) return
+    const active = document.activeElement
+    restoreRef.current = active instanceof HTMLElement ? active : null
+    const el = dialogRef.current
+    if (!el) return
+    // 初始焦点：显式声明优先，其次带 autoFocus 的输入框，最后落到对话框本身。
+    // 不再默认聚焦「第一个可聚焦元素」—— 那通常正是右上角的关闭按钮，
+    // 一回车就把弹窗关掉了；聚焦 dialog 容器则会先朗读标题与角色。
+    const target =
+      el.querySelector<HTMLElement>('[data-autofocus]') ??
+      el.querySelector<HTMLElement>('[autofocus]') ??
+      el
+    // 让出一帧，避开入场动画首帧的布局抖动
+    const timer = window.setTimeout(() => target.focus(), 0)
+    return () => {
+      window.clearTimeout(timer)
+      const back = restoreRef.current
+      restoreRef.current = null
+      // 此刻背景可能还挂着 inert（它由同一轮 effect 里的弹层计数触发重渲染后才移除），
+      // 对 inert 子树内的元素调 focus() 会被浏览器忽略 —— 让出一拍再归还。
+      if (back && document.contains(back)) window.setTimeout(() => back.focus(), 0)
+    }
+  }, [open])
+
+  const onKeyDown = useCallback(
+    (e: ReactKeyboardEvent<HTMLDivElement>) => {
       if (e.key === 'Escape') {
+        // stopPropagation 会阻断原生冒泡，挂在 window 上的全局 Esc 因此不会被触发
+        // —— 一次按键只关闭"最上面这一层"。
+        e.preventDefault()
         e.stopPropagation()
         onClose()
+        return
       }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+      if (e.key !== 'Tab') return
+      const el = dialogRef.current
+      if (!el) return
+      const nodes = Array.from(el.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+        (n) => n.offsetParent !== null || n === document.activeElement,
+      )
+      if (nodes.length === 0) {
+        e.preventDefault()
+        el.focus()
+        return
+      }
+      const first = nodes[0]
+      const last = nodes[nodes.length - 1]
+      const activeEl = document.activeElement as HTMLElement | null
+      const inside = !!activeEl && el.contains(activeEl)
+      if (e.shiftKey) {
+        if (!inside || activeEl === first) {
+          e.preventDefault()
+          last.focus()
+        }
+      } else if (!inside || activeEl === last) {
+        e.preventDefault()
+        first.focus()
+      }
+    },
+    [onClose],
+  )
 
   if (!open) return null
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-start justify-center p-4 py-[5vh]">
       <div
         className="fixed inset-0 bg-black/28 backdrop-blur-[2px] animate-fade-in"
@@ -208,14 +286,20 @@ export function Modal({
         aria-hidden="true"
       />
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        className="relative flex max-h-full w-full animate-pop flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-lg)]"
+        aria-labelledby={labelledById}
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+        className="relative flex max-h-full w-full animate-pop flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-lg)] outline-none"
         style={{ maxWidth: `min(${width}px, calc(100vw - 2rem))` }}
       >
         <header className="flex shrink-0 items-start justify-between gap-4 border-b border-line px-5 py-4">
           <div>
-            <h2 className="brand-serif text-[1.0625rem] font-semibold tracking-wide text-ink">{title}</h2>
+            <h2 id={labelledById} className="brand-serif text-[1.0625rem] font-semibold tracking-wide text-ink">
+              {title}
+            </h2>
             {subtitle ? <p className="mt-0.5 text-[0.78125rem] text-ink-3">{subtitle}</p> : null}
           </div>
           <IconButton icon={IconX} label="关闭" onClick={onClose} />
@@ -229,7 +313,8 @@ export function Modal({
           </footer>
         ) : null}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -242,6 +327,7 @@ export function Popover({
   side = 'bottom',
   width,
   className,
+  menu = false,
 }: {
   open: boolean
   onClose: () => void
@@ -250,6 +336,11 @@ export function Popover({
   side?: 'bottom' | 'top'
   width?: number
   className?: string
+  /**
+   * 菜单型浮层：打开时把焦点落到第一项，关闭时归还给触发元素。
+   * 默认关闭 —— 快速添加的候选列表正相反，抢走 input 焦点会打断输入。
+   */
+  menu?: boolean
 }) {
   const ref = useRef<HTMLDivElement>(null)
 
@@ -258,21 +349,30 @@ export function Popover({
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose()
     }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation()
-        onClose()
-      }
-    }
     // 延后一拍再监听，避免触发按钮自身的 click 立即把浮层关掉。
     const t = window.setTimeout(() => document.addEventListener('mousedown', onDown), 0)
-    document.addEventListener('keydown', onKey)
     return () => {
       window.clearTimeout(t)
       document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
     }
   }, [open, onClose])
+
+  // 菜单型浮层把焦点接管过来，并在关闭时归还触发元素。
+  // 非菜单浮层（快速添加候选等）**不**动焦点，否则会破坏正在进行的输入与光标跟踪。
+  useEffect(() => {
+    if (!open || !menu) return
+    const prev = document.activeElement as HTMLElement | null
+    ref.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus()
+    return () => {
+      // 浮层卸载会把焦点丢回 body，此时才归还；用户若已把焦点移到别处，就不去抢。
+      const active = document.activeElement
+      if ((!active || active === document.body) && prev) prev.focus()
+    }
+  }, [open, menu])
+
+  // Esc 交给全局仲裁栈：焦点通常停在触发按钮上（不在浮层内），
+  // 无法靠容器 keydown 捕获，只能注册到栈里、由仲裁器保证"只关最上面一层"。
+  useEscapeLayer(open, onClose)
 
   if (!open) return null
   return (
@@ -383,7 +483,7 @@ export function Field({
 }
 
 export const inputClass =
-  'w-full rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[0.8125rem] text-ink outline-none transition-colors placeholder:text-ink-3 focus:border-seal/60'
+  'w-full rounded-lg border border-control-line bg-surface px-2.5 py-1.5 text-[0.8125rem] text-ink outline-none transition-colors placeholder:text-ink-3 focus:border-seal'
 
 export function ColorDot({ color, size = 8 }: { color?: string; size?: number }) {
   return (
@@ -414,7 +514,7 @@ export function Chip({
       onClick={onClick}
       className={cx(
         'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[0.71875rem] transition-colors',
-        active ? 'border-seal/45 bg-seal/10 text-seal' : 'border-line text-ink-2 hover:border-line-strong',
+        active ? 'border-seal/45 bg-seal/10 text-seal' : 'border-line text-ink-2 hover:border-control-line',
         !onClick && 'cursor-default',
       )}
       style={color && !active ? { color, borderColor: `color-mix(in oklab, ${color} 38%, transparent)` } : undefined}

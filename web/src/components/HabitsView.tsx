@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 
 import { api } from '../api/client'
 import { addDays, todayStr, weekday, weekdayName } from '../lib/date'
+import { colorName } from '../lib/palette'
 import { useStore } from '../store/AppStore'
 import type { Habit, HabitBoard, HabitCadence, HabitLog, HabitStat } from '../types'
 import { IconFlame, IconMore, IconPlus, IconSeedling, IconTrash } from './icons'
@@ -94,7 +95,7 @@ function weeklyLabel(weekdays: string): string {
  * 上半是今日待办，下半是 12/26 周的热力图——点格子即可补记或撤销某一天。
  */
 export function HabitsView() {
-  const { settings, toast } = useStore()
+  const { settings, toast, confirm } = useStore()
   const [weeks, setWeeks] = useState(DEFAULT_WEEKS)
   const [board, setBoard] = useState<HabitBoard | null>(null)
   const [loading, setLoading] = useState(true)
@@ -159,8 +160,15 @@ export function HabitsView() {
 
   const refresh = useCallback(() => setReload((n) => n + 1), [])
 
+  // 连点守卫：同一习惯的请求在途时忽略后续点击。
+  // 否则"记一次"与"撤一次"两次请求会以不可预期的顺序落库，
+  // 结果既不等于一次也不等于两次（对比 MorningPlan 的 acting Set 写法）。
+  const inFlight = useRef<Set<number>>(new Set())
+
   const run = useCallback(
     async (habit: Habit, fn: () => Promise<unknown>, failMsg: string) => {
+      if (inFlight.current.has(habit.id)) return
+      inFlight.current.add(habit.id)
       setBusy(habit.id)
       try {
         await fn()
@@ -168,6 +176,7 @@ export function HabitsView() {
       } catch {
         toast(failMsg, 'error')
       } finally {
+        inFlight.current.delete(habit.id)
         setBusy(null)
       }
     },
@@ -199,6 +208,31 @@ export function HabitsView() {
       () => (met ? api.uncheckHabit(habit.id, day) : api.checkHabit(habit.id, { day, count: habit.target })),
       '更新失败',
     )
+  }
+
+  /**
+   * 热力图的键盘导航。
+   *
+   * 配合 HeatCell 的 roving tabindex（每个习惯只有「今天」那一格可 Tab），
+   * 在网格内用方向键移动：左右跨周、上下换星期。
+   * 不这么做的话，26 周 × 7 天 = 182 个格子会变成 182 个 Tab 停靠点。
+   */
+  const moveInGrid = (e: ReactKeyboardEvent<HTMLDivElement>, habitId: number) => {
+    const attr = (e.target as HTMLElement).getAttribute('data-habit-cell')
+    if (!attr) return
+    const index = grid.cells.indexOf(attr.split('|')[1])
+    if (index < 0) return
+    let next = index
+    if (e.key === 'ArrowLeft') next = index - 7
+    else if (e.key === 'ArrowRight') next = index + 7
+    else if (e.key === 'ArrowUp') next = index - 1
+    else if (e.key === 'ArrowDown') next = index + 1
+    else return
+    if (next < 0 || next >= grid.cells.length) return
+    e.preventDefault()
+    const target = e.currentTarget.querySelector<HTMLElement>(`[data-habit-cell="${habitId}|${grid.cells[next]}"]`)
+    target?.focus()
+    target?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   }
 
   const saveDraft = async () => {
@@ -237,7 +271,15 @@ export function HabitsView() {
 
   const remove = async (habit: Habit) => {
     setMenuFor(null)
-    if (!confirm(`删除习惯「${habit.name}」？打卡记录会一并删除，且不可恢复。`)) return
+    // 全站唯一还在用原生 confirm() 的地方：样式不可控、文案口径不一致，
+    // 在 iframe / 部分浏览器里还会被直接拦掉。统一走应用内的确认框。
+    const ok = await confirm({
+      title: `删除习惯「${habit.name}」`,
+      message: '打卡记录会一并删除，且不可恢复。',
+      confirmText: '删除',
+      danger: true,
+    })
+    if (!ok) return
     try {
       await api.deleteHabit(habit.id)
       toast('已删除')
@@ -402,6 +444,7 @@ export function HabitsView() {
                       {/* 周为列、星期为行：cells 按「周优先」排列，配合 column 流向即可对齐 */}
                       <div
                         className="grid"
+                        onKeyDown={(e) => moveInGrid(e, h.id)}
                         style={{
                           gridTemplateRows: `repeat(7, ${CELL}px)`,
                           gridAutoFlow: 'column',
@@ -415,6 +458,7 @@ export function HabitsView() {
                             day={day}
                             today={today}
                             count={logIndex.get(`${h.id}|${day}`)?.count ?? 0}
+                            tabbable={day === today}
                             onClick={() => toggleDay(h, day)}
                           />
                         ))}
@@ -522,6 +566,7 @@ function HabitRow({
           checked={done}
           color={habit.color}
           size={20}
+          disabled={busy}
           title={done ? '撤销今日打卡' : '今日打卡'}
           onChange={onToggle}
         />
@@ -609,26 +654,40 @@ function HeatCell({
   day,
   today,
   count,
+  tabbable,
   onClick,
 }: {
   habit: Habit
   day: string
   today: string
   count: number
+  /** 每个习惯只保留一个 Tab 入口（今天那一格），其余靠方向键在网格内移动。
+      26 周 × 7 天 = 182 个格子全可 Tab 的话，键盘用户根本走不出去。 */
+  tabbable: boolean
   onClick: () => void
 }) {
   const future = day > today
   const met = count >= habit.target
   const partial = count > 0 && !met
   const owed = !met && !partial && !future && scheduled(habit, day)
-
-  const title = `${habit.name} · ${day}${count > 0 ? ` · 已记 ${count} 次` : ''}${future ? '（未到）' : ''}`
+  // 状态写进可访问名：颜色之外必须还有一条非视觉通道（WCAG 1.4.1）
+  const stateWord = met
+    ? '已达标'
+    : partial
+      ? `部分达成 ${count}/${habit.target}`
+      : owed
+        ? '未达标'
+        : future
+          ? '未到'
+          : '非排期'
+  const title = `${habit.name} · ${day} · ${stateWord}`
 
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={future}
+      tabIndex={tabbable && !future ? 0 : -1}
       title={title}
       aria-label={title}
       data-habit-cell={`${habit.id}|${day}`}
@@ -636,7 +695,9 @@ function HeatCell({
       className={cx(
         'h-[13px] w-[13px] shrink-0 rounded-[3px] transition-transform',
         future ? 'cursor-default bg-surface-2/40' : 'hover:scale-[1.18]',
-        owed && 'bg-surface-2 ring-1 ring-line ring-inset',
+        // 「该做没做」用带描边的实心块，「非排期」用无描边的浅块——
+        // 两者此前只有明度差别，浅色主题下几乎分不出来。
+        owed && 'bg-surface-3 ring-1 ring-ink-3/45 ring-inset',
         partial && 'bg-seal/45',
         met && 'bg-seal',
         !owed && !partial && !met && !future && 'bg-surface-2/40',
@@ -669,11 +730,12 @@ function HabitForm({ draft, onChange }: { draft: HabitDraft; onChange: (d: Habit
 
       <Field label="节奏">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex rounded-lg border border-line p-0.5">
+          <div role="group" aria-label="节奏" className="flex rounded-lg border border-line p-0.5">
             {(['daily', 'weekly'] as HabitCadence[]).map((c) => (
               <button
                 key={c}
                 type="button"
+                aria-pressed={draft.cadence === c}
                 onClick={() => set('cadence', c)}
                 className={cx(
                   'rounded-md px-2.5 py-1 text-[0.78125rem] transition-colors',
@@ -689,6 +751,9 @@ function HabitForm({ draft, onChange }: { draft: HabitDraft; onChange: (d: Habit
                 <button
                   key={p.label}
                   type="button"
+                  aria-pressed={
+                    p.days.length === draft.weekdays.length && p.days.every((d) => draft.weekdays.includes(d))
+                  }
                   onClick={() => set('weekdays', p.days)}
                   className="rounded-md border border-line px-2 py-0.5 text-[0.71875rem] text-ink-2 transition-colors hover:border-seal/40 hover:text-seal"
                 >
@@ -705,6 +770,8 @@ function HabitForm({ draft, onChange }: { draft: HabitDraft; onChange: (d: Habit
                 <button
                   key={wd}
                   type="button"
+                  aria-label={`周${WEEK_SHORT[wd]}`}
+                  aria-pressed={on}
                   onClick={() => toggleDay(wd)}
                   className={cx(
                     'grid h-8 w-8 place-items-center rounded-lg border text-[0.75rem] transition-colors',
@@ -755,7 +822,8 @@ function HabitForm({ draft, onChange }: { draft: HabitDraft; onChange: (d: Habit
             <button
               key={c}
               type="button"
-              title={c}
+              aria-label={colorName(c)}
+              title={colorName(c)}
               onClick={() => set('color', c)}
               className={cx(
                 'grid h-7 w-7 place-items-center rounded-full border-2 transition-colors',
