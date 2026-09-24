@@ -217,7 +217,38 @@ async function main() {
     check('标签已挂上', (await page.getByText('#工作').count()) > 0)
     await page.screenshot({ path: path.join(shotDir, '02-quickadd.png') })
 
-    section('④ 交互：详情 / 完成 / 搜索')
+    section('④ 晨省：勾完即走，不翻回未完成')
+    // 晨省列表是打开时的快照，写后必须重拉：否则行停在原状，再点一次就把任务翻回未完成
+    const mQuick = page.locator('#shenshi-quickadd')
+    await mQuick.fill('今天 晨省勾销演练')
+    await mQuick.press('Enter')
+    await page.waitForTimeout(700)
+    await page.getByText('晨省 · 规划今日').first().click()
+    await page.waitForTimeout(900)
+    const planRow = page.locator('[data-plan-row]').filter({ hasText: '晨省勾销演练' })
+    check('晨省列出今日任务', (await planRow.count()) > 0, String(await planRow.count()))
+    await planRow.first().locator('button', { hasText: '完成' }).click()
+    // 写后要重拉三份快照再渲染，轮询等待而不是写死延时
+    let planLeft = -1
+    for (let i = 0; i < 40; i++) {
+      planLeft = await planRow.count()
+      if (planLeft === 0) break
+      await page.waitForTimeout(250)
+    }
+    check('勾完成后行从晨省消失', planLeft === 0, String(planLeft))
+    await page.screenshot({ path: path.join(shotDir, '03-morning-done.png') })
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(400)
+    await page.getByText('晨省 · 规划今日').first().click()
+    await page.waitForTimeout(900)
+    check('重开晨省已完成任务不再列出', (await planRow.count()) === 0, String(await planRow.count()))
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(400)
+    const afterDone = await (await fetch(`${base}/api/tasks?smart=today`)).json()
+    const mTask = (afterDone.tasks || []).find((x) => x.title === '晨省勾销演练')
+    check('服务端状态确为已完成（未被二次点击翻回）', !!mTask && mTask.status === 'done', mTask ? mTask.status : '未找到')
+
+    section('⑤ 交互：详情 / 完成 / 搜索')
     // TaskRow 根节点带 group/row 类名，用它定位整行最稳
     const row = page.locator('div.group\\/row').filter({ hasText: '复看项目材料' }).first()
 
@@ -247,7 +278,7 @@ async function main() {
       await page.locator('h1').first().innerText(),
     )
 
-    section('⑤ 各视图渲染')
+    section('⑥ 各视图渲染')
     const views = [
       { title: '看板', expect: '拖动卡片可跨列调整' },
       { title: '日历', expect: '回到今天' },
@@ -262,7 +293,7 @@ async function main() {
       await page.screenshot({ path: path.join(shotDir, `04-view-${v.title}.png`) })
     }
 
-    section('⑥ 快捷键与主题')
+    section('⑦ 快捷键与主题')
     await page.locator('button[title="列表"]').first().click()
     await page.waitForTimeout(400)
     await page.keyboard.press('b')
@@ -303,7 +334,7 @@ async function main() {
     await page.locator('button[title="列表"]').first().click()
     await page.waitForTimeout(400)
 
-    section('⑦ 手动排序与持久化')
+    section('⑧ 手动排序与持久化')
     // 用「无日期」清单：其中任务同属一个分区，拖拽排序的落点判定最确定
     const nav = page.locator('aside').first()
     await nav
@@ -366,7 +397,7 @@ async function main() {
     check('重新加载后顺序已落库', reloaded.join('|') === after.join('|'), `${after.join(' / ')} → ${reloaded.join(' / ')}`)
     check('落库顺序确实不同于初始', reloaded[0] !== before[0], `${before.join(' / ')} → ${reloaded.join(' / ')}`)
 
-    section('⑧ 数据导出入口')
+    section('⑨ 数据导出入口')
     await page.locator('button[title="外观与设置"]').first().click()
     await page.waitForTimeout(500)
     // 用 hasText / data-* 而非 getByRole(name)：后者对「中文 + ASCII 混排」的可访问名匹配不可靠
@@ -400,7 +431,7 @@ async function main() {
     await page.keyboard.press('Escape')
     await page.waitForTimeout(300)
 
-    section('⑨ 重复任务：跳过本次')
+    section('⑩ 重复任务：跳过本次')
     await page.keyboard.press('t')
     await page.waitForTimeout(600)
     const repQuick = page.locator('#shenshi-quickadd')
@@ -431,7 +462,7 @@ async function main() {
       (await page.locator('[data-task-row]').filter({ hasText: '静坐一刻钟' }).count()) === 0,
     )
 
-    section('⑩ 日历日视图：时间轴排布')
+    section('⑪ 日历日视图：时间轴排布')
     await page.locator('button[title="日历"]').first().click()
     await page.waitForTimeout(800)
     await page.locator('button[data-cal-mode="day"]').first().click()
@@ -485,7 +516,7 @@ async function main() {
     check('任务改为全天事项', (await allDayChip.count()) === 1)
     await page.screenshot({ path: path.join(shotDir, '08-day-allday.png') })
 
-    section('⑪ 习惯打卡')
+    section('⑫ 习惯打卡')
     await page.keyboard.press('h')
     await page.waitForTimeout(900)
     check('快捷键 H 切到习惯打卡', (await page.locator('h1').first().innerText()).includes('习惯打卡'))
@@ -609,7 +640,7 @@ async function main() {
       (await restoredRow.locator('button[title="今日打卡"], button[title="撤销今日打卡"]').count()) > 0,
     )
 
-    section('⑫ 备注 Markdown、附件与集成面板')
+    section('⑬ 备注 Markdown、附件与集成面板')
     // 注意：右下角可能挂着「开启桌面通知」的提示条，但绝不能手动把它从 DOM 里删掉
     // ——那是 React 管理的节点，删了会让整棵树在下次 reconcile 时崩成白屏。
     // 被它挡住的点击一律用 force，让事件直接落在目标元素上。
@@ -702,7 +733,7 @@ async function main() {
     await page.keyboard.press('Escape')
     await page.waitForTimeout(300)
 
-    section('⑬ 访问口令：登录与失效')
+    section('⑭ 访问口令：登录与失效')
     // 另起一个带口令的实例，走一遍真实部署时的那条路：先登录，再让会话中途失效。
     const authPort = await freePort()
     const authBase = `http://127.0.0.1:${authPort}`
@@ -767,7 +798,7 @@ async function main() {
       fs.closeSync(authLog)
     }
 
-    section('⑭ 运行时无错误')
+    section('⑮ 运行时无错误')
     const realConsole = consoleErrors.filter((t) => !IGNORABLE.test(t))
     check('无控制台错误', realConsole.length === 0, realConsole.slice(0, 3).join(' | '))
     check('无未捕获异常', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '))

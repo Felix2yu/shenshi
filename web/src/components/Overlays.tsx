@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { api } from '../api/client'
 import { addDays, fullDate, todayStr } from '../lib/date'
@@ -139,25 +139,53 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
   const [inbox, setInbox] = useState<Task[]>([])
   const [picked, setPicked] = useState<number[]>(todayFocusIds)
   const [busy, setBusy] = useState(false)
+  /** 在途写操作的行 id：防止请求未归档时再点一次把刚完成的任务翻回未完成。 */
+  const acting = useRef(new Set<number>())
+
+  // 面板里的三份列表是**打开时的快照**：store 的 tasks 只含当前视图，
+  // 完成/移动这类写操作不会回写到这里。不显式重拉，勾选后行就停在原状，
+  // 用户再点一次「完成」等于向服务端再发一次翻转 —— 已完成的事反被勾回未完成。
+  const reload = async () => {
+    try {
+      const [o, t, i] = await Promise.all([
+        api.listTasks({ smart: 'overdue' }),
+        api.listTasks({ smart: 'today' }),
+        api.listTasks({ smart: 'inbox' }).catch(() => ({ tasks: [] as Task[], count: 0 })),
+      ])
+      setOverdue(o.tasks)
+      setToday(t.tasks)
+      setInbox(i.tasks)
+    } catch {
+      toast('晨省列表刷新失败')
+    }
+  }
+
+  /** 面板内写操作的统一收尾：重拉快照，并挡住同一行的重复点击。 */
+  const run = async (id: number, op: () => Promise<unknown>) => {
+    if (acting.current.has(id)) return
+    acting.current.add(id)
+    try {
+      await op()
+      await reload()
+    } finally {
+      acting.current.delete(id)
+    }
+  }
 
   useEffect(() => {
     if (!open) return
     setPicked(todayFocusIds)
-    void Promise.all([
-      api.listTasks({ smart: 'overdue' }),
-      api.listTasks({ smart: 'today' }),
-      api.listTasks({ smart: 'inbox' }).catch(() => ({ tasks: [] as Task[], count: 0 })),
-    ]).then(([o, t, i]) => {
-      setOverdue(o.tasks)
-      setToday(t.tasks)
-      setInbox(i.tasks)
-    })
+    void reload()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
+  // 智能清单默认带「今日已完成」的留存，但晨省是排程面板：
+  // 已完成的事不在「逾期未了 / 待澄清」里继续占位，只在问候语里计入完成数。
+  const overdueOpen = overdue.filter((t) => t.status !== 'done')
+  const inboxOpen = inbox.filter((t) => t.status !== 'done')
   const doneToday = today.filter((t) => t.status === 'done').length
   const pending = today.filter((t) => t.status !== 'done').length
-  const line = morningLine(pending, overdue.length, doneToday)
+  const line = morningLine(pending, overdueOpen.length, doneToday)
 
   const togglePick = (id: number) => {
     if (picked.includes(id)) {
@@ -223,14 +251,14 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
         </div>
 
         {/* 逾期 */}
-        {overdue.length > 0 ? (
+        {overdueOpen.length > 0 ? (
           <Section
             title="逾期未了"
-            count={overdue.length}
+            count={overdueOpen.length}
             tone="danger"
             note="逐条安排：移回今天，或承认它需要更晚。"
           >
-            {overdue.map((t) => (
+            {overdueOpen.map((t) => (
               <PlanRow
                 key={t.id}
                 task={t}
@@ -239,9 +267,13 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
                 onPick={() => togglePick(t.id)}
                 actions={
                   <>
-                    <MiniButton onClick={() => void moveTask(t.id, { dueDate: todayStr() })}>移到今天</MiniButton>
-                    <MiniButton onClick={() => void moveTask(t.id, { dueDate: addDays(todayStr(), 1) })}>明天</MiniButton>
-                    <MiniButton onClick={() => void toggleTask(t.id)}>完成</MiniButton>
+                    <MiniButton onClick={() => void run(t.id, () => moveTask(t.id, { dueDate: todayStr() }))}>
+                      移到今天
+                    </MiniButton>
+                    <MiniButton onClick={() => void run(t.id, () => moveTask(t.id, { dueDate: addDays(todayStr(), 1) }))}>
+                      明天
+                    </MiniButton>
+                    <MiniButton onClick={() => void run(t.id, () => toggleTask(t.id))}>完成</MiniButton>
                   </>
                 }
               />
@@ -265,10 +297,10 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
                   onPick={() => togglePick(t.id)}
                   actions={
                     <>
-                      <MiniButton onClick={() => void moveTask(t.id, { dueDate: addDays(todayStr(), 1) })}>
+                      <MiniButton onClick={() => void run(t.id, () => moveTask(t.id, { dueDate: addDays(todayStr(), 1) }))}>
                         顺延
                       </MiniButton>
-                      <MiniButton onClick={() => void toggleTask(t.id)}>完成</MiniButton>
+                      <MiniButton onClick={() => void run(t.id, () => toggleTask(t.id))}>完成</MiniButton>
                     </>
                   }
                 />
@@ -277,9 +309,9 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
         </Section>
 
         {/* 收集箱 */}
-        {inbox.length > 0 ? (
-          <Section title="收集箱待澄清" count={inbox.length} note="先决定它们属于哪一天，或哪一份清单。">
-            {inbox.slice(0, 6).map((t) => (
+        {inboxOpen.length > 0 ? (
+          <Section title="收集箱待澄清" count={inboxOpen.length} note="先决定它们属于哪一天，或哪一份清单。">
+            {inboxOpen.slice(0, 6).map((t) => (
               <PlanRow
                 key={t.id}
                 task={t}
@@ -288,15 +320,20 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
                 onPick={() => togglePick(t.id)}
                 actions={
                   <>
-                    <MiniButton onClick={() => void moveTask(t.id, { dueDate: todayStr() })}>今天</MiniButton>
-                    <MiniButton onClick={() => void moveTask(t.id, { dueDate: addDays(todayStr(), 1) })}>明天</MiniButton>
+                    <MiniButton onClick={() => void run(t.id, () => moveTask(t.id, { dueDate: todayStr() }))}>
+                      今天
+                    </MiniButton>
+                    <MiniButton onClick={() => void run(t.id, () => moveTask(t.id, { dueDate: addDays(todayStr(), 1) }))}>
+                      明天
+                    </MiniButton>
                     <select
                       className="h-6 rounded-md border border-line bg-surface px-1 text-[0.71875rem]"
                       defaultValue=""
                       onChange={(e) => {
                         if (!e.target.value) return
-                        void updateTask(t.id, { listId: Number(e.target.value) })
+                        const listId = Number(e.target.value)
                         e.currentTarget.value = ''
+                        void run(t.id, () => updateTask(t.id, { listId }))
                       }}
                     >
                       <option value="">移入清单…</option>
@@ -310,13 +347,14 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
                 }
               />
             ))}
-            {inbox.length > 6 ? (
-              <p className="px-1 pt-1 text-[0.71875rem] text-ink-3">另有 {inbox.length - 6} 项，稍后处理。</p>
+            {inboxOpen.length > 6 ? (
+              <p className="px-1 pt-1 text-[0.71875rem] text-ink-3">另有 {inboxOpen.length - 6} 项，稍后处理。</p>
             ) : null}
           </Section>
         ) : null}
 
-        {overdue.length === 0 && pending === 0 && inbox.length === 0 ? (
+        {/* 只有真的一无所有（连今日已完成都没有）才给空白文案；都完成了由问候语负责。 */}
+        {overdueOpen.length === 0 && pending === 0 && inboxOpen.length === 0 && doneToday === 0 ? (
           <p className="py-6 text-center text-[0.78125rem] text-ink-3">
             今日一片空白。空白也是一种安排 —— 若真要添一件，现在就是最好的时机。
           </p>
@@ -375,6 +413,7 @@ function PlanRow({
 }) {
   return (
     <div
+      data-plan-row={task.id}
       className={cx(
         'flex flex-wrap items-center gap-2 rounded-xl border px-2.5 py-2 transition-colors',
         picked ? 'border-seal/40 bg-seal/8' : 'border-line bg-surface hover:border-line-strong',
