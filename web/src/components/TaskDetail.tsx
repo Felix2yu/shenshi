@@ -466,7 +466,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
               }}
             >
               <IconCopy size={13} className="text-ink-3" />
-              复制一份
+              复制
             </button>
             <button
               type="button"
@@ -482,7 +482,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
               }}
             >
               <IconArchive size={13} className="text-ink-3" />
-              {task.archived ? '取消归档' : '归档任务'}
+              {task.archived ? '取消归档' : '归档'}
             </button>
             <div className="my-1 border-t border-line" />
             <button

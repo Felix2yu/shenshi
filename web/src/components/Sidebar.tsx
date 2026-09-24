@@ -972,7 +972,7 @@ export function Sidebar() {
                         重命名
                       </MenuItem>
                       <MenuItem icon={IconTrash} danger onClick={() => void confirmTagDelete(t)}>
-                        删除标签
+                        删除
                       </MenuItem>
                     </div>
                   </Popover>
@@ -1297,7 +1297,7 @@ function FolderNode({
               setMenu(null)
             }}
           >
-            在此新建清单
+            新建清单
           </MenuItem>
           <MenuItem
             icon={IconFolder}
@@ -1308,6 +1308,8 @@ function FolderNode({
           >
             新建子分组
           </MenuItem>
+          {/* 打开的是编辑弹窗（名称、配色、上级分组、删除都在里面），故用铅笔而非
+              垃圾桶 + 危险色；也正因为它已覆盖「改名与配色」，不再单列一个同义项。 */}
           <MenuItem
             icon={IconPencil}
             onClick={() => {
@@ -1315,7 +1317,7 @@ function FolderNode({
               setMenu(null)
             }}
           >
-            重命名与配色
+            编辑分组…
           </MenuItem>
           <MenuItem
             icon={folder.collapsed ? IconChevronDown : IconChevronRight}
@@ -1333,17 +1335,7 @@ function FolderNode({
               setMenu(null)
             }}
           >
-            {folder.archived ? '取消归档' : '归档分组'}
-          </MenuItem>
-          {/* 打开的是编辑弹窗（删除在其中），原先却挂着垃圾桶图标 + 危险色，语义误导 */}
-          <MenuItem
-            icon={IconPencil}
-            onClick={() => {
-              onEditFolder(folder)
-              setMenu(null)
-            }}
-          >
-            编辑分组…
+            {folder.archived ? '取消归档' : '归档'}
           </MenuItem>
         </Popover>
       </div>
@@ -1475,7 +1467,7 @@ function ListRow({
             setMenu(null)
           }}
         >
-          重命名与配色
+          编辑清单…
         </MenuItem>
         <MenuItem
           icon={IconStar}
@@ -1493,7 +1485,7 @@ function ListRow({
             setMenu(null)
           }}
         >
-          {list.archived ? '取消归档' : '归档清单'}
+          {list.archived ? '取消归档' : '归档'}
         </MenuItem>
         {folders && folders.length > 0 ? (
           <>

@@ -533,7 +533,7 @@ function RowMenuItems({
       />
       <RowAction
         icon={IconCopy}
-        label="复制一份"
+        label="复制"
         onClick={() => {
           void duplicateTask(task.id)
           onClose()

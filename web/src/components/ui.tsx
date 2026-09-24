@@ -349,16 +349,23 @@ export function Popover({
   const ref = useRef<HTMLDivElement>(null)
 
   // 实际生效的方向、高度上限与（贴边时的）纵向落点。
-  // 浮层是 absolute、跟着行内触发元素走，尺寸只有打开后才量得到；行靠近视口底部时
+  // 浮层用 fixed、跟着行内触发元素走，尺寸只有打开后才量得到；行靠近视口底部时
   // 向下展开会溢出视口（要滚动页面才看得到），而上方的空白常常还很充裕。
   // 打开时量一次，按四档决策：本侧放得下 → 不动；另一侧放得下 → 翻转；
   // 两侧都放不下但整屏装得下 → 贴住空间更大一侧的视口边界一次显示完（不加滚动条）；
   // 整屏也装不下 → 收窄 + 内部滚动（同原生 <select> 的弹层）。
+  //
+  // 为什么是 fixed 而不是 absolute：任务列表等容器是 `overflow-y-auto` 的滚动区，
+  // absolute 浮层会被它裁剪 —— 向上翻转后超出容器上沿的部分直接不见（DOM 里量着
+  // 696px 完整、渲染出来只剩下半截，实测踩过）。fixed 的包含块是视口，不受祖先
+  // overflow 影响。（前提：祖先没有 transform/filter/contain: paint，否则会退化成
+  // absolute。当前全站无此情况。）
   const [pos, setPos] = useState<{
     side: 'bottom' | 'top'
     maxHeight?: number
-    /** 贴边显示时相对包含块顶边的像素偏移；有值时不用 top/bottom 的 CSS 类 */
+    /** 视口坐标（fixed 定位），未量测到之前为 undefined */
     top?: number
+    left?: number
   }>({ side })
 
   useLayoutEffect(() => {
@@ -366,12 +373,12 @@ export function Popover({
     const el = ref.current
     if (!el) return
     const place = () => {
-      // offsetParent 才是 absolute 定位的包含块（即 CSS 里 100% 的参照），
-      // 比 parentElement 可靠 —— 调用方没加 relative 时前者仍能给出真正的锚点。
-      const anchor = (el.offsetParent as HTMLElement | null) ?? el.parentElement
+      // fixed 元素的 offsetParent 恒为 null，锚点取渲染位置的父元素
+      //（调用方把 Popover 放在触发按钮旁边，父元素通常就是按钮的包裹容器）。
+      const anchor = el.parentElement
       const a = anchor?.getBoundingClientRect()
       if (!a) return
-      const GAP = 6 // 与下面 className 里的 calc(100%+6px) 保持一致
+      const GAP = 6
       const EDGE = 8 // 与视口边缘的安全距离
       // 底部状态栏是布局内的常驻行（不是浮层），浮层停到它下面等于被它遮住，让出来。
       const footer = document.querySelector<HTMLElement>('[data-app-footer]')
@@ -415,13 +422,26 @@ export function Popover({
       // （anchor 已先按视口夹紧，故触发元素半露/滚出视口时也算得对。）
       const height = maxHeight ?? natural
       const unclamped = chosen === 'bottom' ? anchorBottom + GAP : anchorTop - GAP - height
-      const topViewport = Math.min(Math.max(unclamped, topLimit), bottomLimit - height)
-      // top 是相对包含块（offsetParent 的 padding box）的偏移，故换算掉边框宽度
-      const originTop = a.top + (anchor?.clientTop ?? 0)
-      const next = { side: chosen, maxHeight, top: Math.round(topViewport - originTop) }
+      const top = Math.round(Math.min(Math.max(unclamped, topLimit), bottomLimit - height))
+      // 水平位置也显式算：fixed 之后 right-0 / left-1/2 这些类是相对视口而非锚点，
+      // 语义会错。顺带夹紧左右边缘，窄屏下不会有一半伸到屏幕外。
+      const w = el.offsetWidth
+      const rawLeft =
+        align === 'right'
+          ? a.right - w
+          : align === 'center'
+            ? a.left + a.width / 2 - w / 2
+            : a.left
+      const left = Math.round(Math.min(Math.max(rawLeft, EDGE), Math.max(EDGE, window.innerWidth - w - EDGE)))
+      const next = { side: chosen, maxHeight, top, left }
       // 值相同就回传原对象 → React 跳过更新，避免与 ResizeObserver 互相触发
       setPos((p) =>
-        p.side === next.side && p.maxHeight === next.maxHeight && p.top === next.top ? p : next,
+        p.side === next.side &&
+        p.maxHeight === next.maxHeight &&
+        p.top === next.top &&
+        p.left === next.left
+          ? p
+          : next,
       )
     }
     let raf = 0
@@ -444,7 +464,7 @@ export function Popover({
       window.removeEventListener('scroll', schedule, true)
       window.removeEventListener('resize', schedule)
     }
-  }, [open, side])
+  }, [open, side, align])
 
   useEffect(() => {
     if (!open) return
@@ -478,25 +498,27 @@ export function Popover({
 
   if (!open) return null
   return (
-    // style 里 top 与 maxHeight 可能同时有值（收窄 + 贴边共用），故一并给出；
-    // React 会忽略值为 undefined 的键。
+    // 落点全部由 style 精确给出（top / left / maxHeight 可能同时有值，React 会忽略
+    // 值为 undefined 的键）。fixed 定位，故纵横向都是视口坐标。
+    // 量测在 useLayoutEffect 里、paint 之前完成，理论上不会闪；仍用 visibility 兜底，
+    // 免得极端情况下第一帧画在视口左上角。
     <div
       ref={ref}
       className={cx(
-        'absolute z-40 rounded-xl border border-line bg-surface p-2 shadow-[var(--shadow-md)]',
+        'fixed z-40 rounded-xl border border-line bg-surface p-2 shadow-[var(--shadow-md)]',
         // 翻转时改用纯淡入：animate-rise 带 translateY(6px)，方向反了会看着别扭
         pos.side === side ? 'animate-rise' : 'animate-fade-in',
-        // 落点由 style.top 精确给出；仅在量测落定前用这两个类兜一拍
-        pos.top === undefined &&
-          (pos.side === 'bottom' ? 'top-[calc(100%+6px)]' : 'bottom-[calc(100%+6px)]'),
         // 仅当整屏也装不下时才收窄 + 内部滚动
         pos.maxHeight !== undefined && 'overflow-y-auto',
-        align === 'left' && 'left-0',
-        align === 'right' && 'right-0',
-        align === 'center' && 'left-1/2 -translate-x-1/2',
         className,
       )}
-      style={{ width, top: pos.top, maxHeight: pos.maxHeight }}
+      style={{
+        width,
+        top: pos.top,
+        left: pos.left,
+        maxHeight: pos.maxHeight,
+        visibility: pos.top === undefined ? 'hidden' : undefined,
+      }}
     >
       {children}
     </div>

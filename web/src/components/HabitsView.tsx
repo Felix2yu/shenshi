@@ -634,9 +634,9 @@ function HabitRow({
         <Popover open={menuOpen} onClose={() => onMenu(false)} align="right" width={200}>
           <MenuItem onClick={onEdit}>编辑</MenuItem>
           {archived ? (
-            <MenuItem onClick={onRestore}>恢复（重新显示）</MenuItem>
+            <MenuItem onClick={onRestore}>恢复</MenuItem>
           ) : (
-            <MenuItem onClick={onArchive}>归档（不再显示）</MenuItem>
+            <MenuItem onClick={onArchive}>归档</MenuItem>
           )}
           <MenuItem onClick={onDelete} icon={IconTrash} danger>
             删除
