@@ -7,11 +7,17 @@
 ## 0. 机械检查（每次必跑）
 
 ```bash
+# 后端单测：scripts/build.sh 只编译、不跑测试，跳过这步就只能等 CI 报红
+cd server && /opt/homebrew/bin/go test ./internal/...
+
 # 类型：vite 不做类型检查，必须单独跑
 cd web && /opt/homebrew/bin/node ./node_modules/typescript/bin/tsc --noEmit -p tsconfig.json
 
 # 构建（前端会被打进二进制，改完 CSS/TS 必须重跑）
 NODE_BIN=/opt/homebrew/bin/node GO_BIN=/opt/homebrew/bin/go ./scripts/build.sh
+
+# 浏览器 UI 冒烟：本地可完整运行（自起临时实例与端口），改任何可见文案 / 交互步数后必跑
+/opt/homebrew/bin/node scripts/ui-smoke.mjs
 ```
 
 ```bash
@@ -88,3 +94,6 @@ PY
 - **分组是树**：涉及分组/清单的遍历一律递归（`flattenFolders` / `mapFolderInTree` / `reorderFoldersInTree`）。
 - **字号单位**：源码禁止 `text-[Npx]`，一律 `text-[Nrem]`，否则绕过 fontScale 缩放。
 - **焦点可见**：hover-only 控件必须同时有 `focus-visible` / `focus-within` 可见性；`index.css` 已有全局补丁，新增模式请沿用。
+- **Esc 必须不依赖焦点**：`Modal` 也走 `useEscapeLayer` 注册仲裁栈，容器上的 `keydown` 只留 Tab 陷阱。焦点是会被夺走的 —— 被点击的元素一旦随之卸载，焦点就落回 `<body>`，只靠容器监听会漏掉按键（2026-09-24 冒烟实测）。
+- **改文案前先看 `scripts/ui-smoke.mjs`**：它按 `title=` / `aria-label=` / `data-*` 定位，是 UI 契约的守卫。改可见文案、图标按钮的 `label`、或交互步数（如把原生 `confirm()` 换成应用内确认框）之后，脚本要同步跟进 —— 且应补断言而非删断言。
+- **业务联动由调用方显式表达**：不在后端做「清 A 连带清 B」的隐式联动，否则违约 PATCH 三态契约（既有测试就是该契约的守卫）。

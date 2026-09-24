@@ -606,3 +606,31 @@ HTML5 Drag & Drop 无键盘与触屏替代，以下**核心操作对键盘/触�
 ### 后续
 
 回归检查项已固化为 `docs/a11y-regression-checklist.md`（对比度阈值 + 键盘路径 + `aria-live` + 项目约定），改动前端组件后按该清单走查。
+
+---
+
+## 七、CI 首轮失败的复盘（同日第三轮）
+
+首次推送（`a9701e4`）后 CI 连续两轮失败，**两轮原因不同**，且都源于本次改动越过了既有契约。记录在此以免重蹈。
+
+### 第 1 轮：`TestTaskCRUD` —— 后端隐式联动违约 PATCH 三态
+
+- 现象：`server/internal/store` 失败，`tasks_test.go:90`「未传的 dueTime 不应被清掉」。
+- 根因：在 `UpdateTask` 里新增了「清 `due_date` 时连带清 `due_time`」。既有测试正是 **PATCH 三态契约**（未传字段一律不动）的守卫；而且该联动**本来就是冗余的** —— `TaskDetail.setDue` 早在清日期分支里显式发了 `dueTime: null`。
+- 修复（`0189ca5`）：回退后端隐式联动，改由调用方显式表达；唯一漏网的 `TaskViews.tsx` 任务行菜单「清除日期」补上 `dueTime: null`。
+- **原则**：业务联动（清 A 连带清 B）不在后端做隐式实现；契约冲突时先跑 `go test` 暴露，不要改测试去迁就实现。
+
+### 第 2 轮：浏览器 UI 冒烟 —— 改 UI 时忘了看定位器
+
+1. **`Modal` 的 Esc 变成焦点依赖**（`scripts/ui-smoke.mjs:242`）：统一 Esc 到仲裁栈时，Modal 改为在对话框容器上监听 `keydown` —— 只有焦点仍在弹窗内才收得到。脚本点掉晨省里的一行后，那一行随之卸载、焦点落回 `<body>`，此后的 Esc 无人接管，弹窗关不掉，下一次点击被遮罩拦截。
+   - 修复：`Modal` 改用 `useEscapeLayer(open, onClose)` 注册仲裁栈（不依赖焦点位置），容器上只保留 Tab 焦点陷阱。
+2. **改文案打断了选择器**（`ui-smoke.mjs:451`）：任务行「更多」按钮的 `label` 被改成「更多操作」，`title` 随之变化，而脚本按 `button[title="更多"]` 定位。
+   - 修复：`label` 回退为「更多」，另用 `aria-label=\`「任务名」的更多操作\`` 提供逐行唯一的可访问名（`IconButton` 的 `{...rest}` 在 `title`/`aria-label` 之后展开，可单独覆盖任一属性）。
+3. **顺带发现**：习惯删除由原生 `confirm()` 改为应用内确认框（本次的一致性改进）后，脚本里 `page.once('dialog')` + 单击一次的旧流程失效，删除不再发生，后续用例被确认框的 `footer` 拦截。
+   - 修复：脚本跟进新契约 —— 点菜单项弹确认框 → 断言确认框出现 → 再点确认框的「删除」。测试因此**更强**（多一条断言），而非被削弱。
+
+### 教训
+
+- `./scripts/build.sh` 只编译、**不跑测试**；`tsc --noEmit` 只覆盖前端类型。后端改动必须单独跑 `go test ./internal/...`。
+- `scripts/ui-smoke.mjs` 是 **UI 契约的守卫**（按 `title=` / `aria-label=` / `data-*` 定位），且在本地即可完整运行（自起临时实例与端口）。改任何可见文案、标签、结构或交互步数之后，先跑它再推。
+- 一次提交同时改前后端时，本地验证要覆盖三条链路：`go test` → `tsc` → `node scripts/ui-smoke.mjs`。三者全绿时 CI 才等价于「已在本地验证过」。

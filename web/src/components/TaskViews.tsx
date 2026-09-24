@@ -353,8 +353,11 @@ export function TaskRow({
             <div className="relative">
               <IconButton
                 icon={IconMore}
-                label="更多操作"
+                label="更多"
                 size={13}
+                // 可访问名带上任务标题，读屏逐行浏览时能分辨是哪个任务的菜单；
+                // title 保持「更多」不变 —— 冒烟脚本按 button[title="更多"] 定位。
+                aria-label={`「${task.title}」的更多操作`}
                 aria-haspopup="true"
                 aria-expanded={menuOpen}
                 onClick={(e) => {

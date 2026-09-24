@@ -600,15 +600,20 @@ async function main() {
     check('刷新后习惯仍在', (await page.locator('[data-habit-row]').count()) === 2)
     check('刷新后今日打卡仍为 2', (await page.getByText(/今日已打卡/).first().innerText()).includes('2'))
 
-    // 删除习惯需二次确认
-    page.once('dialog', (d) => void d.accept())
+    // 删除习惯需二次确认：确认框是应用内自绘的（早先是原生 confirm()，已统一，
+    // 因此这里不再注册 page.once('dialog')，改为显式点两下）。
     const toDelete = page.locator('[data-habit-row]').filter({ hasText: '日饮八杯水' }).first()
     await toDelete.hover()
     await page.waitForTimeout(250)
     await toDelete.locator('button[title="更多"]').first().click()
     await page.waitForTimeout(350)
-    await page.locator('[role="dialog"]').count()
+    // 第一下：菜单里的「删除」只负责弹出确认框
     await page.locator('button', { hasText: '删除' }).last().click()
+    await page.waitForTimeout(500)
+    const confirmDel = page.locator('[role="dialog"] button', { hasText: '删除' }).last()
+    check('删除习惯弹出应用内确认框', (await confirmDel.count()) === 1)
+    // 第二下：确认框里的「删除」才真正执行
+    await confirmDel.click()
     await page.waitForTimeout(1200)
     check('删除后只剩一个习惯', (await page.locator('[data-habit-row]').count()) === 1)
 

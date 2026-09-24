@@ -213,6 +213,12 @@ export function Modal({
     return popModalLayer
   }, [open])
 
+  // Esc：注册到仲裁栈（栈顶优先），**不依赖焦点位置**。
+  // 早先是在对话框容器上监听 keydown —— 只有焦点仍在弹窗内才收得到。
+  // 而焦点是会跑掉的：最典型的是点了行内「完成」，那一行随即消失，
+  // 焦点落回 <body>，此后 Esc 无人接管，弹窗关不掉（2026-09-24 CI 冒烟实测）。
+  useEscapeLayer(open, onClose)
+
   // 焦点管理：打开时把焦点移入弹窗；关闭时归还给触发它的元素
   useEffect(() => {
     if (!open) return
@@ -241,14 +247,8 @@ export function Modal({
 
   const onKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLDivElement>) => {
-      if (e.key === 'Escape') {
-        // stopPropagation 会阻断原生冒泡，挂在 window 上的全局 Esc 因此不会被触发
-        // —— 一次按键只关闭"最上面这一层"。
-        e.preventDefault()
-        e.stopPropagation()
-        onClose()
-        return
-      }
+      // Esc 不在这里处理 —— 统一交给上面 useEscapeLayer 注册的仲裁栈。
+      // 这里只留焦点陷阱：Tab / Shift+Tab 在弹窗内循环。
       if (e.key !== 'Tab') return
       const el = dialogRef.current
       if (!el) return
@@ -274,7 +274,7 @@ export function Modal({
         first.focus()
       }
     },
-    [onClose],
+    [],
   )
 
   if (!open) return null
