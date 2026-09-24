@@ -1260,8 +1260,9 @@ export function BatchBar() {
   if (!multiSelect || selectedIds.length === 0) return null
   const listGroups = groupListsForSelect(folders, lists)
   return (
-    // 抬到底部两个固定浮层（专注指示条 / 提醒中心）之上，三者不再互相遮挡
-    <div className="pointer-events-none fixed inset-x-3 bottom-20 z-30 flex justify-center">
+    // 抬到底部固定浮层（专注指示条 / 提醒中心）之上，三者不再互相遮挡；
+    // 移动端再抬高避开底部视图标签栏（3rem 栏高 + safe-area + 0.75rem 间距）
+    <div className="pointer-events-none fixed inset-x-3 bottom-[calc(3.75rem+env(safe-area-inset-bottom))] z-30 flex justify-center lg:bottom-20">
       {/* 窄屏上操作条会横向溢出屏幕：改成可换行 + 限宽，宽屏观感不变 */}
       <div className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-2 rounded-2xl border border-line bg-surface/95 px-3 py-2 shadow-[var(--shadow-lg)] backdrop-blur">
         <span className="px-1 text-[0.78125rem] text-ink-2">已选 {selectedIds.length} 项</span>
@@ -1368,7 +1369,7 @@ export function EmptyForView({ emptyKey }: { emptyKey: keyof typeof QUOTES | str
   )
 }
 
-export function SearchBar({ className }: { className?: string }) {
+export function SearchBar({ className, autoFocus }: { className?: string; autoFocus?: boolean }) {
   const { keyword, setKeyword } = useStore()
   const { compositionProps, isComposing } = useIMEGuard()
   // 本地草稿 + 250ms 防抖：每敲一个字就打一次请求会让搜索明显发顿，
@@ -1410,6 +1411,7 @@ export function SearchBar({ className }: { className?: string }) {
       <input
         id="shenshi-search"
         {...compositionProps}
+        autoFocus={autoFocus}
         value={draft}
         aria-label="搜索任务与备注"
         onChange={(e) => {
@@ -1425,8 +1427,7 @@ export function SearchBar({ className }: { className?: string }) {
           }
         }}
         placeholder="搜索任务与备注"
-        // 移动端随容器伸展（工具栏第一行与筛选/排序按钮共行）；
-        // 桌面端保持定宽 + 聚焦加宽的原有行为。
+        // 移动档（搜索展开行）随容器伸展；桌面端保持定宽 + 聚焦加宽的原有行为。
         className="min-w-0 flex-1 bg-transparent text-[0.8125rem] outline-none transition-all placeholder:text-ink-3 lg:w-40 lg:flex-none lg:focus:w-56"
       />
       {draft ? (

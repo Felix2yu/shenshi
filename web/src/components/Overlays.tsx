@@ -71,7 +71,7 @@ function FocusIndicator() {
       type="button"
       onClick={() => window.dispatchEvent(new CustomEvent('shenshi:focus'))}
       title="打开专注面板"
-      className="fixed bottom-4 left-4 z-40 flex items-center gap-2 rounded-full border border-seal/40 bg-surface px-3 py-1.5 text-[0.75rem] text-ink shadow-[var(--shadow-sm)] transition-colors hover:bg-surface-2"
+      className="fixed bottom-[calc(3.5rem+env(safe-area-inset-bottom))] left-4 z-40 flex items-center gap-2 rounded-full border border-seal/40 bg-surface px-3 py-1.5 text-[0.75rem] text-ink shadow-[var(--shadow-sm)] transition-colors hover:bg-surface-2 lg:bottom-4"
     >
       <IconTimer size={13} className="text-seal" />
       <span className="tabular-nums font-medium">{mm}:{ss}</span>
@@ -801,8 +801,9 @@ function ReminderCenter() {
     <div
       aria-live="polite"
       aria-atomic="false"
-      // 窄屏留出左侧专注指示条的位置：两个固定浮层曾互相覆盖
-      className="fixed bottom-4 right-4 z-40 w-[330px] max-w-[calc(100vw-9rem)] animate-rise"
+      // 窄屏留出左侧专注指示条的位置：两个固定浮层曾互相覆盖；
+    // 移动端再抬高避开底部视图标签栏（3rem 栏高 + safe-area）
+      className="fixed bottom-[calc(3.5rem+env(safe-area-inset-bottom))] right-4 z-40 w-[330px] max-w-[calc(100vw-9rem)] animate-rise lg:bottom-4"
     >
       <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-lg)]">
         <header className="flex items-center gap-2 border-b border-line bg-seal/8 px-3 py-2">

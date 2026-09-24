@@ -11,7 +11,7 @@ import { TaskDetail } from './components/TaskDetail'
 import { SealLogo } from './components/icons'
 import { AppOverlays } from './components/Overlays'
 import { BatchBar, TaskListView } from './components/TaskViews'
-import { Toolbar } from './components/Toolbar'
+import { MobileTabBar, Toolbar } from './components/Toolbar'
 import { Button } from './components/ui'
 import { applyFilter } from './lib/filter'
 import { useEscapeArbiter } from './lib/escStack'
@@ -209,9 +209,14 @@ export default function App() {
           )}
         </div>
 
-        {/* data-app-footer：Popover 量测时要把这条常驻状态栏从可用高度里扣掉，
+        {/* 移动端底部视图标签栏（lg:hidden）：视图切换下沉到拇指区，
+            布局内占位，主内容区自然让出高度。 */}
+        <MobileTabBar />
+
+        {/* data-app-footer：Popover 量测时要把常驻底栏从可用高度里扣掉，
             否则浮层向下展开停在它下面等于被遮住（见 ui.tsx 的 Popover）。
-            移动端此处为 hidden（display:none），offsetHeight 读作 0，逻辑自然适配。 */}
+            底部标签栏与这条状态栏都带 data-app-footer，但同一时刻只有一个可见
+            （标签栏 lg:hidden / 状态栏 hidden lg:flex），量测取可见者的高度。 */}
         <footer
           data-app-footer
           className="hidden shrink-0 items-center gap-3 border-t border-line px-5 py-1.5 text-[0.65625rem] text-ink-3 lg:flex"

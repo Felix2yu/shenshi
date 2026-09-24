@@ -387,10 +387,15 @@ export function Popover({
       if (!a) return
       const GAP = 6
       const EDGE = 8 // 与视口边缘的安全距离
-      // 底部状态栏是布局内的常驻行（不是浮层），浮层停到它下面等于被它遮住，让出来。
-      const footer = document.querySelector<HTMLElement>('[data-app-footer]')
+      // 底部常驻栏是布局内的行（不是浮层），浮层停到它下面等于被它遮住，让出来。
+      // 页面有两条：移动端底部标签栏 + 桌面端状态栏，同一时刻只有一条可见
+      // （不可见的 offsetHeight 为 0），取可见者中最大的高度。
+      let footerH = 0
+      document.querySelectorAll<HTMLElement>('[data-app-footer]').forEach((f) => {
+        if (f.offsetHeight > footerH) footerH = f.offsetHeight
+      })
       const topLimit = EDGE
-      const bottomLimit = window.innerHeight - (footer?.offsetHeight ?? 0) - EDGE
+      const bottomLimit = window.innerHeight - footerH - EDGE
       // 触发元素可能只露出一部分、甚至完全滚出视口：两侧空间一律以视口为界先夹紧，
       // 否则会把屏幕外的空隙算成可用空间，菜单被摆到视口外（实测踩过：700 高的视口里
       // 菜单落到了 714，压在状态栏外面）。
