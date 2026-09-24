@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type SyntheticEvent } from 'react'
 
 import { dayDiff, dueLabel, isOverdue, relativeTime, todayStr, addDays } from '../lib/date'
 import { QUOTES } from '../lib/quotes'
-import { parseQuickAdd, describeRepeat, type Chip } from '../lib/nlp'
+import { parseQuickAdd, describeRepeat, QUICK_ADD_HINTS, type Chip } from '../lib/nlp'
 import { useIMEGuard } from '../lib/ime'
 import { useStore } from '../store/AppStore'
-import type { Priority, Selection, Task, TaskPatch } from '../types'
+import type { Folder, List, Priority, Selection, Tag, Task, TaskPatch } from '../types'
 import {
   IconBell,
   IconCheck,
@@ -463,7 +463,7 @@ function RowMenuItems({
         onClick={async () => {
           const ok = await confirm({
             title: `删除「${task.title}」`,
-            message: '删除后可在左下角撤销，超过 10 分钟才彻底消失。',
+            message: '删除后可在底部状态栏撤销，超过 10 分钟才彻底消失。',
             confirmText: '删除',
             danger: true,
           })
@@ -553,6 +553,89 @@ export function bucketize(tasks: Task[]): Bucket[] {
 
 /* ---------------- 快速添加 ---------------- */
 
+/* ---------------- 快速添加的符号补全 ---------------- */
+
+type Sug =
+  | { kind: 'tag'; key: string; value: string; label: string; color: string }
+  | { kind: 'newTag'; key: string; value: string; label: string }
+  | { kind: 'priority'; key: string; value: string; label: string; priority: number; desc: string }
+  | { kind: 'list'; key: string; value: string; label: string; color: string; folderName?: string }
+
+/** 检测光标是否正处于某个符号触发的补全语境里，返回触发符与已输入的查询串。 */
+function detectToken(
+  text: string,
+  caret: number,
+): { trigger: string; query: string; start: number; end: number } | null {
+  if (!text) return null
+  let i = Math.min(caret, text.length) - 1
+  let query = ''
+  while (i >= 0) {
+    const ch = text[i]
+    if (ch === '#' || ch === '!' || ch === '/') {
+      const prev = i > 0 ? text[i - 1] : ''
+      // 触发符前必须是行首或空白，避免误伤「C#」「http://」这类正文。
+      if (i === 0 || /\s/.test(prev)) return { trigger: ch, query, start: i, end: Math.min(caret, text.length) }
+      return null
+    }
+    if (/\s/.test(ch)) return null // 空白终止当前 token
+    query = ch + query
+    i--
+  }
+  return null
+}
+
+const PRIORITY_SUGS = [
+  { value: '高', priority: 3, desc: '最高优先级' },
+  { value: '中', priority: 2, desc: '中优先级' },
+  { value: '低', priority: 1, desc: '低优先级' },
+]
+
+function buildSuggestions(
+  token: { trigger: string; query: string } | null,
+  tags: Tag[],
+  lists: List[],
+  folders: Folder[],
+): Sug[] {
+  if (!token) return []
+  const q = token.query.toLowerCase()
+  if (token.trigger === '#') {
+    const out: Sug[] = tags
+      .filter((t) => t.name.toLowerCase().includes(q))
+      .slice(0, 8)
+      .map((t) => ({ kind: 'tag', key: `tag-${t.id}`, value: t.name, label: t.name, color: t.color }))
+    const exact = tags.some((t) => t.name.toLowerCase() === q)
+    if (token.query && !exact) out.push({ kind: 'newTag', key: 'newtag', value: token.query, label: token.query })
+    return out
+  }
+  if (token.trigger === '!') {
+    return PRIORITY_SUGS.filter((p) => p.value.toLowerCase().includes(q) || q === '').map((p) => ({
+      kind: 'priority',
+      key: `pri-${p.priority}`,
+      value: p.value,
+      label: p.value,
+      priority: p.priority,
+      desc: p.desc,
+    }))
+  }
+  if (token.trigger === '/') {
+    const folderName = (l: List) => (l.folderId == null ? undefined : folders.find((f) => f.id === l.folderId)?.name)
+    return lists
+      .filter((l) => l.name.toLowerCase().includes(q))
+      .slice(0, 8)
+      .map((l) => ({
+        kind: 'list',
+        key: `list-${l.id}`,
+        value: l.name,
+        label: l.name,
+        color: l.color,
+        folderName: folderName(l),
+      }))
+  }
+  return []
+}
+
+/* ---------------- 快速添加 ---------------- */
+
 export function QuickAdd({
   autoFocus,
   placeholder,
@@ -563,16 +646,71 @@ export function QuickAdd({
   /** 预填字段（列头新建用）。标题解析出的显式条件优先于 defaults。 */
   defaults?: TaskPatch
 }) {
-  const { createTask, ensureTags, lists, selection } = useStore()
+  const { createTask, ensureTags, lists, tags, folders, selection } = useStore()
   const { compositionProps, isComposing } = useIMEGuard()
   const [text, setText] = useState('')
   const [expanded, setExpanded] = useState(false)
+  const [caret, setCaret] = useState(0)
+  const [activeIndex, setActiveIndex] = useState(0)
+  const [suppress, setSuppress] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const pendingCaret = useRef<number | null>(null)
 
   const parsed = useMemo(
     () => parseQuickAdd(text, { lists: lists.map((l) => ({ id: l.id, name: l.name })) }),
     [text, lists],
   )
+
+  // 当前光标处是否处于符号补全语境（# 标签 / ! 优先级 / / 清单）。
+  const token = useMemo(() => detectToken(text, caret), [text, caret])
+  const tokenKey = token ? `${token.start}:${token.trigger}:${token.query}` : ''
+  const suggestions = useMemo(
+    () => buildSuggestions(token, tags, lists, folders),
+    [token, tags, lists, folders],
+  )
+  const showSuggest = token !== null && suggestions.length > 0 && !suppress
+
+  // 每次进入新的补全语境都回到首项并解除抑制。
+  useEffect(() => {
+    setActiveIndex(0)
+    setSuppress(false)
+  }, [tokenKey])
+
+  // 程序化改写文本后，把光标复位到插入点。
+  useEffect(() => {
+    if (pendingCaret.current != null && inputRef.current) {
+      inputRef.current.setSelectionRange(pendingCaret.current, pendingCaret.current)
+      pendingCaret.current = null
+    }
+  }, [text])
+
+  const tokenRef = useRef(token)
+  tokenRef.current = token
+
+  const syncCaret = (e: SyntheticEvent<HTMLInputElement>) => {
+    // apply 已程序化移动光标并写入 pendingCaret，跳过紧随的 keyup/click 同步，避免回写脏值。
+    if (pendingCaret.current != null) return
+    const pos = e.currentTarget.selectionStart
+    if (pos != null) setCaret(pos)
+  }
+
+  const apply = (item: Sug) => {
+    const t = tokenRef.current
+    if (!t) return
+    const before = text.slice(0, t.start)
+    const after = text.slice(t.end)
+    let insert = ''
+    if (item.kind === 'priority') insert = `!${item.value} `
+    else if (item.kind === 'tag' || item.kind === 'newTag') insert = `#${item.value} `
+    else if (item.kind === 'list') insert = `/${item.value} `
+    const newCaret = before.length + insert.length
+    setText(before + insert + after)
+    setCaret(newCaret)
+    pendingCaret.current = newCaret
+    setSuppress(false)
+    setActiveIndex(0)
+    inputRef.current?.focus()
+  }
 
   const submit = async () => {
     const title = parsed.title.trim()
@@ -608,6 +746,7 @@ export function QuickAdd({
     })
     if (!t) return // 创建失败：保留输入与光标，别让用户重敲一遍
     setText('')
+    setCaret(0)
     inputRef.current?.focus()
   }
 
@@ -638,22 +777,51 @@ export function QuickAdd({
           autoFocus={autoFocus}
           {...compositionProps}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value)
+            syncCaret(e)
+          }}
           onFocus={() => setExpanded(true)}
           onBlur={() => window.setTimeout(() => setExpanded(false), 160)}
+          onKeyUp={(e) => syncCaret(e)}
+          onClick={(e) => syncCaret(e)}
           onKeyDown={(e) => {
             // 输入法组合期间（选词/取消候选），Enter 与 Esc 属于 IME，不触发提交或清空。
             if (isComposing(e)) return
+            if (showSuggest) {
+              if (e.key === 'ArrowDown') {
+                e.preventDefault()
+                setActiveIndex((i) => Math.min(i + 1, suggestions.length - 1))
+                return
+              }
+              if (e.key === 'ArrowUp') {
+                e.preventDefault()
+                setActiveIndex((i) => Math.max(i - 1, 0))
+                return
+              }
+              if (e.key === 'Enter' || e.key === 'Tab') {
+                e.preventDefault()
+                const it = suggestions[activeIndex]
+                if (it) apply(it)
+                return
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                setSuppress(true)
+                return
+              }
+            }
             if (e.key === 'Enter') {
               e.preventDefault()
               void submit()
             }
             if (e.key === 'Escape') {
               setText('')
+              setCaret(0)
               inputRef.current?.blur()
             }
           }}
-          placeholder={placeholder ?? '记下一件事… 试试「明天下午3点交材料 #工作 !高」'}
+          placeholder={placeholder ?? '记下一件事… 试试「明天下午3点交材料 #工作 !高 /项目推进」'}
           className="min-w-0 flex-1 bg-transparent text-[0.84375rem] outline-none placeholder:text-ink-3"
         />
         {text ? (
@@ -672,8 +840,65 @@ export function QuickAdd({
         )}
       </div>
 
+      {/* 空输入聚焦时的语法提示：把可用的符号语法直接摆出来，解决「不知道能输入哪些」 */}
+      {expanded && !text ? (
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[0.6875rem] text-ink-3">
+          {QUICK_ADD_HINTS.filter((h) => /^[#/!@]/.test(h.syntax)).map((h) => (
+            <span key={h.syntax} className="inline-flex items-center gap-1">
+              <code className="rounded border border-line bg-surface-2 px-1 py-px font-mono text-[0.625rem] text-ink-2">{h.syntax}</code>
+              <span>{h.desc}</span>
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      {/* 符号触发的自动建议 */}
+      {showSuggest ? (
+        <Popover open={showSuggest} onClose={() => setSuppress(true)} align="left" side="bottom" width={320} className="max-w-[88vw]">
+          <div className="max-h-64 overflow-y-auto py-1">
+            {suggestions.map((s, i) => (
+              <button
+                key={s.key}
+                type="button"
+                onMouseEnter={() => setActiveIndex(i)}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  apply(s)
+                }}
+                className={cx(
+                  'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[0.8125rem] transition-colors',
+                  i === activeIndex ? 'bg-seal/10 text-seal' : 'text-ink hover:bg-surface-2',
+                )}
+              >
+                {s.kind === 'tag' || s.kind === 'list' ? (
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: s.color }} />
+                ) : s.kind === 'priority' ? (
+                  <IconFlag
+                    size={14}
+                    className="shrink-0"
+                    style={{ color: s.priority === 3 ? 'var(--p-high)' : s.priority === 2 ? 'var(--p-mid)' : 'var(--p-low)' }}
+                  />
+                ) : (
+                  <IconPlus size={14} className="shrink-0 text-ink-3" />
+                )}
+                <span className="flex-1 truncate">
+                  {s.kind === 'newTag' ? `#${s.label}` : s.kind === 'priority' ? `!${s.label}` : s.kind === 'list' ? `/${s.label}` : s.label}
+                </span>
+                {s.kind === 'priority' ? (
+                  <span className="shrink-0 text-[0.6875rem] text-ink-3">{s.desc}</span>
+                ) : s.kind === 'list' && s.folderName ? (
+                  <span className="shrink-0 truncate text-[0.6875rem] text-ink-3">{s.folderName}</span>
+                ) : s.kind === 'newTag' ? (
+                  <span className="shrink-0 text-[0.6875rem] text-ink-3">新建标签</span>
+                ) : null}
+              </button>
+            ))}
+          </div>
+        </Popover>
+      ) : null}
+
       {/* 识别结果预览 */}
-      {text && (parsed.chips.length > 0 || parsed.title) ? (
+      {text && (parsed.chips.length > 0 || parsed.title) && !showSuggest ? (
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5 px-1">
           {parsed.chips.map((c, i) => {
             const Icon = chipIcon[c.kind]
@@ -925,7 +1150,7 @@ export function BatchBar() {
           onClick={async () => {
             const ok = await confirm({
               title: `删除已选的 ${selectedIds.length} 项`,
-              message: '删除后可在左下角撤销，超过 10 分钟才彻底消失。',
+              message: '删除后可在底部状态栏撤销，超过 10 分钟才彻底消失。',
               confirmText: '删除',
               danger: true,
             })

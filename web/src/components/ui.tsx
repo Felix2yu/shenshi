@@ -4,6 +4,7 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
+  useState,
   type ButtonHTMLAttributes,
   type ReactNode,
 } from 'react'
@@ -495,6 +496,72 @@ export function useDebouncedCallback<A extends unknown[]>(fn: (...args: A) => vo
     if (timer.current) window.clearTimeout(timer.current)
     timer.current = window.setTimeout(() => fnRef.current(...args), delay)
   }
+}
+
+/**
+ * 受控的 date/time 输入，带本地草稿。
+ *
+ * 原生日期/时间输入是有「分段选中」态的：一旦 value 被 React 从外部改写，
+ * 当前选中的那一段就被丢弃，下一次按键会另起一段 —— 表现为「输 2 再输 3，
+ * 小时从 23 变成 3」。而任务字段落库是异步的（updateTask → reconcile 会重新
+ * 拉取并回写 task/subtask），把 value 直接绑到远端，编辑期间的回写就会打断输入。
+ *
+ * 这里以本地草稿承接按键、落库走防抖，远端值只在未聚焦时同步；编辑期间一律以
+ * 草稿为准，React 便不会在打字中途改写 DOM。
+ */
+export function DraftInput({
+  type,
+  value,
+  onCommit,
+  className,
+  title,
+  placeholder,
+}: {
+  type: 'date' | 'time'
+  value: string
+  onCommit: (next: string) => void
+  className?: string
+  title?: string
+  placeholder?: string
+}) {
+  const [draft, setDraft] = useState<string | null>(null)
+  const focused = useRef(false)
+  // 留一份最新渲染的引用，供下面的「卸载兜底提交」读到最新的草稿与回调。
+  const latest = useRef({ draft: null as string | null, value, onCommit })
+  latest.current = { draft, value, onCommit }
+  const commit = useDebouncedCallback((next: string) => latest.current.onCommit(next), 350)
+  // 远端值变化时同步草稿；正在编辑则忽略，避免打断分段输入。
+  useEffect(() => {
+    if (!focused.current) setDraft(null)
+  }, [value])
+  // 卸载兜底：防抖还没触发就把面板关掉（或任务被移出当前视图）时补一次提交，免得丢编辑。
+  useEffect(
+    () => () => {
+      const { draft: d, value: v, onCommit: cb } = latest.current
+      if (d !== null && d !== v) cb(d)
+    },
+    [],
+  )
+  return (
+    <input
+      type={type}
+      className={className}
+      title={title}
+      placeholder={placeholder}
+      value={draft ?? value}
+      onFocus={() => {
+        focused.current = true
+      }}
+      onBlur={() => {
+        focused.current = false
+        if (draft !== null && draft !== value) onCommit(draft)
+      }}
+      onChange={(e) => {
+        setDraft(e.target.value)
+        commit(e.target.value)
+      }}
+    />
+  )
 }
 
 /** 文本域自增高。 */

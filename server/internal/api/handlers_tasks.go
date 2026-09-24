@@ -366,16 +366,25 @@ func (s *Server) updateSubtask(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var body struct {
-		Title     *string `json:"title"`
-		Done      *bool   `json:"done"`
-		SortOrder *int    `json:"sortOrder"`
-		DueDate   *string `json:"dueDate"`
-		Reminders *[]int  `json:"reminders"`
+		Title     *string            `json:"title"`
+		Done      *bool              `json:"done"`
+		SortOrder *int               `json:"sortOrder"`
+		DueDate   model.Opt[*string] `json:"dueDate"`
+		Reminders *[]int             `json:"reminders"`
 	}
 	if err := decode(w, r, &body); err != nil {
 		return err
 	}
-	u := store.SubtaskUpdate{Title: body.Title, Done: body.Done, SortOrder: body.SortOrder, DueDate: body.DueDate, Reminders: body.Reminders}
+	// 与任务级 PATCH 一致：显式置 null 表示清空日期，用空串标记以便与「未传」区分。
+	var dueDate *string
+	if body.DueDate.Set {
+		dueDate = body.DueDate.Value
+		if dueDate == nil {
+			empty := ""
+			dueDate = &empty
+		}
+	}
+	u := store.SubtaskUpdate{Title: body.Title, Done: body.Done, SortOrder: body.SortOrder, DueDate: dueDate, Reminders: body.Reminders}
 	if err := s.st.UpdateSubtask(id, u); err != nil {
 		return err
 	}

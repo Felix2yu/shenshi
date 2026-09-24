@@ -36,7 +36,7 @@ import {
   IconTrash,
   IconX,
 } from './icons'
-import { IconButton, Popover, ProgressRing, RoundCheck, cx, inputClass, useAutoGrow, useDebouncedCallback } from './ui'
+import { DraftInput, IconButton, Popover, ProgressRing, RoundCheck, cx, inputClass, useAutoGrow, useDebouncedCallback } from './ui'
 
 const REMINDER_OPTIONS: { value: number; label: string }[] = [
   { value: 0, label: '准点' },
@@ -409,7 +409,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                 setMoreOpen(false)
                 const ok = await confirm({
                   title: `删除「${task.title}」`,
-                  message: '删除后可在左下角撤销，超过 10 分钟才彻底消失。',
+                  message: '删除后可在底部状态栏撤销，超过 10 分钟才彻底消失。',
                   confirmText: '删除',
                   danger: true,
                 })
@@ -610,11 +610,11 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
           {/* 开始日期：只表明「打算从哪天动手」，不参与逾期判定 */}
           <Row label="开始" icon={IconCalendarRange}>
             <div className="flex flex-wrap items-center gap-1.5">
-              <input
+              <DraftInput
                 type="date"
                 className={inputClass}
                 value={task.startDate ?? ''}
-                onChange={(e) => void updateTask(task.id, { startDate: e.target.value || null })}
+                onCommit={(v) => void updateTask(task.id, { startDate: v || null })}
               />
               {task.startDate ? (
                 <>
@@ -655,26 +655,26 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
               <Popover open={datePopover} onClose={() => setDatePopover(false)} align="left" width={252} side="top">
                 <div className="space-y-2.5 p-1">
                   <div className="flex gap-2">
-                    <input
+                    <DraftInput
                       type="date"
                       className={inputClass}
                       value={task.dueDate ?? ''}
-                      onChange={(e) => void setDue(e.target.value || null)}
+                      onCommit={(v) => void setDue(v || null)}
                     />
-                    <input
+                    <DraftInput
                       type="time"
                       className={inputClass}
                       value={task.dueTime ?? ''}
-                      onChange={(e) => void setDue(task.dueDate ?? todayStr(), e.target.value || null)}
+                      onCommit={(v) => void setDue(task.dueDate ?? todayStr(), v || null)}
                     />
                   </div>
                   <div className="flex items-center justify-between text-[0.75rem] text-ink-3">
                     <span>结束时间</span>
-                    <input
+                    <DraftInput
                       type="time"
                       className="rounded-md border border-line bg-surface px-2 py-1 text-[0.78125rem]"
                       value={task.endTime ?? ''}
-                      onChange={(e) => void updateTask(task.id, { endTime: e.target.value || null })}
+                      onCommit={(v) => void updateTask(task.id, { endTime: v || null })}
                     />
                   </div>
                   <div className="flex flex-wrap gap-1.5 border-t border-line pt-2">
@@ -684,7 +684,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                       ['后天', addDays(todayStr(), 2)],
                       ['周日', nextWeekday(0)],
                       ['下周一', nextWeekday(1)],
-                      ['一个月后', addMonths(todayStr(), 1)],
+                      ['下月', addMonths(todayStr(), 1)],
                     ].map(([label, date]) => (
                       <button
                         key={label}
@@ -1335,10 +1335,10 @@ function SubtaskItem({ sub, depth }: { sub: Subtask; depth: number }) {
           )}
         />
         <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover/sub:opacity-100">
-          <input
+          <DraftInput
             type="date"
             value={sub.dueDate ?? ''}
-            onChange={(e) => void updateSubtask(sub.id, { dueDate: e.target.value || null })}
+            onCommit={(v) => void updateSubtask(sub.id, { dueDate: v || null })}
             title="子任务日期"
             className="w-[7.2rem] rounded-md border border-line bg-surface px-1 py-0.5 text-[0.6875rem] tabular-nums outline-none focus:border-seal/50"
           />

@@ -1,4 +1,14 @@
-import { useMemo, useRef, useState, useEffect, type ChangeEvent, type DragEvent, type ReactNode } from 'react'
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  useEffect,
+  type ChangeEvent,
+  type DragEvent,
+  type ReactNode,
+} from 'react'
 
 import { EXPORT_URLS, api, type ImportMode } from '../api/client'
 import { humanDay, relativeTime, todayStr } from '../lib/date'
@@ -39,7 +49,6 @@ import {
   IconHistory,
   IconInbox,
   IconList,
-  IconMoon,
   IconMore,
   IconPencil,
   IconPin,
@@ -54,7 +63,6 @@ import {
   IconTag,
   IconTimer,
   IconTrash,
-  IconUndo,
   IconX,
   SealLogo,
   type IconProps,
@@ -65,27 +73,47 @@ import { IntegrationsDialog } from './IntegrationsDialog'
 type IconCmp = (p: IconProps) => ReactNode
 
 /**
- * 侧栏同层拖拽排序。只处理「平级之间调顺序」，跨层移动仍走编辑弹窗，
+ * 跨层级拖拽时用 Context 广播「当前正被拖的是什么」：kind + id + 当前归属。
+ * FolderNode 递归很深，靠 props 一层层传太笨；用 Context 让任意深度的节点都能
+ * 立刻知道被拖实体的归属，从而判断「能否拖入自己」（自引用 / 环路拦截）。
+ */
+type DragItem = { kind: 'folder' | 'list'; id: number; parentId: number | null }
+const DragCtx = createContext<{ item: DragItem | null; setItem: (i: DragItem | null) => void }>({
+  item: null,
+  setItem: () => {},
+})
+
+/**
+ * 侧栏同层拖拽排序。只处理「平级之间调顺序」，跨层移动走 FolderNode 头部的「拖入此分组」放置区，
  * 这样既满足排序需求，又不会让一次误拖把清单换到别的分组里。
  * 返回的 props 直接展开到每一行的容器上即可。
  */
-function useRowSort(ids: number[], onReorder: (next: number[]) => void) {
+function useRowSort(
+  items: { id: number; parentId: number | null }[],
+  onReorder: (next: number[]) => void,
+  kind: 'folder' | 'list',
+  setItem: (i: DragItem | null) => void,
+) {
+  const ids = items.map((i) => i.id)
   const [dragId, setDragId] = useState<number | null>(null)
   const [overId, setOverId] = useState<number | null>(null)
 
   const propsFor = (id: number) => ({
     draggable: true,
-    title: '按住拖动可调整顺序',
+    title: '按住拖动可调整顺序；拖到分组上可归入该分组',
     onDragStart: (e: DragEvent<HTMLDivElement>) => {
       // 分组与清单嵌套，必须阻止冒泡，否则拖清单会连带触发外层分组。
       e.stopPropagation()
       e.dataTransfer.effectAllowed = 'move'
       e.dataTransfer.setData(SORT_MIME, String(id))
       setDragId(id)
+      // 广播被拖实体，供目标 FolderNode 判断能否接纳（环路 / 自引用拦截）。
+      setItem({ kind, id, parentId: items.find((i) => i.id === id)?.parentId ?? null })
     },
     onDragEnd: () => {
       setDragId(null)
       setOverId(null)
+      setItem(null)
     },
     onDragOver: (e: DragEvent<HTMLDivElement>) => {
       if (dragId === null || dragId === id) return
@@ -174,6 +202,44 @@ interface EntityDraft {
   parentId?: number | null
 }
 
+/**
+ * 把分组树拍平成带层级信息的列表。
+ * 「上级分组」候选、归档区都要看到全部层级——后端返回的是树，
+ * 直接拿根级数组会把子分组漏掉，这正是分组一度只能当一级元素的原因。
+ */
+function flattenFolders(
+  tree: Folder[],
+  depth = 0,
+  path: string[] = [],
+): { folder: Folder; depth: number; path: string[] }[] {
+  const out: { folder: Folder; depth: number; path: string[] }[] = []
+  for (const f of tree) {
+    out.push({ folder: f, depth, path })
+    out.push(...flattenFolders(f.children ?? [], depth + 1, [...path, f.name]))
+  }
+  return out
+}
+
+/** 递归剔除归档分组：整枝隐藏，子分组跟着父一起归档。 */
+function pruneArchived(tree: Folder[]): Folder[] {
+  const out: Folder[] = []
+  for (const f of tree) {
+    if (f.archived) continue
+    out.push({ ...f, children: pruneArchived(f.children ?? []) })
+  }
+  return out
+}
+
+/**
+ * 一个分组子树下挂的清单总数（直属 + 所有子分组里的）。
+ * 侧栏分组行的角标用它——只数直属清单会把子分组里的漏掉，
+ * 于是「工作」显示的数字和树上看到的清单对不上。
+ */
+function countListsInTree(folder: Folder, lists: List[]): number {
+  const own = lists.reduce((n, l) => (l.folderId === folder.id ? n + 1 : n), 0)
+  return (folder.children ?? []).reduce((n, c) => n + countListsInTree(c, lists), own)
+}
+
 /** 收集一个分组的全部后代 id。移动分组时用它挡住「把父分组塞进自己孙子」的环路。 */
 function descendantIds(f: Folder): number[] {
   const out: number[] = []
@@ -185,6 +251,22 @@ function descendantIds(f: Folder): number[] {
   }
   walk(f)
   return out
+}
+
+/**
+ * 被拖实体 item 能否拖入 folder：
+ * - 不能拖到自身；
+ * - 分组不能拖进自己的子树（否则成环）：用 flattenFolders 在根树里找到被拖分组，再取其后代 id；
+ * - 已经挂在 folder 下（parentId 相同）再「拖入」是空操作，放行高亮反而误导，故拦掉。
+ */
+function canNestInto(item: DragItem, folder: Folder, rootFolders: Folder[]): boolean {
+  if (item.id === folder.id) return false
+  if (item.kind === 'folder') {
+    const dragged = flattenFolders(rootFolders).find((x) => x.folder.id === item.id)?.folder
+    if (dragged && descendantIds(dragged).includes(folder.id)) return false
+  }
+  if (item.parentId === folder.id) return false
+  return true
 }
 
 function EntityDialog({ draft, onClose }: { draft: EntityDraft | null; onClose: () => void }) {
@@ -213,13 +295,14 @@ function EntityDialog({ draft, onClose }: { draft: EntityDraft | null; onClose: 
   const isNew = draft.id === undefined
   const kindLabel = draft.kind === 'folder' ? '分组' : draft.kind === 'list' ? '清单' : '标签'
 
-  /** 可选作父级的分组：不能是自己，也不能是自己的后代。 */
+  /** 可选作父级的分组：拍平后包含所有层级，排除自己与自己的后代（防环路）。 */
   const parentCandidates = useMemo(() => {
     if (draft?.kind !== 'folder') return []
-    if (draft.id === undefined) return folders
-    const self = folders.find((f) => f.id === draft.id)
-    const blocked = new Set<number>([draft.id, ...(self ? descendantIds(self) : [])])
-    return folders.filter((f) => !blocked.has(f.id))
+    const all = flattenFolders(folders)
+    if (draft.id === undefined) return all
+    const self = all.find((x) => x.folder.id === draft.id)
+    const blocked = new Set<number>([draft.id, ...(self ? descendantIds(self.folder) : [])])
+    return all.filter((x) => !blocked.has(x.folder.id))
   }, [draft, folders])
 
   const submit = async () => {
@@ -321,9 +404,9 @@ function EntityDialog({ draft, onClose }: { draft: EntityDraft | null; onClose: 
               onChange={(e) => setParentId(e.target.value ? Number(e.target.value) : null)}
             >
               <option value="">（最外层）</option>
-              {parentCandidates.map((f) => (
+              {parentCandidates.map(({ folder: f, depth, path }) => (
                 <option key={f.id} value={f.id}>
-                  {f.name}
+                  {depth > 0 ? `${'　'.repeat(depth)}${f.name} · 在 ${path.join(' › ')} 下` : f.name}
                 </option>
               ))}
             </select>
@@ -338,11 +421,11 @@ function EntityDialog({ draft, onClose }: { draft: EntityDraft | null; onClose: 
               onChange={(e) => setFolderId(e.target.value ? Number(e.target.value) : null)}
             >
               <option value="">不归入分组</option>
-              {folders
-                .filter((f) => !f.archived)
-                .map((f) => (
+              {flattenFolders(folders)
+                .filter((x) => !x.folder.archived)
+                .map(({ folder: f, depth, path }) => (
                   <option key={f.id} value={f.id}>
-                    {f.name}
+                    {depth > 0 ? `${'　'.repeat(depth)}${f.name} · 在 ${path.join(' › ')} 下` : f.name}
                   </option>
                 ))}
             </select>
@@ -386,8 +469,6 @@ export function Sidebar() {
     folders,
     tags,
     settings,
-    resolvedTheme,
-    saveSettings,
     updateFolder,
     updateList,
     updateTask,
@@ -414,6 +495,8 @@ export function Sidebar() {
   } = useStore()
 
   const [draft, setDraft] = useState<EntityDraft | null>(null)
+  // 跨层级拖拽：当前正被拖的实体（kind/id/归属），通过 DragCtx 广播给任意深度的 FolderNode。
+  const [dragItem, setDragItem] = useState<DragItem | null>(null)
   const [menu, setMenu] = useState<string | null>(null)
   const [addingTag, setAddingTag] = useState(false)
   const [newTagName, setNewTagName] = useState('')
@@ -440,21 +523,31 @@ export function Sidebar() {
 
   const inboxId = boot?.inboxListId ?? 0
   // 归档的分组与清单不参与主列表，只出现在折叠起来的「已归档」里。
-  const liveFolders = useMemo(() => folders.filter((f) => !f.archived), [folders])
-  const archivedFolders = useMemo(() => folders.filter((f) => f.archived), [folders])
+  // 分组是树：归档与存活都要递归下去，否则子分组会跟着根级的判断一起错。
+  const liveFolders = useMemo(() => pruneArchived(folders), [folders])
+  const archivedFolders = useMemo(
+    () => flattenFolders(folders).filter((x) => x.folder.archived).map((x) => x.folder),
+    [folders],
+  )
   const liveLists = useMemo(() => lists.filter((l) => !l.archived && l.id !== inboxId), [lists, inboxId])
   const starredLists = useMemo(() => liveLists.filter((l) => l.starred), [liveLists])
   const archivedLists = useMemo(() => lists.filter((l) => l.archived && l.id !== inboxId), [lists, inboxId])
   const rootLists = useMemo(() => liveLists.filter((l) => l.folderId === null), [liveLists])
+  /** 顶层分组。侧栏是一棵树：分组为枝、清单为叶，两者同处一个区块。 */
+  const topLevelFolders = useMemo(() => liveFolders.filter((f) => f.parentId === null), [liveFolders])
 
   // 分组与顶层清单各有一份排序控制器；分组内的清单在 FolderNode 内部单独维护。
   const folderSort = useRowSort(
-    liveFolders.filter((f) => f.parentId === null).map((f) => f.id),
+    topLevelFolders.map((f) => ({ id: f.id, parentId: f.parentId })),
     reorderFolders,
+    'folder',
+    setDragItem,
   )
   const rootListSort = useRowSort(
-    rootLists.map((l) => l.id),
+    rootLists.map((l) => ({ id: l.id, parentId: l.folderId })),
     reorderLists,
+    'list',
+    setDragItem,
   )
 
   const smartActive = (key: SmartKey) => selection.kind === 'smart' && selection.key === key && view === 'list'
@@ -484,11 +577,9 @@ export function Sidebar() {
     setMenu(null)
   }
 
-  const theme = resolvedTheme
-
   return (
     <>
-      <aside className="relative z-20 flex h-full w-[266px] shrink-0 flex-col border-r border-line bg-surface/72">
+      <aside className="relative z-20 flex h-full w-[16.625rem] shrink-0 flex-col border-r border-line bg-surface/72">
         {/* 品牌 */}
         <div className="flex items-center gap-2.5 px-4 pb-3 pt-4">
           <SealLogo size={32} />
@@ -516,6 +607,7 @@ export function Sidebar() {
         </div>
 
         <nav className="flex-1 overflow-y-auto px-3 pb-3">
+          <DragCtx.Provider value={{ item: dragItem, setItem: setDragItem }}>
           {/* 智能清单 */}
           <div className="pb-1 pt-3">
             {SMARTS.map((s) => {
@@ -691,51 +783,60 @@ export function Sidebar() {
             </div>
           ) : null}
 
-          {/* 分组 */}
+          {/* 清单树：分组是文件夹（可嵌套）、清单是装任务的叶子，两者同处一棵树。
+              旧的「分组 / 清单」两个平级区块按「有无上级分组」把同一类东西劈成两半，
+              于是分组下的清单在「清单」区里根本找不到——这是层级看起来错乱的根源。 */}
           <div className="mt-1 border-t border-line pt-1">
-            <SideHeader
-              label="分组"
-              onAdd={() => setDraft({ kind: 'folder', name: '', color: PALETTE[2], parentId: null })}
-              addLabel="新建分组"
-            />
-            {liveFolders
-              .filter((f) => f.parentId === null)
-              .map((f) => (
-                <div
-                  key={f.id}
-                  {...folderSort.propsFor(f.id)}
-                  className={cx('rounded-lg', dragClass(folderSort.overId === f.id))}
-                >
-                  <FolderNode
-                    folder={f}
-                    lists={liveLists.filter((l) => l.folderId === f.id)}
-                    selection={selection}
-                    view={view}
-                    menu={menu}
-                    setMenu={setMenu}
-                    onSelectFolder={(id) => select({ kind: 'folder', id })}
-                    onSelectList={(id) => select({ kind: 'list', id })}
-                    onToggleCollapse={(id, collapsed) => void updateFolder(id, { collapsed })}
-                    onEdit={() => setDraft({ kind: 'folder', id: f.id, name: f.name, color: f.color, parentId: f.parentId })}
-                    onEditList={(l) =>
-                      setDraft({ kind: 'list', id: l.id, name: l.name, color: l.color, folderId: l.folderId })
-                    }
-                    onAddList={() => setDraft({ kind: 'list', name: '', color: f.color, folderId: f.id })}
-                    onAddSubfolder={(parentId) => setDraft({ kind: 'folder', name: '', color: f.color, parentId })}
-                    onToggleArchive={(id, archived) => void updateFolder(id, { archived })}
-                    onReorderLists={reorderLists}
-                  />
-                </div>
-              ))}
-
             <SideHeader
               label="清单"
               onAdd={() => setDraft({ kind: 'list', name: '', color: PALETTE[0], folderId: null })}
               addLabel="新建清单"
+              onAddSecondary={() => setDraft({ kind: 'folder', name: '', color: PALETTE[2], parentId: null })}
+              addLabelSecondary="新建分组"
             />
+            {topLevelFolders.map((f) => (
+              <div
+                key={`folder-${f.id}`}
+                {...folderSort.propsFor(f.id)}
+                className={cx('rounded-lg', dragClass(folderSort.overId === f.id))}
+              >
+                <FolderNode
+                  folder={f}
+                  allLiveLists={liveLists}
+                  rootFolders={topLevelFolders}
+                  selection={selection}
+                  view={view}
+                  menu={menu}
+                  setMenu={setMenu}
+                  onSelectFolder={(id) => select({ kind: 'folder', id })}
+                  onSelectList={(id) => select({ kind: 'list', id })}
+                  onToggleCollapse={(id, collapsed) => void updateFolder(id, { collapsed })}
+                  onEditFolder={(target) =>
+                    setDraft({
+                      kind: 'folder',
+                      id: target.id,
+                      name: target.name,
+                      color: target.color,
+                      parentId: target.parentId,
+                    })
+                  }
+                  onEditList={(l) =>
+                    setDraft({ kind: 'list', id: l.id, name: l.name, color: l.color, folderId: l.folderId })
+                  }
+                  onAddList={(target) => setDraft({ kind: 'list', name: '', color: target.color, folderId: target.id })}
+                  onAddSubfolder={(target) =>
+                    setDraft({ kind: 'folder', name: '', color: target.color, parentId: target.id })
+                  }
+                  onToggleArchive={(id, archived) => void updateFolder(id, { archived })}
+                  onReorderLists={reorderLists}
+                  onReorderChildFolders={reorderFolders}
+                />
+              </div>
+            ))}
+
             {rootLists.map((l) => (
               <div
-                key={l.id}
+                key={`list-${l.id}`}
                 {...rootListSort.propsFor(l.id)}
                 className={cx('rounded-lg', dragClass(rootListSort.overId === l.id))}
               >
@@ -750,7 +851,7 @@ export function Sidebar() {
                 />
               </div>
             ))}
-            {rootLists.length === 0 && liveFolders.length === 0 ? (
+            {rootLists.length === 0 && topLevelFolders.length === 0 ? (
               <p className="px-2.5 py-1 text-[0.71875rem] text-ink-3">还没有清单，点标题右侧的 + 开始。</p>
             ) : null}
           </div>
@@ -926,6 +1027,7 @@ export function Sidebar() {
               ) : null}
             </div>
           ) : null}
+          </DragCtx.Provider>
         </nav>
 
         {/* 底部 */}
@@ -936,16 +1038,9 @@ export function Sidebar() {
               onClick={() => window.dispatchEvent(new CustomEvent('shenshi:review'))}
               className="flex flex-1 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[0.78125rem] text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
             >
-              <IconBook size={14} className="text-ink-3" />
-              日省 · 今日复盘
+              <IconBook size={14} className="shrink-0 text-ink-3" />
+              <span className="whitespace-nowrap">日省 · 今日复盘</span>
             </button>
-            {undo?.available ? (
-              <IconButton
-                icon={IconUndo}
-                label={`撤销：${undo.label ?? '删除'}`}
-                onClick={() => void undoDelete()}
-              />
-            ) : null}
             <IconButton
               icon={IconHistory}
               label="操作历史"
@@ -955,20 +1050,27 @@ export function Sidebar() {
               }}
             />
             <IconButton
-              icon={theme === 'dark' ? IconSun : IconMoon}
-              label={theme === 'dark' ? '切换到浅色' : '切换到深色'}
-              onClick={() => void saveSettings({ theme: theme === 'dark' ? 'light' : 'dark' })}
-            />
-            <IconButton
               icon={IconTimer}
               label="专注计时"
               onClick={() => window.dispatchEvent(new CustomEvent('shenshi:focus'))}
             />
           </div>
           <div className="mt-1 flex items-center gap-1.5 px-2.5 text-[0.65625rem] text-ink-3">
-            <IconBell size={12} />
+            <IconBell size={12} className="shrink-0" />
             <span className="truncate">{reminders.length > 0 ? `${reminders.length} 条提醒待处理` : '提醒已就绪'}</span>
-            <span className="ml-auto shrink-0 tabular-nums">{viewTitle}</span>
+            <span className="ml-auto flex items-center gap-1.5">
+              {undo?.available ? (
+                <button
+                  type="button"
+                  onClick={() => void undoDelete()}
+                  title={`撤销：${undo.label ?? '删除'}`}
+                  className="shrink-0 rounded px-1 py-0.5 font-medium text-seal transition-colors hover:bg-seal/10"
+                >
+                  撤销
+                </button>
+              ) : null}
+              <span className="shrink-0 tabular-nums">{viewTitle}</span>
+            </span>
           </div>
         </div>
       </aside>
@@ -982,18 +1084,41 @@ export function Sidebar() {
 
 /* ---------------- 小组件 ---------------- */
 
-function SideHeader({ label, onAdd, addLabel }: { label: string; onAdd: () => void; addLabel: string }) {
+function SideHeader({
+  label,
+  onAdd,
+  addLabel,
+  onAddSecondary,
+  addLabelSecondary,
+}: {
+  label: string
+  onAdd: () => void
+  addLabel: string
+  /** 第二个新建入口。分组与清单同处一棵树，标题行要能分别新建两者。 */
+  onAddSecondary?: () => void
+  addLabelSecondary?: string
+}) {
   return (
     <div className="flex items-center justify-between px-2 pb-1 pt-3">
       <span className="text-[0.65625rem] font-semibold uppercase tracking-[0.14em] text-ink-3">{label}</span>
-      <IconButton icon={IconPlus} label={addLabel} size={13} onClick={onAdd} />
+      <div className="flex items-center gap-0.5">
+        {onAddSecondary ? (
+          <IconButton icon={IconFolder} label={addLabelSecondary ?? '新建'} size={13} onClick={onAddSecondary} />
+        ) : null}
+        <IconButton icon={IconPlus} label={addLabel} size={13} onClick={onAdd} />
+      </div>
     </div>
   )
 }
 
+/**
+ * 分组节点。它会递归渲染 folder.children，所以分组能挂到任意层级。
+ * 子分组与清单共用「先子分组、后清单」的顺序：容器在上，装任务的叶子在下。
+ */
 function FolderNode({
   folder,
-  lists,
+  allLiveLists,
+  rootFolders,
   selection,
   view,
   menu,
@@ -1001,15 +1126,19 @@ function FolderNode({
   onSelectFolder,
   onSelectList,
   onToggleCollapse,
-  onEdit,
+  onEditFolder,
   onEditList,
   onAddList,
   onAddSubfolder,
   onToggleArchive,
   onReorderLists,
+  onReorderChildFolders,
 }: {
   folder: Folder
-  lists: List[]
+  /** 未归档且不含收集箱的清单全集；每个节点自己按 folderId 取直属清单。 */
+  allLiveLists: List[]
+  /** 根级分组树（未归档）。环路校验要在整棵树里找被拖分组的后代，单看本节点不够。 */
+  rootFolders: Folder[]
   selection: ReturnType<typeof useStore>['selection']
   view: string
   menu: string | null
@@ -1017,30 +1146,85 @@ function FolderNode({
   onSelectFolder: (id: number) => void
   onSelectList: (id: number) => void
   onToggleCollapse: (id: number, collapsed: boolean) => void
-  onEdit: () => void
+  onEditFolder: (f: Folder) => void
   onEditList: (l: List) => void
-  onAddList: () => void
-  onAddSubfolder: (parentId: number) => void
+  onAddList: (f: Folder) => void
+  onAddSubfolder: (f: Folder) => void
   onToggleArchive: (id: number, archived: boolean) => void
   onReorderLists: (ids: number[]) => void
+  /** 同级子分组重排。后端按传入 id 子集改写 sort_order，所以只传同级即可。 */
+  onReorderChildFolders: (ids: number[]) => void
 }) {
   const key = `folder-${folder.id}`
   const active = selection.kind === 'folder' && selection.id === folder.id && view === 'list'
+  const lists = allLiveLists.filter((l) => l.folderId === folder.id)
+  const childFolders = folder.children ?? []
+  /** 角标取子树总数：只数直属清单会把子分组里的漏掉，与树上看到的数量对不上。 */
+  const subtreeListCount = countListsInTree(folder, allLiveLists)
+  // 跨层级拖拽：读全局被拖实体；本节点作为「拖入此分组」的放置目标。
+  const { item: dragItem, setItem } = useContext(DragCtx)
+  const { updateFolder, updateList } = useStore()
+  const [dropInto, setDropInto] = useState(false)
   const listSort = useRowSort(
-    lists.map((l) => l.id),
+    lists.map((l) => ({ id: l.id, parentId: l.folderId })),
     onReorderLists,
+    'list',
+    setItem,
   )
+  const childSort = useRowSort(
+    childFolders.map((c) => ({ id: c.id, parentId: c.parentId })),
+    onReorderChildFolders,
+    'folder',
+    setItem,
+  )
+
+  // 拖拽悬停判定：指针落在行高中间 40%（30%~70%）为「拖入此分组」，上下边缘留给
+  // 同层排序（事件继续冒泡到外层 wrapper 的 onDragOver/onDrop）。这样两个语义互不挤占。
+  const inNestZone = (e: DragEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const y = (e.clientY - rect.top) / Math.max(rect.height, 1)
+    return y > 0.3 && y < 0.7
+  }
+  const onFolderDragOver = (e: DragEvent<HTMLDivElement>) => {
+    if (!dragItem) return
+    if (!inNestZone(e)) {
+      if (dropInto) setDropInto(false)
+      return // 边缘区：放行给外层做同层排序
+    }
+    if (!canNestInto(dragItem, folder, rootFolders)) return
+    e.preventDefault()
+    e.stopPropagation()
+    if (!dropInto) setDropInto(true)
+  }
+  const onFolderDrop = (e: DragEvent<HTMLDivElement>) => {
+    const item = dragItem
+    if (dropInto) setDropInto(false)
+    if (!item) return
+    if (!inNestZone(e)) return // 边缘区：放行给外层做同层排序
+    if (!canNestInto(item, folder, rootFolders)) return
+    e.preventDefault()
+    e.stopPropagation()
+    setItem(null)
+    if (item.kind === 'folder') void updateFolder(item.id, { parentId: folder.id })
+    else void updateList(item.id, { folderId: folder.id })
+  }
+  const draggingSelf = dragItem?.kind === 'folder' && dragItem.id === folder.id
   return (
     <div>
       <div
         className={cx(
           'group/folder flex items-center gap-0.5 rounded-lg pl-0.5 pr-1.5 transition-colors hover:bg-surface-2',
           active && 'bg-seal/10',
+          dropInto && 'bg-seal/15 ring-1 ring-seal',
+          draggingSelf && 'opacity-50',
         )}
+        onDragOver={onFolderDragOver}
+        onDragLeave={() => setDropInto(false)}
+        onDrop={onFolderDrop}
       >
         <button
           type="button"
-          onClick={() => onToggleCollapse(folder.id, folder.collapsed)}
+          onClick={() => onToggleCollapse(folder.id, !folder.collapsed)}
           aria-label={folder.collapsed ? '展开分组' : '折叠分组'}
           className="grid h-6 w-5 shrink-0 place-items-center rounded text-ink-3 hover:text-ink"
         >
@@ -1054,10 +1238,21 @@ function FolderNode({
             active ? 'font-medium text-seal' : 'text-ink',
           )}
         >
-          <ColorDot color={folder.color} />
+          {/* 分组用文件夹图标（描边取分组配色 + 淡填充），清单用实心圆点——
+              两者同处一棵树后，靠形状而非颜色才能一眼分清容器与叶子。 */}
+          <IconFolder
+            size={14}
+            className="shrink-0"
+            style={{ color: folder.color || 'var(--ink-3)' }}
+            fill="currentColor"
+            fillOpacity={0.18}
+          />
           <span className="truncate">{folder.name}</span>
           {folder.archived ? <IconArchive size={12} className="shrink-0 text-ink-3" aria-label="已归档" /> : null}
-          <span className="text-[0.65625rem] text-ink-3 tabular-nums">{lists.length || ''}</span>
+          {/* 角标带单位：分组数的是子树清单、清单数的是任务，量纲不同，不带单位会看混。 */}
+          {subtreeListCount > 0 ? (
+            <span className="text-[0.65625rem] text-ink-3 tabular-nums">{subtreeListCount} 清单</span>
+          ) : null}
         </button>
         <span className="opacity-0 transition-opacity group-hover/folder:opacity-100">
           <IconGrip size={12} className="text-ink-3/50" />
@@ -1077,7 +1272,7 @@ function FolderNode({
           <MenuItem
             icon={IconPlus}
             onClick={() => {
-              onAddList()
+              onAddList(folder)
               setMenu(null)
             }}
           >
@@ -1086,7 +1281,7 @@ function FolderNode({
           <MenuItem
             icon={IconFolder}
             onClick={() => {
-              onAddSubfolder(folder.id)
+              onAddSubfolder(folder)
               setMenu(null)
             }}
           >
@@ -1095,7 +1290,7 @@ function FolderNode({
           <MenuItem
             icon={IconPencil}
             onClick={() => {
-              onEdit()
+              onEditFolder(folder)
               setMenu(null)
             }}
           >
@@ -1104,7 +1299,7 @@ function FolderNode({
           <MenuItem
             icon={folder.collapsed ? IconChevronDown : IconChevronRight}
             onClick={() => {
-              onToggleCollapse(folder.id, folder.collapsed)
+              onToggleCollapse(folder.id, !folder.collapsed)
               setMenu(null)
             }}
           >
@@ -1123,7 +1318,7 @@ function FolderNode({
             icon={IconTrash}
             danger
             onClick={() => {
-              onEdit()
+              onEditFolder(folder)
               setMenu(null)
             }}
           >
@@ -1134,6 +1329,33 @@ function FolderNode({
 
       {!folder.collapsed ? (
         <div className="ml-[15px] border-l border-line pl-1.5">
+          {childFolders.map((cf) => (
+            <div
+              key={cf.id}
+              {...childSort.propsFor(cf.id)}
+              className={cx('rounded-lg', dragClass(childSort.overId === cf.id))}
+            >
+              <FolderNode
+                folder={cf}
+                allLiveLists={allLiveLists}
+                rootFolders={rootFolders}
+                selection={selection}
+                view={view}
+                menu={menu}
+                setMenu={setMenu}
+                onSelectFolder={onSelectFolder}
+                onSelectList={onSelectList}
+                onToggleCollapse={onToggleCollapse}
+                onEditFolder={onEditFolder}
+                onEditList={onEditList}
+                onAddList={onAddList}
+                onAddSubfolder={onAddSubfolder}
+                onToggleArchive={onToggleArchive}
+                onReorderLists={onReorderLists}
+                onReorderChildFolders={onReorderChildFolders}
+              />
+            </div>
+          ))}
           {lists.map((l) => (
             <div
               key={l.id}
@@ -1150,10 +1372,10 @@ function FolderNode({
               />
             </div>
           ))}
-          {lists.length === 0 ? (
+          {lists.length === 0 && childFolders.length === 0 ? (
             <button
               type="button"
-              onClick={onAddList}
+              onClick={() => onAddList(folder)}
               className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-[0.75rem] text-ink-3 transition-colors hover:bg-surface-2 hover:text-seal"
             >
               <IconPlus size={12} />
@@ -1184,11 +1406,17 @@ function ListRow({
   folders?: Folder[]
 }) {
   const { updateList } = useStore()
+  const { item: dragItem } = useContext(DragCtx)
   const key = `list-${list.id}`
+  const draggingSelf = dragItem?.kind === 'list' && dragItem.id === list.id
   return (
     <div className="group/list relative">
       <div
-        className={cx('flex items-center gap-1 rounded-lg pr-1.5 transition-colors hover:bg-surface-2', active && 'bg-seal/10')}
+        className={cx(
+          'flex items-center gap-1 rounded-lg pr-1.5 transition-colors hover:bg-surface-2',
+          active && 'bg-seal/10',
+          draggingSelf && 'opacity-50',
+        )}
       >
         <button
           type="button"
@@ -1200,7 +1428,8 @@ function ListRow({
         >
           <ColorDot color={list.color} />
           <span className="truncate">{list.name}</span>
-          {list.taskCount ? <span className="text-[0.65625rem] text-ink-3 tabular-nums">{list.taskCount}</span> : null}
+          {/* 清单角标数的是任务，与分组的「N 清单」区分量纲。 */}
+          {list.taskCount ? <span className="text-[0.65625rem] text-ink-3 tabular-nums">{list.taskCount} 任务</span> : null}
         </button>
         <span className="opacity-0 transition-opacity group-hover/list:opacity-100">
           <IconGrip size={12} className="text-ink-3/50" />
@@ -1257,7 +1486,7 @@ function ListRow({
             >
               不归入分组
             </MenuItem>
-            {folders.map((f) => (
+            {flattenFolders(folders).map(({ folder: f, depth }) => (
               <MenuItem
                 key={f.id}
                 icon={() => <ColorDot color={f.color} />}
@@ -1266,7 +1495,7 @@ function ListRow({
                   setMenu(null)
                 }}
               >
-                {f.name}
+                {depth > 0 ? `${'　'.repeat(depth)}${f.name}` : f.name}
               </MenuItem>
             ))}
           </>

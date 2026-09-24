@@ -255,6 +255,41 @@ function reorderById<T extends { id: number }>(list: T[], ids: number[]): T[] {
   return next
 }
 
+/**
+ * 分组树的重排。分组可嵌套，一次拖拽的 ids 可能属于任意一层，
+ * 所以先在某一层里找：命中 ≥2 个就重排这一层，否则下沉到子分组继续找。
+ */
+function reorderFoldersInTree(tree: Folder[], ids: number[]): Folder[] {
+  const pos = new Map(ids.map((id, i) => [id, i]))
+  const slots: number[] = []
+  tree.forEach((f, i) => {
+    if (pos.has(f.id)) slots.push(i)
+  })
+  if (slots.length >= 2) {
+    const picked = slots.map((i) => tree[i]).sort((a, b) => (pos.get(a.id) ?? 0) - (pos.get(b.id) ?? 0))
+    const next = [...tree]
+    slots.forEach((slot, k) => {
+      next[slot] = picked[k]
+    })
+    return next
+  }
+  return tree.map((f) =>
+    f.children && f.children.length ? { ...f, children: reorderFoldersInTree(f.children, ids) } : f,
+  )
+}
+
+/**
+ * 在分组树里定位一个节点并替换它。折叠、改名等单节点更新要走这里，
+ * 否则只改到根级数组，子分组会「点了没反应」。
+ */
+function mapFolderInTree(tree: Folder[], id: number, fn: (f: Folder) => Folder): Folder[] {
+  return tree.map((f) => {
+    if (f.id === id) return fn(f)
+    if (f.children && f.children.length) return { ...f, children: mapFolderInTree(f.children, id, fn) }
+    return f
+  })
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [boot, setBoot] = useState<Bootstrap | null>(null)
@@ -601,11 +636,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [handleError, refreshTasks],
   )
 
-  /** 侧栏分组拖拽排序。 */
+  /** 侧栏分组拖拽排序。ids 可以指向根级，也可以是某一层子分组。 */
   const reorderFolders = useCallback(
     async (ids: number[]) => {
       if (ids.length < 2) return
-      setBoot((prev) => (prev ? { ...prev, folders: reorderById(prev.folders, ids) } : prev))
+      setBoot((prev) => (prev ? { ...prev, folders: reorderFoldersInTree(prev.folders, ids) } : prev))
       try {
         await api.reorderFolders(ids)
       } catch (e) {
@@ -675,7 +710,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setTasks((prev) => prev.filter((t) => t.id !== id))
         if (selectedTaskId === id) setSelectedTaskId(null)
         setSelectedIds((prev) => prev.filter((x) => x !== id))
-        toast('已删除，左下角可撤销')
+        toast('已删除')
         reconcile()
       } catch (e) {
         handleError(e, '删除失败')
@@ -1009,11 +1044,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         moveToRoot: boolean
       }>,
     ) => {
-      // 折叠是高频交互，先本地生效再落库。
+      // 折叠是高频交互，先本地生效再落库（之后不会 refreshBoot，这条路径是唯一来源）。
       if (patch.collapsed !== undefined) {
         setBoot((prev) =>
           prev
-            ? { ...prev, folders: prev.folders.map((f) => (f.id === id ? { ...f, collapsed: patch.collapsed! } : f)) }
+            ? {
+                ...prev,
+                folders: mapFolderInTree(prev.folders, id, (f) => ({ ...f, collapsed: patch.collapsed! })),
+              }
             : prev,
         )
       }
