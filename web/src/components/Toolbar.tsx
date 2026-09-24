@@ -201,11 +201,16 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
   const footnote = footnoteOfTheDay()
 
   return (
-    <header className="relative z-30 shrink-0 border-b border-line bg-paper/85 px-5 pt-3.5 backdrop-blur">
-      <div className="flex flex-wrap items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <h1 className="brand-serif truncate text-[1.3125rem] font-semibold leading-7 text-ink">{title}</h1>
-          <p className="mt-0.5 flex flex-wrap items-center gap-2 text-[0.71875rem] text-ink-3">
+    <header className="relative z-30 shrink-0 border-b border-line bg-paper/85 px-3 pt-2.5 backdrop-blur md:px-5 md:pt-3.5">
+      <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
+        {/* 标题块：<640px 独占整行；640–767px 与搜索/按钮同行（不设 w-full，
+            由父容器 flex-wrap 自动与操作区并排）；≥768px 桌面原布局。 */}
+        <div className="w-full min-w-0 sm:w-auto sm:min-w-[12rem] md:flex-1">
+          <h1 className="brand-serif truncate text-[1.1875rem] font-semibold leading-7 text-ink md:text-[1.3125rem]">
+            {title}
+          </h1>
+          {/* 副标题/计数在手机上是奢侈品：隐藏，把高度留给可操作控件（桌面端不变） */}
+          <p className="mt-0.5 hidden flex-wrap items-center gap-2 text-[0.71875rem] text-ink-3 md:flex">
             <span>{subtitle}</span>
             {SCOPED_VIEWS.includes(view) && scopeLabel ? (
               <span className="text-ink-3/80">· 范围：{scopeLabel}</span>
@@ -220,37 +225,22 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <SearchBar />
+        {/* 操作区：<640px 独占整行（标题在上一行）→ 搜索+按钮一行、页签一行；
+            640–767px 与标题并排（flex-1 占剩余宽度，内部仍 wrap：搜索+按钮一行、页签一行）；
+            ≥768px 桌面一行。 */}
+        <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto sm:flex-1 md:w-auto md:flex-none md:flex-nowrap">
+          <SearchBar className="order-1 min-w-0 flex-1 md:flex-none" />
 
-          <div role="group" aria-label="视图切换" className="flex rounded-lg border border-line bg-surface p-0.5">
-            {VIEW_TABS.map((v) => (
-              <button
-                key={v.key}
-                type="button"
-                aria-label={v.label}
-                aria-current={view === v.key ? 'page' : undefined}
-                title={v.label}
-                onClick={() => setView(v.key)}
-                className={cx(
-                  'inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.78125rem] transition-colors',
-                  view === v.key ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:text-ink',
-                )}
-              >
-                <v.icon size={13} />
-                <span className="hidden lg:inline">{v.label}</span>
-              </button>
-            ))}
-          </div>
-
-          <div className="relative">
-            <IconButton
-              icon={IconFlag}
-              label="筛选"
-              active={isFilterActive(filters)}
-              onClick={() => setFilterOpen((v) => !v)}
-            />
-            <Popover open={filterOpen} onClose={() => setFilterOpen(false)} align="right" width={272}>
+          {/* 筛选 / 排序 / 多选：图标语义靠 aria-label 传达 */}
+          <div className="order-2 flex items-center gap-1.5 md:order-3 md:gap-2">
+            <div className="relative">
+              <IconButton
+                icon={IconFlag}
+                label="筛选"
+                active={isFilterActive(filters)}
+                onClick={() => setFilterOpen((v) => !v)}
+              />
+              <Popover open={filterOpen} onClose={() => setFilterOpen(false)} align="right" width={272}>
               <div className="p-1.5">
                 <div className="px-1 pb-1 text-[0.6875rem] tracking-wide text-ink-3">完成状态</div>
                 <div className="flex gap-1">
@@ -559,6 +549,33 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
             active={multiSelect}
             onClick={() => setMultiSelect(!multiSelect)}
           />
+          </div>
+
+          {/* 视图页签：移动端整行、横向滚动（页签多而窄，逐个换行不如滚动）；
+              桌面端回到原来的位置（搜索之后、按钮之前）。 */}
+          <div
+            role="group"
+            aria-label="视图切换"
+            className="order-3 flex w-full min-w-0 items-center overflow-x-auto rounded-lg border border-line bg-surface p-0.5 no-scrollbar md:order-2 md:w-auto"
+          >
+            {VIEW_TABS.map((v) => (
+              <button
+                key={v.key}
+                type="button"
+                aria-label={v.label}
+                aria-current={view === v.key ? 'page' : undefined}
+                title={v.label}
+                onClick={() => setView(v.key)}
+                className={cx(
+                  'inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1.5 text-[0.78125rem] transition-colors md:py-1',
+                  view === v.key ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:text-ink',
+                )}
+              >
+                <v.icon size={13} />
+                <span className="hidden lg:inline">{v.label}</span>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -583,7 +600,8 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
           </button>
         </div>
       ) : (
-        <div className="flex items-center justify-end pb-1.5 pt-1 text-[0.65625rem] text-ink-3/70">
+        /* 底部小字脚注：纯装饰性引文，移动端省掉这行高度 */
+        <div className="hidden items-center justify-end pb-1.5 pt-1 text-[0.65625rem] text-ink-3/70 md:flex">
           {footnote.text} · {footnote.source}
         </div>
       )}

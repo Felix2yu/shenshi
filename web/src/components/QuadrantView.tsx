@@ -90,11 +90,12 @@ export function QuadrantView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b border-line px-5 py-2.5">
-        <IconSparkle size={15} className="text-seal" />
-        <h2 className="brand-serif text-[0.9375rem] font-semibold text-ink">四象限</h2>
-        <span className="text-[0.71875rem] text-ink-3">
-          共 {total} 项未完成 · 拖动任务卡片即可在象限之间移动
+      <div className="flex items-center gap-2 border-b border-line px-3 py-2.5 md:px-5">
+        <IconSparkle size={15} className="shrink-0 text-seal" />
+        <h2 className="brand-serif shrink-0 whitespace-nowrap text-[0.9375rem] font-semibold text-ink">四象限</h2>
+        <span className="min-w-0 truncate text-[0.71875rem] text-ink-3">
+          共 {total} 项未完成
+          <span className="hidden sm:inline"> · 拖动任务卡片即可在象限之间移动</span>
         </span>
       </div>
 

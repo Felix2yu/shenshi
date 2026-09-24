@@ -317,7 +317,7 @@ export function HabitsView() {
   return (
     <div className="flex h-full flex-col">
       {/* 工具条：标题由上层工具栏给出，这里只放区间与统计。 */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-2.5">
+      <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2.5 md:px-5">
         {loading ? <span className="text-[0.71875rem] text-ink-3">载入中…</span> : null}
         <span className="text-[0.75rem] text-ink-3">
           今日已打卡 <span className="tabular-nums text-ink-2">{summary.hit}</span> / {summary.active}

@@ -1125,12 +1125,12 @@ export function TaskListView({
   return (
     <div className="relative">
       {showQuickAdd ? (
-        <div className="px-5 pt-1 pb-3">
+        <div className="px-3 pt-1 pb-3 md:px-5">
           <QuickAdd placeholder="记下一件事… 试试「明天下午3点交材料 #工作 !高」" />
         </div>
       ) : null}
 
-      <div className="px-5 pb-24">
+      <div className="px-3 pb-24 md:px-5">
         {buckets.length === 0 ? (
           <EmptyForView emptyKey={emptyKey} />
         ) : (          buckets.map((b) => (
@@ -1368,7 +1368,7 @@ export function EmptyForView({ emptyKey }: { emptyKey: keyof typeof QUOTES | str
   )
 }
 
-export function SearchBar() {
+export function SearchBar({ className }: { className?: string }) {
   const { keyword, setKeyword } = useStore()
   const { compositionProps, isComposing } = useIMEGuard()
   // 本地草稿 + 250ms 防抖：每敲一个字就打一次请求会让搜索明显发顿，
@@ -1400,8 +1400,13 @@ export function SearchBar() {
   }
 
   return (
-    <div className="relative flex h-8 items-center gap-2 rounded-lg border border-line bg-surface px-2.5 focus-within:border-seal/50">
-      <IconSearch size={14} className="text-ink-3" />
+    <div
+      className={cx(
+        'relative flex h-8 items-center gap-2 rounded-lg border border-line bg-surface px-2.5 focus-within:border-seal/50',
+        className,
+      )}
+    >
+      <IconSearch size={14} className="shrink-0 text-ink-3" />
       <input
         id="shenshi-search"
         {...compositionProps}
@@ -1420,7 +1425,9 @@ export function SearchBar() {
           }
         }}
         placeholder="搜索任务与备注"
-        className="w-40 bg-transparent text-[0.8125rem] outline-none transition-all placeholder:text-ink-3 focus:w-56"
+        // 移动端随容器伸展（工具栏第一行与筛选/排序按钮共行）；
+        // 桌面端保持定宽 + 聚焦加宽的原有行为。
+        className="min-w-0 flex-1 bg-transparent text-[0.8125rem] outline-none transition-all placeholder:text-ink-3 md:w-40 md:flex-none md:focus:w-56"
       />
       {draft ? (
         <button

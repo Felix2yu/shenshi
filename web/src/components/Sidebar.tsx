@@ -469,7 +469,7 @@ function EntityDialog({ draft, onClose }: { draft: EntityDraft | null; onClose: 
 
 /* ---------------- 侧边栏 ---------------- */
 
-export function Sidebar() {
+export function Sidebar({ onCloseRequest }: { onCloseRequest?: () => void }) {
   const { compositionProps, isComposing } = useIMEGuard()
   const {
     selection,
@@ -591,7 +591,9 @@ export function Sidebar() {
 
   return (
     <>
-      <aside className="relative z-20 flex h-full w-[16.625rem] shrink-0 flex-col border-r border-line bg-surface/72">
+      {/* 移动端抽屉必须不透明：bg-surface/72 叠在遮罩与主区内容之上会把底层文字透出来，
+          读都读不了（2026-09-24 实测）。桌面端常驻侧栏仍保留 /72 的透纸质感。 */}
+      <aside className="relative z-20 flex h-full w-[16.625rem] max-w-[85vw] shrink-0 flex-col border-r border-line bg-surface md:bg-surface/72">
         {/* 品牌 */}
         <div className="flex items-center gap-2.5 px-4 pb-3 pt-4">
           <SealLogo size={32} />
@@ -599,6 +601,9 @@ export function Sidebar() {
             <div className="brand-serif text-[1.0625rem] font-semibold leading-none text-ink">慎始</div>
             <div className="mt-1 truncate text-[0.65625rem] tracking-wide text-ink-3">慎始而敬终 · 行稳致远</div>
           </div>
+          {onCloseRequest ? (
+            <IconButton icon={IconX} label="关闭清单导航" onClick={onCloseRequest} className="md:hidden" />
+          ) : null}
           <IconButton icon={IconSettings} label="外观与设置" onClick={() => setAppearanceOpen(true)} />
         </div>
 

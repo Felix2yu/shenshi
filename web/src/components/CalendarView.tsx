@@ -200,26 +200,26 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
 
   return (
     <div className="flex h-full flex-col">
-      {/* 工具条 */}
-      <div className="flex items-center gap-2 border-b border-line px-5 py-2.5">
-        <div className="flex items-center gap-0.5">
+      {/* 工具条：窄屏允许折行（粒度切换/周起始落到第二行），各段禁止内部逐字折行 */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2.5 md:px-5">
+        <div className="flex shrink-0 items-center gap-0.5">
           <IconButton icon={IconChevronLeft} label="上一段" onClick={() => shift(-1)} />
           <button
             type="button"
             onClick={() => setAnchor(todayStr())}
-            className="rounded-lg border border-line px-2.5 py-1 text-[0.78125rem] text-ink-2 transition-colors hover:bg-surface-2"
+            className="whitespace-nowrap rounded-lg border border-line px-2.5 py-1 text-[0.78125rem] text-ink-2 transition-colors hover:bg-surface-2"
           >
             回到今天
           </button>
           <IconButton icon={IconChevronRight} label="下一段" onClick={() => shift(1)} />
         </div>
-        <h2 className="brand-serif ml-1 text-[0.9375rem] font-semibold text-ink">{label}</h2>
+        <h2 className="brand-serif ml-1 whitespace-nowrap text-[0.9375rem] font-semibold text-ink">{label}</h2>
         {loading ? <span className="text-[0.71875rem] text-ink-3">载入中…</span> : null}
         <div className="ml-auto flex items-center gap-2">
           <span className="hidden text-[0.71875rem] text-ink-3 lg:block">
             {mode === 'day' ? '拖动任务到时间轴即可改时间，点空白处新建' : '拖动任务卡片可直接改期'}
           </span>
-          <div role="group" aria-label="日历粒度" className="flex rounded-lg border border-line p-0.5">
+          <div role="group" aria-label="日历粒度" className="flex shrink-0 rounded-lg border border-line p-0.5">
             {(['day', 'week', 'month'] as Mode[]).map((m) => (
               <button
                 key={m}
@@ -233,7 +233,7 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
                   setDraft('')
                 }}
                 className={cx(
-                  'rounded-md px-2.5 py-1 text-[0.78125rem] transition-colors',
+                  'shrink-0 whitespace-nowrap rounded-md px-2.5 py-1 text-[0.78125rem] transition-colors',
                   mode === m ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:text-ink',
                 )}
               >
@@ -245,7 +245,7 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
             <button
               type="button"
               onClick={() => setWeekStart(weekStart === 1 ? 0 : 1)}
-              className="rounded-lg border border-line px-2.5 py-1 text-[0.75rem] text-ink-2 transition-colors hover:bg-surface-2"
+              className="whitespace-nowrap rounded-lg border border-line px-2.5 py-1 text-[0.75rem] text-ink-2 transition-colors hover:bg-surface-2"
               title="切换每周起始日"
             >
               周始：{weekStart === 1 ? '周一' : '周日'}

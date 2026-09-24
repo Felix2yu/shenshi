@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 
 import { BoardView } from './components/BoardView'
 import { CalendarView } from './components/CalendarView'
@@ -42,6 +42,10 @@ export default function App() {
     setFilters,
   } = useStore()
   const [navOpen, setNavOpen] = useState(false)
+  // 窄屏（<md）判定：抽屉的对话框语义只在这一档生效；
+  // 桌面端侧栏是常驻布局，不是对话框。
+  const isMobile = useMediaQuery('(max-width: 767px)')
+  const drawerRef = useRef<HTMLDivElement>(null)
 
   // document 上唯一的 Esc 仲裁器：让浮层之间的 Esc 处理"最上层优先"
   useEscapeArbiter()
@@ -58,6 +62,16 @@ export default function App() {
   useEffect(() => {
     setNavOpen(false)
   }, [selection, view])
+
+  // 视口回到桌面宽度时抽屉语义失效，收掉状态，避免残留 md:static 的"幽灵对话框"
+  useEffect(() => {
+    if (!isMobile) setNavOpen(false)
+  }, [isMobile])
+
+  // 打开抽屉时把焦点移进去（对话框惯例），读屏用户能立刻感知"进入了导航层"
+  useEffect(() => {
+    if (navOpen && isMobile) drawerRef.current?.focus()
+  }, [navOpen, isMobile])
 
   // 全局快捷键（与设置面板中的说明保持一致）
   useEffect(() => {
@@ -137,25 +151,43 @@ export default function App() {
           弹窗已 portal 到 body，不在此子树内，因此不受影响；
           提醒中心 / 专注指示 / Toast 等自绘浮层留在外面，仍可交互。 */}
       <div className="contents" inert={modalOpen}>
-      {/* 清单树：桌面常驻，移动端为抽屉 */}
+      {/* 清单树：桌面常驻，移动端为抽屉。
+          抽屉态按对话框语义暴露给读屏（role=dialog + aria-modal），
+          桌面常驻态不带任何角色，就是普通布局块。 */}
       <div
+        id="shenshi-nav-drawer"
+        ref={drawerRef}
+        tabIndex={-1}
+        role={navOpen && isMobile ? 'dialog' : undefined}
+        aria-modal={navOpen && isMobile ? true : undefined}
+        aria-label="清单导航"
         className={
           navOpen
-            ? 'fixed inset-y-0 left-0 z-40 shadow-[var(--shadow-lg)] md:static md:z-auto md:shadow-none'
+            ? 'fixed inset-y-0 left-0 z-40 shadow-[var(--shadow-lg)] outline-none md:static md:z-auto md:shadow-none'
             : 'hidden h-full md:block'
         }
       >
-        <Sidebar />
+        <Sidebar onCloseRequest={() => setNavOpen(false)} />
       </div>
       {navOpen ? (
-        <div className="fixed inset-0 z-30 bg-ink/25 backdrop-blur-[1px] md:hidden" onClick={() => setNavOpen(false)} />
+        <div
+          className="fixed inset-0 z-30 bg-ink/25 backdrop-blur-[1px] md:hidden"
+          onClick={() => setNavOpen(false)}
+          aria-hidden="true"
+        />
       ) : null}
 
       {/* 主区 */}
       <main className="flex min-w-0 flex-1 flex-col">
         {/* 移动端顶栏 */}
         <div className="flex items-center gap-2 border-b border-line bg-paper/90 px-3 py-2 md:hidden">
-          <IconButton icon={IconList} label="清单" onClick={() => setNavOpen(true)} />
+          <IconButton
+            icon={IconList}
+            label="清单"
+            onClick={() => setNavOpen(true)}
+            aria-expanded={navOpen}
+            aria-controls="shenshi-nav-drawer"
+          />
           <SealLogo size={22} />
           <span className="brand-serif text-[0.90625rem] font-medium">慎始</span>
           {selectedTaskId !== null ? (
@@ -207,8 +239,13 @@ export default function App() {
       {/* 任务详情：桌面右栏，移动端整屏浮层 */}
       {selectedTaskId !== null ? (
         <>
-          <div className="fixed inset-0 z-30 bg-ink/20 md:hidden" onClick={closeTask} />
-          <div className="fixed inset-y-0 right-0 z-40 w-full max-w-[400px] md:static md:z-auto md:w-auto md:max-w-none">
+          <div className="fixed inset-0 z-30 bg-ink/20 md:hidden" onClick={closeTask} aria-hidden="true" />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="任务详情"
+            className="fixed inset-y-0 right-0 z-40 w-full max-w-[400px] md:static md:z-auto md:w-auto md:max-w-none"
+          >
             <TaskDetail taskId={selectedTaskId} onClose={closeTask} />
           </div>
         </>
@@ -292,4 +329,19 @@ function emptyKeyFor(selection: Selection): string {
     case 'search':
       return 'search'
   }
+}
+
+/** 响应式媒体查询钩子：SSR/无窗口环境安全降级为 false。 */
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() =>
+    typeof window !== 'undefined' && 'matchMedia' in window ? window.matchMedia(query).matches : false,
+  )
+  useEffect(() => {
+    const mq = window.matchMedia(query)
+    const onChange = () => setMatches(mq.matches)
+    onChange()
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [query])
+  return matches
 }

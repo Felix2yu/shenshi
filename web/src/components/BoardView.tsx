@@ -174,18 +174,18 @@ export function BoardView({ onOpen, filter }: { onOpen: (t: Task) => void; filte
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b border-line px-5 py-2.5">
-        <IconColumns size={15} className="text-seal" />
-        <h2 className="brand-serif text-[0.9375rem] font-semibold text-ink">看板</h2>
+      <div className="flex items-center gap-2 border-b border-line px-3 py-2.5 md:px-5">
+        <IconColumns size={15} className="shrink-0 text-seal" />
+        <h2 className="brand-serif shrink-0 whitespace-nowrap text-[0.9375rem] font-semibold text-ink">看板</h2>
         <span className="hidden text-[0.71875rem] text-ink-3 sm:block">拖动卡片可跨列调整</span>
-        <div className="ml-auto flex rounded-lg border border-line p-0.5">
+        <div className="ml-auto flex shrink-0 overflow-x-auto rounded-lg border border-line p-0.5 no-scrollbar">
           {GROUPS.map((g) => (
             <button
               key={g.key}
               type="button"
               onClick={() => setGroupBy(g.key)}
               className={cx(
-                'rounded-md px-2.5 py-1 text-[0.78125rem] transition-colors',
+                'shrink-0 whitespace-nowrap rounded-md px-2.5 py-1 text-[0.78125rem] transition-colors',
                 groupBy === g.key ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:text-ink',
               )}
             >
