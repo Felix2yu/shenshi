@@ -800,10 +800,18 @@ export function QuickAdd({
                 return
               }
               if (e.key === 'Enter' || e.key === 'Tab') {
-                e.preventDefault()
-                const it = suggestions[activeIndex]
-                if (it) apply(it)
-                return
+                // 查询已与某条建议完全一致：符号已经写完整了（如「!高」「#工作」），
+                // Enter 的语义是「记下这件事」，而不是再补一个空格关掉弹层——
+                // 否则用户要按两次 Enter 才能建任务。Tab 与部分匹配仍走补全。
+                const q = tokenRef.current?.query.toLowerCase() ?? ''
+                const complete =
+                  e.key === 'Enter' && q !== '' && suggestions.some((s) => s.value.toLowerCase() === q)
+                if (!complete) {
+                  e.preventDefault()
+                  const it = suggestions[activeIndex]
+                  if (it) apply(it)
+                  return
+                }
               }
               if (e.key === 'Escape') {
                 e.preventDefault()
