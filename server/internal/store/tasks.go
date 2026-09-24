@@ -735,12 +735,6 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 			return nil, err
 		}
 		add("due_date = ?", ptrStr(v))
-		// 清掉日期时连带清掉时刻：否则会留下"没有到期日、却还挂着 09:00"的脏数据，
-		// 而且此后任何一次设日期都会让那个旧时刻悄然复活。
-		// 调用方显式传了 dueTime 时以它为准，不在这里覆盖。
-		if v == nil && !in.DueTime.Set {
-			add("due_time = NULL")
-		}
 	}
 	if in.DueTime.Set {
 		if err := checkTime(in.DueTime.Value); err != nil {

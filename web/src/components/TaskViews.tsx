@@ -461,7 +461,10 @@ function RowMenuItems({
         icon={IconX}
         label="清除日期"
         onClick={() => {
-          void moveTask(task.id, { dueDate: null })
+          // 清日期要一并清时刻，否则会留下"没有到期日、却还挂着 09:00"的脏数据，
+          // 而且此后任何一次"设日期"都会让那个旧时刻悄然复活。
+          // 后端 PATCH 是三态语义（未传的字段一律不动），联动必须由调用方显式表达。
+          void moveTask(task.id, { dueDate: null, dueTime: null })
           onClose()
         }}
       />
