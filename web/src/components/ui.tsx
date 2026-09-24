@@ -348,12 +348,18 @@ export function Popover({
 }) {
   const ref = useRef<HTMLDivElement>(null)
 
-  // 实际生效的方向与高度上限。
+  // 实际生效的方向、高度上限与（贴边时的）纵向落点。
   // 浮层是 absolute、跟着行内触发元素走，尺寸只有打开后才量得到；行靠近视口底部时
   // 向下展开会溢出视口（要滚动页面才看得到），而上方的空白常常还很充裕。
-  // 打开时量一次：放不下就翻到另一侧，两侧都不够就按可用空间收窄并允许内部滚动 ——
-  // 行为与原生 <select> 的弹层一致。
-  const [pos, setPos] = useState<{ side: 'bottom' | 'top'; maxHeight?: number }>({ side })
+  // 打开时量一次，按四档决策：本侧放得下 → 不动；另一侧放得下 → 翻转；
+  // 两侧都放不下但整屏装得下 → 贴住空间更大一侧的视口边界一次显示完（不加滚动条）；
+  // 整屏也装不下 → 收窄 + 内部滚动（同原生 <select> 的弹层）。
+  const [pos, setPos] = useState<{
+    side: 'bottom' | 'top'
+    maxHeight?: number
+    /** 贴边显示时相对包含块顶边的像素偏移；有值时不用 top/bottom 的 CSS 类 */
+    top?: number
+  }>({ side })
 
   useLayoutEffect(() => {
     if (!open) return
@@ -369,24 +375,54 @@ export function Popover({
       const EDGE = 8 // 与视口边缘的安全距离
       // 底部状态栏是布局内的常驻行（不是浮层），浮层停到它下面等于被它遮住，让出来。
       const footer = document.querySelector<HTMLElement>('[data-app-footer]')
+      const topLimit = EDGE
       const bottomLimit = window.innerHeight - (footer?.offsetHeight ?? 0) - EDGE
-      const below = bottomLimit - (a.bottom + GAP)
-      const above = a.top - GAP - EDGE
+      // 触发元素可能只露出一部分、甚至完全滚出视口：两侧空间一律以视口为界先夹紧，
+      // 否则会把屏幕外的空隙算成可用空间，菜单被摆到视口外（实测踩过：700 高的视口里
+      // 菜单落到了 714，压在状态栏外面）。
+      const anchorTop = Math.min(Math.max(a.top, topLimit), bottomLimit)
+      const anchorBottom = Math.min(Math.max(a.bottom, topLimit), bottomLimit)
+      const below = Math.max(0, bottomLimit - anchorBottom - GAP)
+      const above = Math.max(0, anchorTop - GAP - topLimit)
+      const band = bottomLimit - topLimit // 视口整体可用的纵向空间
       // scrollHeight 不受 maxHeight 影响，始终是内容完整高度（外加上下各 1px 边框）
       const natural = el.scrollHeight + 2
-      const firstSpace = side === 'bottom' ? below : above
-      const otherSpace = side === 'bottom' ? above : below
+      const space = (s: 'bottom' | 'top') => (s === 'bottom' ? below : above)
+      const firstSpace = space(side)
       const other: 'bottom' | 'top' = side === 'bottom' ? 'top' : 'bottom'
-      const next =
-        natural <= firstSpace
-          ? { side }
-          : otherSpace > firstSpace
-            ? otherSpace >= natural
-              ? { side: other }
-              : { side: other, maxHeight: otherSpace }
-            : { side, maxHeight: firstSpace }
+      const otherSpace = space(other)
+      const roomier = otherSpace > firstSpace ? other : side
+
+      let chosen: 'bottom' | 'top'
+      let maxHeight: number | undefined
+      if (natural <= firstSpace) {
+        chosen = side // 首选侧本来就放得下，不打扰
+      } else if (natural <= otherSpace) {
+        chosen = other // 翻到另一侧即可完整显示
+      } else if (natural <= band) {
+        // 两侧都放不下、但整屏装得下：贴住空间更大那一侧的视口边界，一次显示完。
+        // 这里**不**收窄加滚动条 —— 屏幕明明还有位置，把内容藏进滚动区是下策
+        //（用户反馈点）。代价是菜单会盖住触发元素一部分：菜单比两侧空隙都高，
+        // 又必须整体可见，这个重叠避不开。
+        chosen = roomier
+      } else {
+        // 整屏也装不下，只能在空间更大的一侧收窄并内部滚动。
+        chosen = roomier
+        maxHeight = space(chosen)
+      }
+      // 统一按「贴边 + 夹紧」求落点：normal 情况下就是紧贴触发元素的 GAP 处，
+      // 空间不足时自然退化为贴住该侧的视口边界，且任何分支都不会落到视口外。
+      // （anchor 已先按视口夹紧，故触发元素半露/滚出视口时也算得对。）
+      const height = maxHeight ?? natural
+      const unclamped = chosen === 'bottom' ? anchorBottom + GAP : anchorTop - GAP - height
+      const topViewport = Math.min(Math.max(unclamped, topLimit), bottomLimit - height)
+      // top 是相对包含块（offsetParent 的 padding box）的偏移，故换算掉边框宽度
+      const originTop = a.top + (anchor?.clientTop ?? 0)
+      const next = { side: chosen, maxHeight, top: Math.round(topViewport - originTop) }
       // 值相同就回传原对象 → React 跳过更新，避免与 ResizeObserver 互相触发
-      setPos((p) => (p.side === next.side && p.maxHeight === next.maxHeight ? p : next))
+      setPos((p) =>
+        p.side === next.side && p.maxHeight === next.maxHeight && p.top === next.top ? p : next,
+      )
     }
     let raf = 0
     const schedule = () => {
@@ -442,25 +478,25 @@ export function Popover({
 
   if (!open) return null
   return (
+    // style 里 top 与 maxHeight 可能同时有值（收窄 + 贴边共用），故一并给出；
+    // React 会忽略值为 undefined 的键。
     <div
       ref={ref}
       className={cx(
         'absolute z-40 rounded-xl border border-line bg-surface p-2 shadow-[var(--shadow-md)]',
         // 翻转时改用纯淡入：animate-rise 带 translateY(6px)，方向反了会看着别扭
         pos.side === side ? 'animate-rise' : 'animate-fade-in',
-        pos.side === 'bottom' ? 'top-[calc(100%+6px)]' : 'bottom-[calc(100%+6px)]',
-        // 两侧都放不下时按可用空间收窄，内部滚动
+        // 落点由 style.top 精确给出；仅在量测落定前用这两个类兜一拍
+        pos.top === undefined &&
+          (pos.side === 'bottom' ? 'top-[calc(100%+6px)]' : 'bottom-[calc(100%+6px)]'),
+        // 仅当整屏也装不下时才收窄 + 内部滚动
         pos.maxHeight !== undefined && 'overflow-y-auto',
         align === 'left' && 'left-0',
         align === 'right' && 'right-0',
         align === 'center' && 'left-1/2 -translate-x-1/2',
         className,
       )}
-      style={
-        width || pos.maxHeight !== undefined
-          ? { width, maxHeight: pos.maxHeight }
-          : undefined
-      }
+      style={{ width, top: pos.top, maxHeight: pos.maxHeight }}
     >
       {children}
     </div>
