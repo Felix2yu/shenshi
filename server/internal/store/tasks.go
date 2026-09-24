@@ -666,7 +666,7 @@ func (s *Store) CreateTask(in model.TaskInput, defaultListID int64) (*model.Task
 		return nil, err
 	}
 	s.emit(model.EventTaskCreated, t)
-	s.logActivity(model.ActCreated, t.ID, t.Title, "归入 "+t.ListName)
+	s.logActivity(model.ActCreated, t.ID, t.Title, "放入 "+t.ListName)
 	return t, nil
 }
 

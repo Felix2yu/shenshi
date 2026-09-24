@@ -567,7 +567,11 @@ export function MenuItem({
         danger ? 'text-p-high hover:bg-p-high/10' : 'text-ink hover:bg-surface-2',
       )}
     >
-      {Icon ? <Icon size={14} className="shrink-0 text-ink-3" /> : <span className="w-3.5" />}
+      {/* 图标槽固定为同一宽度并居中：菜单里有些项没有图标（如「移出分组」），
+          有些项用的是 8px 的 ColorDot，槽宽不一致会让文字左边界参差。 */}
+      <span className="flex w-3.5 shrink-0 items-center justify-center">
+        {Icon ? <Icon size={14} className="text-ink-3" /> : null}
+      </span>
       <span className="flex-1 truncate">{children}</span>
       {shortcut ? <Kbd>{shortcut}</Kbd> : null}
     </button>

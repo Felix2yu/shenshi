@@ -184,7 +184,7 @@ func (s *Store) CreateFolder(in FolderInput) (*model.Folder, error) {
 			return nil, err
 		}
 		if n == 0 {
-			return nil, ValidationError{Msg: "上级分组不存在"}
+			return nil, ValidationError{Msg: "分组不存在"}
 		}
 	}
 	order := 0

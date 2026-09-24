@@ -493,7 +493,7 @@ export function describeRepeat(rule: string | null | undefined): string {
 export const QUICK_ADD_HINTS = [
   { syntax: '明天下午 3 点', desc: '识别日期与时间' },
   { syntax: '#标签', desc: '自动打标签' },
-  { syntax: '/清单名', desc: '归入指定清单' },
+  { syntax: '/清单名', desc: '放入指定清单' },
   { syntax: '!高', desc: '设定优先级（! / !! / !!!）' },
   { syntax: '@重要 @紧急', desc: '标记四象限' },
   { syntax: '＃标签 ／清单 ！高', desc: '全角符号同样识别' },

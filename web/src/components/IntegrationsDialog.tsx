@@ -286,7 +286,7 @@ function TemplateEditor({
       </Field>
 
       <div className="grid gap-2 sm:grid-cols-3">
-        <Field label="归入清单">
+        <Field label="放入清单">
           <select
             value={listId}
             onChange={(e) => setListId(e.target.value === '' ? '' : Number(e.target.value))}

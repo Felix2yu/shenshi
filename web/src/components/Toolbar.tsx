@@ -6,7 +6,7 @@ import { describeFilter, isFilterActive, applyFilter, EMPTY_FILTER, type TaskFil
 import { useIMEGuard } from '../lib/ime'
 import { useStore } from '../store/AppStore'
 import type { TaskSort } from '../api/client'
-import type { SmartKey, ViewKind } from '../types'
+import type { Folder, SmartKey, ViewKind } from '../types'
 import {
   IconChart,
   IconCheck,
@@ -24,6 +24,16 @@ import {
 } from './icons'
 import { SearchBar } from './TaskViews'
 import { IconButton, Popover, cx } from './ui'
+
+/** 分组是树，按 id 取名必须递归 —— 只查根级会漏掉子分组里的清单。 */
+function folderNameById(tree: Folder[], id: number): string | null {
+  for (const f of tree) {
+    if (f.id === id) return f.name
+    const hit = folderNameById(f.children ?? [], id)
+    if (hit) return hit
+  }
+  return null
+}
 
 const VIEW_TABS: { key: ViewKind; label: string; icon: typeof IconList }[] = [
   { key: 'list', label: '列表', icon: IconList },
@@ -163,7 +173,9 @@ export function Toolbar({ filters, onFilters }: { filters: TaskFilter; onFilters
     if (selection.kind === 'smart') return SMART_SUBTITLE[selection.key]
     if (selection.kind === 'list') {
       const l = lists.find((x) => x.id === selection.id)
-      return l?.folderId ? '清单 · 已归入分组' : '独立清单'
+      if (!l?.folderId) return '独立清单'
+      const name = folderNameById(folders, l.folderId)
+      return name ? `分组 · ${name}` : '分组内清单'
     }
     if (selection.kind === 'tag') return '按标签横向串联的任务'
     return ''

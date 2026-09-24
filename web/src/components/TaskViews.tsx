@@ -1040,7 +1040,7 @@ export function QuickAdd({
           ) : (
             <span className="text-[0.71875rem] text-ink-3">还差一个标题</span>
           )}
-          <span className="ml-auto hidden text-[0.6875rem] text-ink-3 sm:block">归入「{targetName}」</span>
+          <span className="ml-auto hidden text-[0.6875rem] text-ink-3 sm:block">放入「{targetName}」</span>
         </div>
       ) : null}
     </div>
@@ -1235,8 +1235,8 @@ export function TaskListView({
  * 其它视图开了多选也看不到操作入口）。
  */
 /**
- * 把清单按所属分组组织成 optgroup。
- * 分组是树（子分组可有任意层级），所以必须递归 —— 只列根级会让子分组下的清单
+ * 把清单按分组组织成 optgroup。
+ * 分组是树（子分组可有任意层级），所以必须递归 —— 只列根级会让子分组里的清单
  * 在这一处直接消失，和侧栏看到的层级对不上。
  */
 function groupListsForSelect(tree: Folder[], lists: List[]): { label: string; items: List[] }[] {
@@ -1251,7 +1251,7 @@ function groupListsForSelect(tree: Folder[], lists: List[]): { label: string; it
   }
   walk(tree, '')
   const loose = lists.filter((l) => l.folderId == null)
-  if (loose.length > 0) out.unshift({ label: '未归入分组', items: loose })
+  if (loose.length > 0) out.unshift({ label: '未分组', items: loose })
   return out
 }
 

@@ -100,7 +100,7 @@ function useRowSort(
 
   const propsFor = (id: number) => ({
     draggable: true,
-    title: '按住拖动可调整顺序；拖到分组上可归入该分组',
+    title: '按住拖动可调整顺序；拖到分组上可放入该分组',
     onDragStart: (e: DragEvent<HTMLDivElement>) => {
       // 分组与清单嵌套，必须阻止冒泡，否则拖清单会连带触发外层分组。
       e.stopPropagation()
@@ -204,7 +204,7 @@ interface EntityDraft {
 
 /**
  * 把分组树拍平成带层级信息的列表。
- * 「上级分组」候选、归档区都要看到全部层级——后端返回的是树，
+ * 「放入分组」候选、归档区都要看到全部层级——后端返回的是树，
  * 直接拿根级数组会把子分组漏掉，这正是分组一度只能当一级元素的原因。
  */
 function flattenFolders(
@@ -218,6 +218,17 @@ function flattenFolders(
     out.push(...flattenFolders(f.children ?? [], depth + 1, [...path, f.name]))
   }
   return out
+}
+
+/**
+ * 分组在选择框里的显示名，写成完整路径（`生活 / 学习`）。
+ *
+ * 原先用的是「学习 · 在 生活 下」这种补语式说法，读起来不像中文；
+ * 层级还依赖前导全角空格，缩进一旦不生效就分不出父子。改写成路径后，
+ * 每个选项自身即为完整的名词短语，不依赖缩进渲染。
+ */
+function folderPathLabel(folder: Folder, ancestors: string[]): string {
+  return [...ancestors, folder.name].join(' / ')
 }
 
 /**
@@ -412,16 +423,16 @@ function EntityDialog({ draft, onClose }: { draft: EntityDraft | null; onClose: 
         </Field>
 
         {draft.kind === 'folder' ? (
-          <Field label="上级分组">
+          <Field label="放入分组">
             <select
               className={inputClass}
               value={parentId ?? ''}
               onChange={(e) => setParentId(e.target.value ? Number(e.target.value) : null)}
             >
-              <option value="">（最外层）</option>
-              {parentCandidates.map(({ folder: f, depth, path }) => (
+              <option value="">不放入分组</option>
+              {parentCandidates.map(({ folder: f, path }) => (
                 <option key={f.id} value={f.id}>
-                  {depth > 0 ? `${'　'.repeat(depth)}${f.name} · 在 ${path.join(' › ')} 下` : f.name}
+                  {folderPathLabel(f, path)}
                 </option>
               ))}
             </select>
@@ -429,18 +440,18 @@ function EntityDialog({ draft, onClose }: { draft: EntityDraft | null; onClose: 
         ) : null}
 
         {draft.kind === 'list' ? (
-          <Field label="所属分组">
+          <Field label="放入分组">
             <select
               className={inputClass}
               value={folderId ?? ''}
               onChange={(e) => setFolderId(e.target.value ? Number(e.target.value) : null)}
             >
-              <option value="">不归入分组</option>
+              <option value="">不放入分组</option>
               {flattenFolders(folders)
                 .filter((x) => !x.folder.archived)
-                .map(({ folder: f, depth, path }) => (
+                .map(({ folder: f, path }) => (
                   <option key={f.id} value={f.id}>
-                    {depth > 0 ? `${'　'.repeat(depth)}${f.name} · 在 ${path.join(' › ')} 下` : f.name}
+                    {folderPathLabel(f, path)}
                   </option>
                 ))}
             </select>
@@ -1308,7 +1319,7 @@ function FolderNode({
           >
             新建子分组
           </MenuItem>
-          {/* 打开的是编辑弹窗（名称、配色、上级分组、删除都在里面），故用铅笔而非
+          {/* 打开的是编辑弹窗（名称、配色、放入分组、删除都在里面），故用铅笔而非
               垃圾桶 + 危险色；也正因为它已覆盖「改名与配色」，不再单列一个同义项。 */}
           <MenuItem
             icon={IconPencil}
@@ -1382,6 +1393,8 @@ function FolderNode({
                 onEdit={() => onEditList(l)}
                 menu={menu}
                 setMenu={setMenu}
+                // 分组内的清单同样需要「移动到分组」候选；漏传会让整段菜单消失
+                folders={rootFolders}
               />
             </div>
           ))}
@@ -1497,7 +1510,7 @@ function ListRow({
                 setMenu(null)
               }}
             >
-              不归入分组
+              移出分组
             </MenuItem>
             {flattenFolders(folders).map(({ folder: f, depth }) => (
               <MenuItem
