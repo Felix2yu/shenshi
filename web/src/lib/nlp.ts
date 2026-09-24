@@ -106,9 +106,9 @@ export function parseQuickAdd(input: string, ctx: ParseContext = {}): ParsedInpu
     chips,
   }
 
-  // ① 标签：#工作
+  // ① 标签：#工作 / ＃工作（中文输入法常给出全角符号，半角全角一并认）
   for (;;) {
-    const m = /#([^\s#@!]{1,24})/u.exec(src)
+    const m = /[#＃]([^\s#@!＃！＠]{1,24})/u.exec(src)
     if (!m) break
     const name = m[1].trim()
     if (name && !out.tagNames.includes(name)) {
@@ -118,8 +118,8 @@ export function parseQuickAdd(input: string, ctx: ParseContext = {}): ParsedInpu
     src = removeSpan(src, m)
   }
 
-  // ② 清单：/项目推进（只有确实命中清单名时才剥离，避免吃掉正文里的斜杠）
-  const listMatch = /(?:^|\s)\/([^\s/@!,，、]{1,24})/u.exec(src)
+  // ② 清单：/项目推进 / ／项目推进（只有确实命中清单名时才剥离，避免吃掉正文里的斜杠）
+  const listMatch = /(?:^|\s)[/／]([^\s/@!,，、／＠！]{1,24})/u.exec(src)
   if (listMatch) {
     const name = listMatch[1].trim()
     const hit = ctx.lists?.find((l) => l.name === name)
@@ -130,9 +130,9 @@ export function parseQuickAdd(input: string, ctx: ParseContext = {}): ParsedInpu
     }
   }
 
-  // ③ 四象限：@重要 / @紧急
+  // ③ 四象限：@重要 / @紧急（全角＠同样有效）
   for (;;) {
-    const m = /@(重要|紧急)/u.exec(src)
+    const m = /[@＠](重要|紧急)/u.exec(src)
     if (!m) break
     if (m[1] === '重要') out.important = true
     else out.urgent = true
@@ -140,17 +140,17 @@ export function parseQuickAdd(input: string, ctx: ParseContext = {}): ParsedInpu
     src = removeSpan(src, m)
   }
 
-  // ④ 优先级：!!! / !! / ! / !高 / !3
+  // ④ 优先级：!!! / !! / ! / !高 / !3（全角！按个数等价换算，可混写如「!!！」）
   for (;;) {
-    const m = /(?:^|\s)!{1,3}(?![\p{Script=Han}\w])/u.exec(src)
+    const m = /(?:^|\s)[!！]{1,3}(?![\p{Script=Han}\w])/u.exec(src)
     if (!m) break
-    const n = (m[0].match(/!/g) || []).length
+    const n = (m[0].match(/[!！]/g) || []).length
     out.priority = (n >= 3 ? 3 : n === 2 ? 2 : 1) as Priority
     chips.push({ kind: 'priority', label: `优先级${['无', '低', '中', '高'][out.priority]}` })
     src = removeSpan(src, m)
   }
   if (out.priority === null) {
-    const m = /(?:^|\s)!([高中低123])(?![\p{Script=Han}\w])/u.exec(src)
+    const m = /(?:^|\s)[!！]([高中低123])(?![\p{Script=Han}\w])/u.exec(src)
     if (m) {
       const map: Record<string, Priority> = { '1': 1, 低: 1, '2': 2, 中: 2, '3': 3, 高: 3 }
       out.priority = map[m[1]]
@@ -496,5 +496,6 @@ export const QUICK_ADD_HINTS = [
   { syntax: '/清单名', desc: '归入指定清单' },
   { syntax: '!高', desc: '设定优先级（! / !! / !!!）' },
   { syntax: '@重要 @紧急', desc: '标记四象限' },
+  { syntax: '＃标签 ／清单 ！高', desc: '全角符号同样识别' },
   { syntax: '每天 / 每周一 / 每月15日', desc: '设定重复' },
 ]

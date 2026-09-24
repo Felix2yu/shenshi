@@ -108,6 +108,22 @@ check('中文优先级', '写方案 !高', { priority: 3, title: '写方案' })
 check('数字优先级', '写方案 !2', { priority: 2, title: '写方案' })
 check('四象限', '评审 @重要 @紧急', { important: true, urgent: true, title: '评审' })
 
+console.log('\n全角符号（中文输入法下不切半角也认）')
+check('全角标签', '写方案 ＃工作', { tagNames: ['工作'], title: '写方案' })
+check('全角清单', '整理灵感 ／工作', { listId: 7, title: '整理灵感' })
+check('全角清单名不存在不改标题', '阅读 3／5 章节', { listId: null, title: '阅读 3／5 章节' })
+check('全角优先级词', '写方案 ！高', { priority: 3, title: '写方案' })
+check('全角感叹号数量', '写方案 ！！！', { priority: 3, title: '写方案' })
+check('全半角感叹号混写计数', '写方案 ！！!', { priority: 3, title: '写方案' })
+check('全角数字优先级', '写方案 ！2', { priority: 2, title: '写方案' })
+check('全角四象限', '评审 ＠重要 ＠紧急', { important: true, urgent: true, title: '评审' })
+check(
+  '全角符号混排',
+  '明天下午3点开会 ＃工作 ！高 ／工作',
+  { dueDate: '2026-09-23', dueTime: '15:00', tagNames: ['工作'], priority: 3, listId: 7, title: '开会' },
+)
+check('正文里的全角感叹号不被吃掉', '写「慎始」的验收清单！', { priority: null, title: '写「慎始」的验收清单！' })
+
 console.log('\n组合与边界')
 check(
   '多要素混排',

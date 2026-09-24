@@ -561,6 +561,9 @@ type Sug =
   | { kind: 'priority'; key: string; value: string; label: string; priority: number; desc: string }
   | { kind: 'list'; key: string; value: string; label: string; color: string; folderName?: string }
 
+/** 全角触发符归一化：中文输入法下 # ! / 常被输入成 ＃ ！ ／，两者等价。 */
+const FULLWIDTH_TRIGGER: Record<string, string> = { '＃': '#', '！': '!', '／': '/' }
+
 /** 检测光标是否正处于某个符号触发的补全语境里，返回触发符与已输入的查询串。 */
 function detectToken(
   text: string,
@@ -571,10 +574,11 @@ function detectToken(
   let query = ''
   while (i >= 0) {
     const ch = text[i]
-    if (ch === '#' || ch === '!' || ch === '/') {
+    const trigger = ch === '#' || ch === '!' || ch === '/' ? ch : FULLWIDTH_TRIGGER[ch]
+    if (trigger) {
       const prev = i > 0 ? text[i - 1] : ''
       // 触发符前必须是行首或空白，避免误伤「C#」「http://」这类正文。
-      if (i === 0 || /\s/.test(prev)) return { trigger: ch, query, start: i, end: Math.min(caret, text.length) }
+      if (i === 0 || /\s/.test(prev)) return { trigger, query, start: i, end: Math.min(caret, text.length) }
       return null
     }
     if (/\s/.test(ch)) return null // 空白终止当前 token
@@ -851,7 +855,7 @@ export function QuickAdd({
       {/* 空输入聚焦时的语法提示：把可用的符号语法直接摆出来，解决「不知道能输入哪些」 */}
       {expanded && !text ? (
         <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[0.6875rem] text-ink-3">
-          {QUICK_ADD_HINTS.filter((h) => /^[#/!@]/.test(h.syntax)).map((h) => (
+          {QUICK_ADD_HINTS.filter((h) => /^[#/!@＃！／]/.test(h.syntax)).map((h) => (
             <span key={h.syntax} className="inline-flex items-center gap-1">
               <code className="rounded border border-line bg-surface-2 px-1 py-px font-mono text-[0.625rem] text-ink-2">{h.syntax}</code>
               <span>{h.desc}</span>
