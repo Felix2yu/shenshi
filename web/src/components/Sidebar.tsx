@@ -35,12 +35,10 @@ import {
   IconBook,
   IconCalendar,
   IconCalendarRange,
-  IconChart,
   IconCheckCircle,
   IconChevronDown,
   IconChevronRight,
   IconCircle,
-  IconColumns,
   IconFilter,
   IconFlag,
   IconFolder,
@@ -54,12 +52,10 @@ import {
   IconPin,
   IconPlus,
   IconSearch,
-  IconSeedling,
   IconSettings,
   IconStar,
   IconSun,
   IconSunrise,
-  IconTable,
   IconTag,
   IconTimer,
   IconTrash,
@@ -160,7 +156,7 @@ function downloadExport(url: string) {
   a.remove()
 }
 
-/* ---------------- 智能清单与视图定义 ---------------- */
+/* ---------------- 智能清单定义 ---------------- */
 
 const SMARTS: { key: SmartKey; label: string; icon: IconCmp; countKey: string; ember?: boolean }[] = [
   { key: 'inbox', label: '收集箱', icon: IconInbox, countKey: 'inbox' },
@@ -177,15 +173,6 @@ const SMARTS: { key: SmartKey; label: string; icon: IconCmp; countKey: string; e
   { key: 'recentdone', label: '最近完成', icon: IconCheckCircle, countKey: '' },
   { key: 'all', label: '全部任务', icon: IconList, countKey: 'all' },
   { key: 'done', label: '已完成', icon: IconGrid, countKey: 'done' },
-]
-
-const VIEWS: { key: 'board' | 'table' | 'calendar' | 'quadrant' | 'habits' | 'stats'; label: string; icon: IconCmp }[] = [
-  { key: 'board', label: '看板', icon: IconColumns },
-  { key: 'table', label: '表格', icon: IconTable },
-  { key: 'calendar', label: '日历', icon: IconCalendar },
-  { key: 'quadrant', label: '四象限', icon: IconGrid },
-  { key: 'habits', label: '习惯打卡', icon: IconSeedling },
-  { key: 'stats', label: '统计与复盘', icon: IconChart },
 ]
 
 /* ---------------- 新建 / 编辑弹窗 ---------------- */
@@ -488,7 +475,6 @@ export function Sidebar() {
     selection,
     select,
     selectSmart,
-    setView,
     view,
     counts,
     lists,
@@ -577,7 +563,6 @@ export function Sidebar() {
   )
 
   const smartActive = (key: SmartKey) => selection.kind === 'smart' && selection.key === key && view === 'list'
-  const isView = (key: string) => view === key
 
   const viewTitle = useMemo(() => {
     if (view === 'board') return '看板'
@@ -669,32 +654,10 @@ export function Sidebar() {
             })}
           </div>
 
-          {/* 视图 */}
-          <div className="mt-1 border-t border-line pt-1">
-            {VIEWS.map((v) => {
-              const active = isView(v.key)
-              return (
-                <button
-                  key={v.key}
-                  type="button"
-                  aria-current={active ? 'page' : undefined}
-                  onClick={() => {
-                    // 一律保留当前选择：这些视图都吃「当前作用域」的任务，
-                    // 曾经四象限会偷偷把选择改成「全部任务」，于是同一竖排
-                    // 的入口点下去得到的范围各不相同。作用域改由工具栏顶部显式标注。
-                    setView(v.key)
-                  }}
-                  className={cx(
-                    'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-left text-[0.8125rem] transition-colors',
-                    active ? 'bg-seal/10 font-medium text-seal' : 'text-ink-2 hover:bg-surface-2 hover:text-ink',
-                  )}
-                >
-                  <v.icon size={15} className={cx('shrink-0', active ? 'text-seal' : 'text-ink-3')} />
-                  <span className="flex-1 truncate">{v.label}</span>
-                </button>
-              )
-            })}
-          </div>
+          {/* 这里不放视图入口：侧栏只负责「看哪些任务」（范围），
+              「怎么读这批任务」（视图）统一交给工具栏右侧的视图页签。
+              此前这里另有一份 6 项竖排入口，与工具栏完全重复（同一 setView），
+              且同一功能的图标与文案两处还对不上，故于 2026-09-24 移除。 */}
 
           {/* 收藏的清单：同一张清单在主树里也会出现（收藏不是「移走」），
               所以区块名里点明这是快捷入口，免得被当成重复渲染的 bug。 */}
