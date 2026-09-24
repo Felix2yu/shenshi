@@ -348,6 +348,68 @@ export function Popover({
 }) {
   const ref = useRef<HTMLDivElement>(null)
 
+  // 实际生效的方向与高度上限。
+  // 浮层是 absolute、跟着行内触发元素走，尺寸只有打开后才量得到；行靠近视口底部时
+  // 向下展开会溢出视口（要滚动页面才看得到），而上方的空白常常还很充裕。
+  // 打开时量一次：放不下就翻到另一侧，两侧都不够就按可用空间收窄并允许内部滚动 ——
+  // 行为与原生 <select> 的弹层一致。
+  const [pos, setPos] = useState<{ side: 'bottom' | 'top'; maxHeight?: number }>({ side })
+
+  useLayoutEffect(() => {
+    if (!open) return
+    const el = ref.current
+    if (!el) return
+    const place = () => {
+      // offsetParent 才是 absolute 定位的包含块（即 CSS 里 100% 的参照），
+      // 比 parentElement 可靠 —— 调用方没加 relative 时前者仍能给出真正的锚点。
+      const anchor = (el.offsetParent as HTMLElement | null) ?? el.parentElement
+      const a = anchor?.getBoundingClientRect()
+      if (!a) return
+      const GAP = 6 // 与下面 className 里的 calc(100%+6px) 保持一致
+      const EDGE = 8 // 与视口边缘的安全距离
+      // 底部状态栏是布局内的常驻行（不是浮层），浮层停到它下面等于被它遮住，让出来。
+      const footer = document.querySelector<HTMLElement>('[data-app-footer]')
+      const bottomLimit = window.innerHeight - (footer?.offsetHeight ?? 0) - EDGE
+      const below = bottomLimit - (a.bottom + GAP)
+      const above = a.top - GAP - EDGE
+      // scrollHeight 不受 maxHeight 影响，始终是内容完整高度（外加上下各 1px 边框）
+      const natural = el.scrollHeight + 2
+      const firstSpace = side === 'bottom' ? below : above
+      const otherSpace = side === 'bottom' ? above : below
+      const other: 'bottom' | 'top' = side === 'bottom' ? 'top' : 'bottom'
+      const next =
+        natural <= firstSpace
+          ? { side }
+          : otherSpace > firstSpace
+            ? otherSpace >= natural
+              ? { side: other }
+              : { side: other, maxHeight: otherSpace }
+            : { side, maxHeight: firstSpace }
+      // 值相同就回传原对象 → React 跳过更新，避免与 ResizeObserver 互相触发
+      setPos((p) => (p.side === next.side && p.maxHeight === next.maxHeight ? p : next))
+    }
+    let raf = 0
+    const schedule = () => {
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        place()
+      })
+    }
+    place()
+    // 内容高度会变（候选列表随输入增减），滚动与缩放也会改变可用空间 —— 都要重算。
+    const ro = new ResizeObserver(schedule)
+    ro.observe(el)
+    window.addEventListener('scroll', schedule, true)
+    window.addEventListener('resize', schedule)
+    return () => {
+      if (raf) cancelAnimationFrame(raf)
+      ro.disconnect()
+      window.removeEventListener('scroll', schedule, true)
+      window.removeEventListener('resize', schedule)
+    }
+  }, [open, side])
+
   useEffect(() => {
     if (!open) return
     const onDown = (e: MouseEvent) => {
@@ -383,14 +445,22 @@ export function Popover({
     <div
       ref={ref}
       className={cx(
-        'absolute z-40 animate-rise rounded-xl border border-line bg-surface p-2 shadow-[var(--shadow-md)]',
-        side === 'bottom' ? 'top-[calc(100%+6px)]' : 'bottom-[calc(100%+6px)]',
+        'absolute z-40 rounded-xl border border-line bg-surface p-2 shadow-[var(--shadow-md)]',
+        // 翻转时改用纯淡入：animate-rise 带 translateY(6px)，方向反了会看着别扭
+        pos.side === side ? 'animate-rise' : 'animate-fade-in',
+        pos.side === 'bottom' ? 'top-[calc(100%+6px)]' : 'bottom-[calc(100%+6px)]',
+        // 两侧都放不下时按可用空间收窄，内部滚动
+        pos.maxHeight !== undefined && 'overflow-y-auto',
         align === 'left' && 'left-0',
         align === 'right' && 'right-0',
         align === 'center' && 'left-1/2 -translate-x-1/2',
         className,
       )}
-      style={width ? { width } : undefined}
+      style={
+        width || pos.maxHeight !== undefined
+          ? { width, maxHeight: pos.maxHeight }
+          : undefined
+      }
     >
       {children}
     </div>

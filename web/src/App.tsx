@@ -189,7 +189,13 @@ export default function App() {
           )}
         </div>
 
-        <footer className="hidden shrink-0 items-center gap-3 border-t border-line px-5 py-1.5 text-[0.65625rem] text-ink-3 md:flex">
+        {/* data-app-footer：Popover 量测时要把这条常驻状态栏从可用高度里扣掉，
+            否则浮层向下展开停在它下面等于被遮住（见 ui.tsx 的 Popover）。
+            移动端此处为 hidden（display:none），offsetHeight 读作 0，逻辑自然适配。 */}
+        <footer
+          data-app-footer
+          className="hidden shrink-0 items-center gap-3 border-t border-line px-5 py-1.5 text-[0.65625rem] text-ink-3 md:flex"
+        >
           <span>{boot?.app ?? '慎始'} · {boot?.motto ?? '慎始而敬终，行稳致远'}</span>
           <span className="ml-auto tabular-nums">
             {visible.filter((t) => t.status !== 'done').length} 待办 / 共 {visible.length} 项
