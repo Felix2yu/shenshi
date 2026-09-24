@@ -178,7 +178,9 @@ export function BoardView({ onOpen, filter }: { onOpen: (t: Task) => void; filte
         <IconColumns size={15} className="shrink-0 text-seal" />
         <h2 className="brand-serif shrink-0 whitespace-nowrap text-[0.9375rem] font-semibold text-ink">看板</h2>
         <span className="hidden text-[0.71875rem] text-ink-3 sm:block">拖动卡片可跨列调整</span>
-        <div className="ml-auto flex shrink-0 overflow-x-auto rounded-lg border border-line p-0.5 no-scrollbar">
+        {/* 分组切换：min-w-0 flex-1 让它在窄屏吃掉剩余宽度并内部横向滚动；
+            原先 shrink-0 会按内容宽度撑破 375px 视口（实测 86→407）。桌面端 sm:flex-none 靠右。 */}
+        <div className="ml-auto flex min-w-0 flex-1 justify-end overflow-x-auto rounded-lg border border-line p-0.5 no-scrollbar sm:flex-none">
           {GROUPS.map((g) => (
             <button
               key={g.key}

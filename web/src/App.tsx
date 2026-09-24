@@ -8,11 +8,11 @@ import { Sidebar } from './components/Sidebar'
 import { StatsView } from './components/StatsView'
 import { TableView } from './components/TableView'
 import { TaskDetail } from './components/TaskDetail'
-import { IconList, IconX, SealLogo } from './components/icons'
+import { SealLogo } from './components/icons'
 import { AppOverlays } from './components/Overlays'
 import { BatchBar, TaskListView } from './components/TaskViews'
 import { Toolbar } from './components/Toolbar'
-import { Button, IconButton } from './components/ui'
+import { Button } from './components/ui'
 import { applyFilter } from './lib/filter'
 import { useEscapeArbiter } from './lib/escStack'
 import { useModalLayerActive } from './lib/modalLayer'
@@ -42,9 +42,10 @@ export default function App() {
     setFilters,
   } = useStore()
   const [navOpen, setNavOpen] = useState(false)
-  // 窄屏（<md）判定：抽屉的对话框语义只在这一档生效；
-  // 桌面端侧栏是常驻布局，不是对话框。
-  const isMobile = useMediaQuery('(max-width: 767px)')
+  // 窄屏（<lg，1024px）判定：抽屉的对话框语义只在这一档生效；
+  // 768–1023px 的窄窗口/平板竖屏也归入移动档 —— 常驻侧栏会吃掉约四成宽度，
+  // 主区被挤压、信息密度过低（2026-09-24 用户截图确认）。桌面档 ≥1024px。
+  const isMobile = useMediaQuery('(max-width: 1023px)')
   const drawerRef = useRef<HTMLDivElement>(null)
 
   // document 上唯一的 Esc 仲裁器：让浮层之间的 Esc 处理"最上层优先"
@@ -63,7 +64,7 @@ export default function App() {
     setNavOpen(false)
   }, [selection, view])
 
-  // 视口回到桌面宽度时抽屉语义失效，收掉状态，避免残留 md:static 的"幽灵对话框"
+  // 视口回到桌面宽度（≥lg）时抽屉语义失效，收掉状态，避免残留 lg:static 的"幽灵对话框"
   useEffect(() => {
     if (!isMobile) setNavOpen(false)
   }, [isMobile])
@@ -151,7 +152,7 @@ export default function App() {
           弹窗已 portal 到 body，不在此子树内，因此不受影响；
           提醒中心 / 专注指示 / Toast 等自绘浮层留在外面，仍可交互。 */}
       <div className="contents" inert={modalOpen}>
-      {/* 清单树：桌面常驻，移动端为抽屉。
+      {/* 清单树：桌面（≥lg）常驻，窄屏为抽屉。
           抽屉态按对话框语义暴露给读屏（role=dialog + aria-modal），
           桌面常驻态不带任何角色，就是普通布局块。 */}
       <div
@@ -163,15 +164,15 @@ export default function App() {
         aria-label="清单导航"
         className={
           navOpen
-            ? 'fixed inset-y-0 left-0 z-40 shadow-[var(--shadow-lg)] outline-none md:static md:z-auto md:shadow-none'
-            : 'hidden h-full md:block'
+            ? 'fixed inset-y-0 left-0 z-40 shadow-[var(--shadow-lg)] outline-none lg:static lg:z-auto lg:shadow-none'
+            : 'hidden h-full lg:block'
         }
       >
         <Sidebar onCloseRequest={() => setNavOpen(false)} />
       </div>
       {navOpen ? (
         <div
-          className="fixed inset-0 z-30 bg-ink/25 backdrop-blur-[1px] md:hidden"
+          className="fixed inset-0 z-30 bg-ink/25 backdrop-blur-[1px] lg:hidden"
           onClick={() => setNavOpen(false)}
           aria-hidden="true"
         />
@@ -179,23 +180,10 @@ export default function App() {
 
       {/* 主区 */}
       <main className="flex min-w-0 flex-1 flex-col">
-        {/* 移动端顶栏 */}
-        <div className="flex items-center gap-2 border-b border-line bg-paper/90 px-3 py-2 md:hidden">
-          <IconButton
-            icon={IconList}
-            label="清单"
-            onClick={() => setNavOpen(true)}
-            aria-expanded={navOpen}
-            aria-controls="shenshi-nav-drawer"
-          />
-          <SealLogo size={22} />
-          <span className="brand-serif text-[0.90625rem] font-medium">慎始</span>
-          {selectedTaskId !== null ? (
-            <IconButton icon={IconX} label="关闭详情" onClick={closeTask} className="ml-auto" />
-          ) : null}
-        </div>
+        {/* 窄屏的汉堡入口直接并入工具栏标题行（见 Toolbar），不再单设一条顶栏 ——
+            顶部 chrome 少占一行，标题/搜索/页签全部留在一条紧凑头部里。 */}
 
-        <Toolbar filters={filters} onFilters={setFilters} />
+        <Toolbar filters={filters} onFilters={setFilters} onOpenNav={() => setNavOpen(true)} />
         {/* 多选批处理条全局挂一份：各视图（含看板/表格/四象限）进入多选后都能操作 */}
         <BatchBar />
 
@@ -226,7 +214,7 @@ export default function App() {
             移动端此处为 hidden（display:none），offsetHeight 读作 0，逻辑自然适配。 */}
         <footer
           data-app-footer
-          className="hidden shrink-0 items-center gap-3 border-t border-line px-5 py-1.5 text-[0.65625rem] text-ink-3 md:flex"
+          className="hidden shrink-0 items-center gap-3 border-t border-line px-5 py-1.5 text-[0.65625rem] text-ink-3 lg:flex"
         >
           <span>{boot?.app ?? '慎始'} · {boot?.motto ?? '慎始而敬终，行稳致远'}</span>
           <span className="ml-auto tabular-nums">
@@ -236,15 +224,15 @@ export default function App() {
         </footer>
       </main>
 
-      {/* 任务详情：桌面右栏，移动端整屏浮层 */}
+      {/* 任务详情：桌面（≥lg）右栏，窄屏整屏浮层（自带关闭按钮，无需顶栏兜底） */}
       {selectedTaskId !== null ? (
         <>
-          <div className="fixed inset-0 z-30 bg-ink/20 md:hidden" onClick={closeTask} aria-hidden="true" />
+          <div className="fixed inset-0 z-30 bg-ink/20 lg:hidden" onClick={closeTask} aria-hidden="true" />
           <div
             role="dialog"
             aria-modal="true"
             aria-label="任务详情"
-            className="fixed inset-y-0 right-0 z-40 w-full max-w-[400px] md:static md:z-auto md:w-auto md:max-w-none"
+            className="fixed inset-y-0 right-0 z-40 w-full max-w-[400px] lg:static lg:z-auto lg:w-auto lg:max-w-none"
           >
             <TaskDetail taskId={selectedTaskId} onClose={closeTask} />
           </div>

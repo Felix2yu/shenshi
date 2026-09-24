@@ -1427,7 +1427,7 @@ export function SearchBar({ className }: { className?: string }) {
         placeholder="搜索任务与备注"
         // 移动端随容器伸展（工具栏第一行与筛选/排序按钮共行）；
         // 桌面端保持定宽 + 聚焦加宽的原有行为。
-        className="min-w-0 flex-1 bg-transparent text-[0.8125rem] outline-none transition-all placeholder:text-ink-3 md:w-40 md:flex-none md:focus:w-56"
+        className="min-w-0 flex-1 bg-transparent text-[0.8125rem] outline-none transition-all placeholder:text-ink-3 lg:w-40 lg:flex-none lg:focus:w-56"
       />
       {draft ? (
         <button

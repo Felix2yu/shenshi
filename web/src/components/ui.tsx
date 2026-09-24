@@ -88,7 +88,8 @@ export function IconButton({ icon: Icon, label, active, size = 15, tone, classNa
       title={label}
       aria-label={label}
       className={cx(
-        'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors duration-150',
+        // 窄屏（<lg）触控热区放大到 36px（WCAG 2.5.8 目标尺寸），桌面维持 28px 的紧凑排布
+        'inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors duration-150 lg:h-7 lg:w-7',
         active ? 'bg-seal/12 text-seal' : 'text-ink-3 hover:bg-surface-2 hover:text-ink',
         tone === 'danger' && 'hover:text-p-high',
         className,
