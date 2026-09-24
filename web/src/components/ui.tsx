@@ -192,7 +192,7 @@ export function Modal({
   subtitle,
   children,
   footer,
-  width = 520,
+  width = 560,
 }: {
   open: boolean
   onClose: () => void
@@ -278,8 +278,12 @@ export function Modal({
   )
 
   if (!open) return null
+  // 垂直居中定位。早先是 `items-start` + `py-[5vh]`：弹窗从视口顶部下移 5vh 就开始排布，
+  // 内容少的对话框（删除确认、新建分组等）看上去明显「贴顶」，且视口越高越显偏上。
+  // 改为居中后位置由剩余空间均分决定，与内容高度、视口高度都解耦。
+  // 上下留白 1.5rem（略大于左右），避免高内容弹窗顶到视口边缘。
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 py-[5vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
       <div
         className="fixed inset-0 bg-black/28 backdrop-blur-[2px] animate-fade-in"
         onClick={onClose}

@@ -913,7 +913,8 @@ function ConfirmHost() {
       open
       onClose={() => resolveConfirm(false)}
       title={confirmState.title}
-      width={400}
+      // 确认框原为 400：标题（常含任务名）稍长就折行、正文也挤。440 让常见文案单行容得下。
+      width={440}
       footer={
         <>
           <Button
