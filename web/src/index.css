@@ -133,8 +133,27 @@
    基础样式
    ============================================================ */
 
-* {
-  border-color: var(--line);
+/* 表单与通配符重置必须放进 @layer base：未分层规则优先级高于 @layer utilities，
+   若写在外层会把 button/input 上的 text-*/leading-*/font-*、元素上的 border-*/bg-*
+   等工具类静默盖掉（见项目记忆「index.css 未分层重置陷阱」）。
+   放进 base 后，它们仍作为默认值生效，但任何显式工具类都能正确覆盖。 */
+@layer base {
+  * {
+    border-color: var(--line);
+  }
+
+  input,
+  textarea,
+  button,
+  select {
+    font: inherit;
+    color: inherit;
+  }
+
+  input,
+  textarea {
+    background: transparent;
+  }
 }
 
 html,
@@ -187,18 +206,7 @@ a:focus-visible {
   opacity: 1;
 }
 
-input,
-textarea,
-button,
-select {
-  font: inherit;
-  color: inherit;
-}
-
-input,
-textarea {
-  background: transparent;
-}
+/* 上述表单字体 / 背景重置已上移到「基础样式」开头的 @layer base 块，避免未分层盖过工具类。 */
 
 input::placeholder,
 textarea::placeholder {
