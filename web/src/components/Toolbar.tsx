@@ -734,43 +734,47 @@ function SortControl() {
 
 /** 今日三件事：晨省选的三个重点，摆在今天视图最上方。 */
 function TodayFocusStrip() {
-  const { todayFocusIds, tasks, toggleTask, setTodayFocus } = useStore()
-  const focusTasks = todayFocusIds.map((id) => tasks.find((t) => t.id === id)).filter(Boolean)
-  if (focusTasks.length === 0) {
+  const { todayFocusIds, taskIndex, toggleTask, setTodayFocus } = useStore()
+  // 空态只看「是否真的选过重点」，不再依赖当前视图的 tasks 子集——
+  // 焦点任务若不在今天清单里（due 非今日），tasks.find 会失败而误报未选。
+  if (todayFocusIds.length === 0) {
     return (
       <div className="mb-2 flex items-center gap-2 rounded-xl border border-dashed border-line px-3 py-2">
         <IconStar size={13} className="text-ink-3" />
         <span className="text-[0.71875rem] text-ink-3">
-          还没有选定今日重点。打开清单菜单，用「晨省 · 规划今日」挑出三件最要紧的事。
+          还没有选定今日重点。打开清单菜单，用「晨省 · 规划今日」挑出今天最要紧的事——挑 1 件也行，不必凑满 3 件。
         </span>
       </div>
     )
   }
-  const done = focusTasks.filter((t) => t!.status === 'done').length
+  const done = todayFocusIds.filter((id) => taskIndex[id]?.status === 'done').length
   return (
     <div className="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-seal/25 bg-seal/6 px-3 py-2">
       <span className="brand-serif inline-flex items-center gap-1.5 text-[0.78125rem] font-medium text-seal">
         <IconStar size={13} />
         今日三件事
       </span>
-      {focusTasks.map((t) => (
-        <button
-          key={t!.id}
-          type="button"
-          onClick={() => void toggleTask(t!.id)}
-          className={cx(
-            'inline-flex max-w-[220px] items-center gap-1.5 rounded-lg border px-2 py-0.5 text-[0.75rem] transition-colors',
-            t!.status === 'done'
-              ? 'border-jade/30 bg-jade/10 text-ink-3 line-through'
-              : 'border-line bg-surface text-ink hover:border-seal/40',
-          )}
-          title="点击切换完成状态"
-        >
-          <span className="truncate">{t!.title}</span>
-        </button>
-      ))}
+      {todayFocusIds.map((id) => {
+        const t = taskIndex[id]
+        return (
+          <button
+            key={id}
+            type="button"
+            onClick={() => void toggleTask(id)}
+            className={cx(
+              'inline-flex max-w-[220px] items-center gap-1.5 rounded-lg border px-2 py-0.5 text-[0.75rem] transition-colors',
+              t?.status === 'done'
+                ? 'border-jade/30 bg-jade/10 text-ink-3 line-through'
+                : 'border-line bg-surface text-ink hover:border-seal/40',
+            )}
+            title={t ? '点击切换完成状态' : '任务不在当前列表，仍可切换完成状态'}
+          >
+            <span className="truncate">{t?.title ?? '任务'}</span>
+          </button>
+        )
+      })}
       <span className="ml-auto text-[0.6875rem] text-ink-3">
-        {done}/{focusTasks.length} 已了
+        {done}/{todayFocusIds.length} 已了
       </span>
       <button
         type="button"

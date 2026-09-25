@@ -88,6 +88,9 @@ interface StoreShape {
   tags: Tag[]
   counts: Record<string, number>
   todayFocusIds: number[]
+  /** 累计全量任务索引：每次拉取的任务都并入，跨视图保留。今日三件事用它反查标题，
+   *  避免焦点任务不在当前视图 tasks 子集里时 tasks.find 失败、误报「未选定今日重点」。 */
+  taskIndex: Record<number, Task>
   savedFilters: SavedFilter[]
   /** 最近一次删除是否还能挽回；null 表示尚未问过服务端。 */
   undo: UndoState | null
@@ -201,6 +204,7 @@ interface StoreShape {
 
   loadStats: (days?: number) => Promise<void>
   setTodayFocus: (ids: number[]) => Promise<void>
+  registerTasks: (ts: Task[]) => void
 
   startFocus: (taskId: number | null, minutes: number) => void
   stopFocus: (completed: boolean) => Promise<void>
@@ -295,6 +299,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [boot, setBoot] = useState<Bootstrap | null>(null)
   const [tasks, setTasks] = useState<Task[]>([])
   const [tasksLoading, setTasksLoading] = useState(false)
+  // 累计全量任务索引：跨视图保留每个见过的任务，供今日三件事反查标题，
+  // 避免焦点任务不在当前视图 tasks 子集里时 tasks.find 失败、误报「未选定今日重点」。
+  const [taskIndex, setTaskIndex] = useState<Record<number, Task>>({})
+  useEffect(() => {
+    setTaskIndex((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const t of tasks) {
+        if (next[t.id] !== t) {
+          next[t.id] = t
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [tasks])
   const [selection, setSelection] = useState<Selection>(DEFAULT_SELECTION)
   const [view, setView] = useState<ViewKind>('list')
   const [keyword, setKeywordState] = useState('')
@@ -725,6 +745,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       try {
         await api.deleteTask(id)
         setTasks((prev) => prev.filter((t) => t.id !== id))
+        setTaskIndex((prev) => {
+          if (!(id in prev)) return prev
+          const n = { ...prev }
+          delete n[id]
+          return n
+        })
         if (selectedTaskId === id) setSelectedTaskId(null)
         setSelectedIds((prev) => prev.filter((x) => x !== id))
         toast('已删除')
@@ -1287,6 +1313,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [saveSettings],
   )
 
+  /** 把一批任务并入全量索引。晨省快照（overdue/today/inbox）里勾选的任务
+   *  不经过主界面 tasks，需显式注册，今日三件事才能显示真实标题。 */
+  const registerTasks = useCallback((ts: Task[]) => {
+    setTaskIndex((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const t of ts) {
+        if (next[t.id] !== t) {
+          next[t.id] = t
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [])
+
   // ---------- 提醒处理 ----------
 
   const dismissReminder = useCallback((key: string) => {
@@ -1448,6 +1490,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     tags: boot?.tags ?? [],
     counts: boot?.counts ?? {},
     todayFocusIds,
+    taskIndex,
     savedFilters,
     undo,
     activities,
@@ -1525,6 +1568,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     loadStats,
     setTodayFocus,
+    registerTasks,
 
     startFocus,
     stopFocus,

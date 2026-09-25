@@ -134,7 +134,7 @@ function AutoRituals({ onMorning, onReview }: { onMorning: () => void; onReview:
 /* ---------------- 晨省 ---------------- */
 
 function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { lists, todayFocusIds, setTodayFocus, moveTask, updateTask, toggleTask, saveSettings, toast } = useStore()
+  const { lists, todayFocusIds, setTodayFocus, registerTasks, moveTask, updateTask, toggleTask, saveSettings, toast } = useStore()
   const [overdue, setOverdue] = useState<Task[]>([])
   const [today, setToday] = useState<Task[]>([])
   const [inbox, setInbox] = useState<Task[]>([])
@@ -156,6 +156,9 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
       setOverdue(o.tasks)
       setToday(t.tasks)
       setInbox(i.tasks)
+      // 把快照任务并入全量索引，今日三件事才能按 id 反查到真实标题
+      // （这些任务不经过主界面 tasks，否则焦点任务标题会缺失）。
+      registerTasks([...o.tasks, ...t.tasks, ...i.tasks])
     } catch {
       toast('晨省列表刷新失败')
     }
@@ -189,16 +192,20 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
   const line = morningLine(pending, overdueOpen.length, doneToday)
 
   const togglePick = (id: number) => {
+    let next: number[]
     if (picked.includes(id)) {
-      setPicked(picked.filter((x) => x !== id))
-      return
+      next = picked.filter((x) => x !== id)
+    } else {
+      if (picked.length >= 3) {
+        // 上限提示：静默忽略会让用户以为点击没生效。
+        toast('今日重点最多 3 件，先放下一件再选')
+        return
+      }
+      next = [...picked, id]
     }
-    if (picked.length >= 3) {
-      // 上限提示：静默忽略会让用户以为点击没生效。
-      toast('今日重点最多 3 件，先放下一件再选')
-      return
-    }
-    setPicked([...picked, id])
+    setPicked(next)
+    // 勾选即生效：不必等「开始今日」，关闭面板（稍后/X）也不会丢失已选。
+    void setTodayFocus(next)
   }
 
   const start = async () => {
