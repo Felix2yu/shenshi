@@ -804,13 +804,14 @@ function ReminderCenter() {
   if (reminders.length === 0) return null
 
   return (
-    // 提醒是异步冒出来的：接一个 live region，读屏才会念出新到的提醒
+    // 提醒是异步冒出来的：接一个 live region，读屏才会念出新到的提醒。
+    // 移动端：抬到底部视图标签栏（3.5rem）+ 专注指示条（同高）之上，纵向分层；
+    // 宽度不再横向让位给专注条（旧 max-w-[calc(100vw-9rem)] 只剩 ~217px，
+    // 「查看/5 分钟后/30 分钟后」一行挤爆、文字在按钮内折行成竖排）。
     <div
       aria-live="polite"
       aria-atomic="false"
-      // 窄屏留出左侧专注指示条的位置：两个固定浮层曾互相覆盖；
-    // 移动端再抬高避开底部视图标签栏（3rem 栏高 + safe-area）
-      className="fixed bottom-[calc(3.5rem+env(safe-area-inset-bottom))] right-4 z-40 w-[330px] max-w-[calc(100vw-9rem)] animate-rise lg:bottom-4"
+      className="fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] right-3 z-40 w-[330px] max-w-[calc(100vw-1.5rem)] animate-rise lg:bottom-4 lg:right-4"
     >
       <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-lg)]">
         <header className="flex items-center gap-2 border-b border-line bg-seal/8 px-3 py-2">
@@ -860,7 +861,8 @@ function ReminderCenter() {
                       </div>
                     </div>
                   </div>
-                  <div className="mt-1.5 flex items-center gap-1 pl-[26px]">
+                  {/* flex-wrap 兜底极窄屏/fontScale：宁可靠性换行，不可把文字挤进按钮内折行 */}
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1 pl-[26px]">
                     <MiniButton
                       onClick={() => {
                         select({ kind: 'smart', key: 'all' })
