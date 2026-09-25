@@ -69,7 +69,7 @@ jobs:
       # fail_ci_if_error=false —— 没配 token（如 fork PR 拿不到 secrets）时只告警，
       # 不让覆盖率上传这种辅助信号反过来拦住 CI。
       - name: 上传覆盖率到 Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: server/coverage.out
