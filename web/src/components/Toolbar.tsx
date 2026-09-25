@@ -113,6 +113,16 @@ const STATUS_OPTIONS = [
 /** 这些视图直接消费「按当前选择过滤后」的任务，所以顶部要标出作用域。 */
 const SCOPED_VIEWS: ViewKind[] = ['board', 'table', 'calendar', 'quadrant']
 
+/** 副标题段间分隔点：两侧各 12px（gap 10px + px 2px）、45% 淡度，
+ *  与段内普通空格「·」（约 4px）拉开差距，四段边界一眼可辨。 */
+function SubSep({ className }: { className?: string }) {
+  return (
+    <span aria-hidden className={cx('select-none px-0.5 text-ink-3/45', className)}>
+      ·
+    </span>
+  )
+}
+
 /** 日期区间的快捷段落，省得每次去点两个日历控件。 */
 function rangePreset(kind: 'today' | 'week' | 'month'): { from: string; to: string } {
   const base = new Date(`${todayStr()}T00:00:00`)
@@ -268,22 +278,32 @@ export function Toolbar({
                   {title}
                 </h1>
               </div>
-              <p className="mt-0.5 flex flex-wrap items-center gap-2 text-[0.71875rem] text-ink-3">
+              {/* 副标题四段（导语/计数/日期/引文）之间用独立分隔点：比段内的「·」（如
+                  「日期 · 午安」「诗经·大雅」）更宽更淡，段间边界才不会糊成一片 */}
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-2 text-[0.71875rem] text-ink-3">
                 <span>{subtitle}</span>
                 {SCOPED_VIEWS.includes(view) && scopeLabel ? (
-                  <span className="text-ink-3/80">· 范围：{scopeLabel}</span>
+                  <>
+                    <SubSep />
+                    <span className="text-ink-3/80">范围：{scopeLabel}</span>
+                  </>
                 ) : null}
                 {view === 'list' || view === 'board' || view === 'table' ? (
-                  <span className="text-ink-3/80">
-                    · 待办 {openCount}
-                    {doneCount ? ` · 已完成 ${doneCount}` : ''}
-                  </span>
+                  <>
+                    <SubSep />
+                    <span className="text-ink-3/80">
+                      待办 {openCount}
+                      {doneCount ? ` · 已完成 ${doneCount}` : ''}
+                    </span>
+                  </>
                 ) : null}
-                <span className="hidden xl:inline">· {fullDate(todayStr())} · {greeting()}</span>
+                <SubSep className="hidden xl:inline" />
+                <span className="hidden xl:inline">{fullDate(todayStr())} · {greeting()}</span>
                 {/* 每日引文：并入副标题行尾。实测（fontScale 1.2）需视口 ≥1856px 才能单行容纳
                     （侧栏 266 + 副标题 667 + 页签块 871 + 边距），断点取 1880 留余量；
                     更窄的桌面不显示——纯装饰，不值得为它折行占高。 */}
-                <span className="hidden text-ink-3/70 min-[1880px]:inline">· {footnote.text} · {footnote.source}</span>
+                <SubSep className="hidden min-[1880px]:inline" />
+                <span className="hidden text-ink-3/70 min-[1880px]:inline">{footnote.text} · {footnote.source}</span>
               </p>
             </div>
 
