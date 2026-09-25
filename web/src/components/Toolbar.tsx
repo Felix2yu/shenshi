@@ -280,6 +280,10 @@ export function Toolbar({
                   </span>
                 ) : null}
                 <span className="hidden xl:inline">· {fullDate(todayStr())} · {greeting()}</span>
+                {/* 每日引文：并入副标题行尾。实测（fontScale 1.2）需视口 ≥1856px 才能单行容纳
+                    （侧栏 266 + 副标题 667 + 页签块 871 + 边距），断点取 1880 留余量；
+                    更窄的桌面不显示——纯装饰，不值得为它折行占高。 */}
+                <span className="hidden text-ink-3/70 min-[1880px]:inline">· {footnote.text} · {footnote.source}</span>
               </p>
             </div>
 
@@ -302,7 +306,7 @@ export function Toolbar({
           <TodayFocusStrip />
         ) : null}
 
-        {/* 筛选生效提示 */}
+        {/* 筛选生效提示（无筛选时不占任何行：每日引文已并入副标题行尾） */}
         {isFilterActive(filters) ? (
           <div className="flex items-center gap-2 pb-2 pt-2">
             <span className="text-[0.71875rem] text-ink-3">
@@ -317,12 +321,7 @@ export function Toolbar({
               清除
             </button>
           </div>
-        ) : (
-          /* 底部小字脚注：纯装饰性引文，窄屏省掉这行高度 */
-          <div className="hidden items-center justify-end pb-1.5 pt-1 text-[0.65625rem] text-ink-3/70 lg:flex">
-            {footnote.text} · {footnote.source}
-          </div>
-        )}
+        ) : null}
       </div>
     </header>
   )
