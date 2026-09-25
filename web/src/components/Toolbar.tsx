@@ -369,7 +369,10 @@ function ViewTabs() {
             view === v.key ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:text-ink',
           )}
         >
-          <v.icon size={13} />
+          {/* CJK 字形墨迹中心比行盒中心低约 1px（字体度量），items-center 只保证盒居中，
+              图标需光学下移 1px 才与文字墨迹对齐（4x 截图墨迹实测）。
+              例外：IconChart 柱状图形在 viewBox 内天生偏下，与文字墨迹本就对齐，不下移。 */}
+          <v.icon size={13} className={v.key === 'stats' ? undefined : 'translate-y-px'} />
           <span>{v.label}</span>
         </button>
       ))}
