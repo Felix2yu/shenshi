@@ -297,7 +297,7 @@ export function Toolbar({
       )}
 
       <div className="px-3 lg:px-5">
-        {/* 今日三件事 */}
+        {/* 今日重点 */}
         {view === 'list' && selection.kind === 'smart' && (selection.key === 'today' || selection.key === 'all') ? (
           <TodayFocusStrip />
         ) : null}
@@ -732,7 +732,7 @@ function SortControl() {
   )
 }
 
-/** 今日三件事：晨省选的三个重点，摆在今天视图最上方。 */
+/** 今日重点：晨省选的要点，摆在今天视图最上方。 */
 function TodayFocusStrip() {
   const { todayFocusIds, taskIndex, toggleTask, setTodayFocus } = useStore()
   // 空态只看「是否真的选过重点」，不再依赖当前视图的 tasks 子集——
@@ -742,7 +742,7 @@ function TodayFocusStrip() {
       <div className="mb-2 flex items-center gap-2 rounded-xl border border-dashed border-line px-3 py-2">
         <IconStar size={13} className="text-ink-3" />
         <span className="text-[0.71875rem] text-ink-3">
-          还没有选定今日重点。打开清单菜单，用「晨省 · 规划今日」挑出今天最要紧的事——挑 1 件也行，不必凑满 3 件。
+          未设定今日重点。前往「晨省 · 规划今日」挑选今日要事。
         </span>
       </div>
     )
@@ -752,7 +752,7 @@ function TodayFocusStrip() {
     <div className="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-seal/25 bg-seal/6 px-3 py-2">
       <span className="brand-serif inline-flex items-center gap-1.5 text-[0.78125rem] font-medium text-seal">
         <IconStar size={13} />
-        今日三件事
+        今日重点
       </span>
       {todayFocusIds.map((id) => {
         const t = taskIndex[id]

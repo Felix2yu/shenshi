@@ -296,6 +296,18 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
   const subTotal = task.subtaskDone + task.subtaskOpen
   const tagOptions = tags.filter((t) => !task.tags.some((x) => x.id === t.id))
   const repeatOptions = repeatMeta?.presets ?? []
+  // 按 group 分组并保持出现顺序：下拉不再逐行塞分组标签（既挤空间又逼长标签折行），
+  // 改为每组一个小标题，横向空间释放后「每月最后一个工作日」这类长标签可单行容纳。
+  const repeatGroups = useMemo(() => {
+    const map = new Map<string, typeof repeatOptions>()
+    for (const o of repeatOptions) {
+      const arr = map.get(o.group) ?? []
+      arr.push(o)
+      map.set(o.group, arr)
+    }
+    return [...map.entries()]
+  }, [repeatOptions])
+
 
   const addTagByName = async (name: string) => {
     const clean = name.trim().replace(/^#/, '')
@@ -868,26 +880,32 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
               >
                 {describeRepeat(task.repeatRule)}
               </button>
-              <Popover open={repeatPopover} onClose={() => setRepeatPopover(false)} align="left" width={216} side="top">
-                <div className="max-h-72 overflow-y-auto py-1">
-                  {repeatOptions.map((o) => (
-                    <button
-                      key={o.value || 'none'}
-                      type="button"
-                      aria-current={(task.repeatRule ?? '') === o.value ? 'true' : undefined}
-                      onClick={async () => {
-                        await updateTask(task.id, { repeatRule: o.value || null })
-                        setRepeatPopover(false)
-                      }}
-                      className={cx(
-                        'flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[0.78125rem] transition-colors',
-                        (task.repeatRule ?? '') === o.value ? 'bg-seal/10 text-seal' : 'text-ink hover:bg-surface-2',
-                      )}
-                    >
-                      <IconRepeat size={12} className="text-ink-3" />
-                      <span className="flex-1">{o.label}</span>
-                      <span className="text-[0.65625rem] text-ink-3">{o.group}</span>
-                    </button>
+              <Popover open={repeatPopover} onClose={() => setRepeatPopover(false)} align="left" width={232} side="top">
+                {/* 字号/行高设在分组容器（<div>）上：index.css 里未分层的 `button { font: inherit }`
+                    会让按钮继承父级字号，而写在按钮自身的 text-[…] / leading-… 会被那条规则盖掉。 */}
+                <div className="py-1">
+                  {repeatGroups.map(([group, items]) => (
+                    <div key={group} className="text-[0.78125rem] leading-snug">
+                      <div className="px-2.5 pb-0.5 pt-1.5 text-[0.625rem] font-medium tracking-wide text-ink-3">{group}</div>
+                      {items.map((o) => (
+                        <button
+                          key={o.value || 'none'}
+                          type="button"
+                          aria-current={(task.repeatRule ?? '') === o.value ? 'true' : undefined}
+                          onClick={async () => {
+                            await updateTask(task.id, { repeatRule: o.value || null })
+                            setRepeatPopover(false)
+                          }}
+                          className={cx(
+                            'flex w-full items-center gap-2 rounded-lg px-2.5 py-1 text-left text-[0.78125rem] transition-colors',
+                            (task.repeatRule ?? '') === o.value ? 'bg-seal/10 text-seal' : 'text-ink hover:bg-surface-2',
+                          )}
+                        >
+                          <IconRepeat size={12} className="shrink-0 text-ink-3" />
+                          <span className="flex-1 truncate">{o.label}</span>
+                        </button>
+                      ))}
+                    </div>
                   ))}
                   {task.repeatRule ? (
                     <div className="border-t border-line px-2.5 pb-1 pt-2">

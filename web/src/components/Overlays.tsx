@@ -156,7 +156,7 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
       setOverdue(o.tasks)
       setToday(t.tasks)
       setInbox(i.tasks)
-      // 把快照任务并入全量索引，今日三件事才能按 id 反查到真实标题
+      // 把快照任务并入全量索引，今日重点才能按 id 反查到真实标题
       // （这些任务不经过主界面 tasks，否则焦点任务标题会缺失）。
       registerTasks([...o.tasks, ...t.tasks, ...i.tasks])
     } catch {
@@ -292,7 +292,7 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
         {/* 今日 */}
         <Section title="今日到期" count={today.filter((t) => t.status !== 'done').length} tone="accent">
           {today.filter((t) => t.status !== 'done').length === 0 ? (
-            <p className="px-1 py-2 text-[0.78125rem] text-ink-3">今天没有排定的事项，或可挑一件真正要紧的来做。</p>
+            <p className="px-1 py-2 text-[0.78125rem] text-ink-3">今日无排定事项，可补充一件要务。</p>
           ) : (
             today
               .filter((t) => t.status !== 'done')
@@ -440,7 +440,7 @@ function PlanRow({
           {listName}
           {task.dueDate ? ` · ${task.dueDate}` : ''}
           {task.dueTime ? ` ${task.dueTime}` : ''}
-          {picked ? ' · 已列入今日三件事' : ''}
+          {picked ? ' · 已列入今日重点' : ''}
         </div>
       </div>
       <div className="flex items-center gap-1">{actions}</div>

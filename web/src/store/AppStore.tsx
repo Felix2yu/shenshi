@@ -88,7 +88,7 @@ interface StoreShape {
   tags: Tag[]
   counts: Record<string, number>
   todayFocusIds: number[]
-  /** 累计全量任务索引：每次拉取的任务都并入，跨视图保留。今日三件事用它反查标题，
+  /** 累计全量任务索引：每次拉取的任务都并入，跨视图保留。今日重点用它反查标题，
    *  避免焦点任务不在当前视图 tasks 子集里时 tasks.find 失败、误报「未选定今日重点」。 */
   taskIndex: Record<number, Task>
   savedFilters: SavedFilter[]
@@ -299,7 +299,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [boot, setBoot] = useState<Bootstrap | null>(null)
   const [tasks, setTasks] = useState<Task[]>([])
   const [tasksLoading, setTasksLoading] = useState(false)
-  // 累计全量任务索引：跨视图保留每个见过的任务，供今日三件事反查标题，
+  // 累计全量任务索引：跨视图保留每个见过的任务，供今日重点反查标题，
   // 避免焦点任务不在当前视图 tasks 子集里时 tasks.find 失败、误报「未选定今日重点」。
   const [taskIndex, setTaskIndex] = useState<Record<number, Task>>({})
   useEffect(() => {
@@ -1293,7 +1293,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [selection, refreshBoot, refreshTasks, handleError],
   )
 
-  // ---------- 今日三件事 ----------
+  // ---------- 今日重点 ----------
 
   const todayFocusIds = useMemo(() => {
     const raw = settings.dailyFocus
@@ -1314,7 +1314,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 
   /** 把一批任务并入全量索引。晨省快照（overdue/today/inbox）里勾选的任务
-   *  不经过主界面 tasks，需显式注册，今日三件事才能显示真实标题。 */
+   *  不经过主界面 tasks，需显式注册，今日重点才能显示真实标题。 */
   const registerTasks = useCallback((ts: Task[]) => {
     setTaskIndex((prev) => {
       let changed = false
