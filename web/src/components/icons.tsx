@@ -69,10 +69,12 @@ export const IconCalendar = (p: IconProps) => (
 
 export const IconGrid = (p: IconProps) => (
   <Base {...p}>
-    <rect x="3" y="3" width="8" height="8" rx="2" />
-    <rect x="13" y="3" width="8" height="8" rx="2" />
-    <rect x="3" y="13" width="8" height="8" rx="2" />
-    <rect x="13" y="13" width="8" height="8" rx="2" />
+    {/* 四格 8×8 满幅（3→21，墨迹 82%）在页签里显大；缩到 7×7（墨迹 78%）
+        与列表/看板/表格一档，格距微增保持疏密节奏 */}
+    <rect x="3.5" y="3.5" width="7" height="7" rx="2" />
+    <rect x="13.5" y="3.5" width="7" height="7" rx="2" />
+    <rect x="3.5" y="13.5" width="7" height="7" rx="2" />
+    <rect x="13.5" y="13.5" width="7" height="7" rx="2" />
   </Base>
 )
 
@@ -169,10 +171,11 @@ export const IconFolder = (p: IconProps) => (
 
 export const IconList = (p: IconProps) => (
   <Base {...p}>
-    <path d="M8 6h12M8 12h12M8 18h12" />
-    <circle cx="4" cy="6" r="1.2" fill="currentColor" stroke="none" />
-    <circle cx="4" cy="12" r="1.2" fill="currentColor" stroke="none" />
-    <circle cx="4" cy="18" r="1.2" fill="currentColor" stroke="none" />
+    {/* 行距拉开到 8.5、横线延长、圆点左移：墨迹归一到 ~80×80%，与页签图标群一致 */}
+    <path d="M8 3.5h12.75M8 12h12.75M8 20.5h12.75" />
+    <circle cx="3.6" cy="3.5" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="3.6" cy="12" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="3.6" cy="20.5" r="1.2" fill="currentColor" stroke="none" />
   </Base>
 )
 
@@ -232,7 +235,9 @@ export const IconSettings = (p: IconProps) => (
 
 export const IconChart = (p: IconProps) => (
   <Base {...p}>
-    <path d="M4 20h16M7 20v-6M12 20V8M17 20v-9" />
+    {/* 原柱高 6/12/9（墨迹高仅 57%）在页签里显小；按原比例拔高并加长基线
+        （墨迹 ~80×78%），保持「落地」的柱状图形特征与三柱高低节奏 */}
+    <path d="M3.2 20h17.6M7 20v-9M12 20V3M17 20v-12.5" />
   </Base>
 )
 
@@ -271,9 +276,10 @@ export const IconArrowDown = (p: IconProps) => (
 
 export const IconColumns = (p: IconProps) => (
   <Base {...p}>
-    <rect x="3" y="4" width="5.2" height="16" rx="1.8" />
-    <rect x="9.4" y="4" width="5.2" height="11" rx="1.8" />
-    <rect x="15.8" y="4" width="5.2" height="13" rx="1.8" />
+    {/* 三列加高至墨迹 ~80×80%（首列定高，次/末列按原比例 12/14），列宽 5.2→5、距边内收 */}
+    <rect x="3.25" y="3.25" width="5" height="17.5" rx="1.8" />
+    <rect x="9.5" y="3.25" width="5" height="12" rx="1.8" />
+    <rect x="15.75" y="3.25" width="5" height="14" rx="1.8" />
   </Base>
 )
 
@@ -332,8 +338,12 @@ export const IconKeyboard = (p: IconProps) => (
 
 export const IconSparkle = (p: IconProps) => (
   <Base {...p}>
-    <path d="M12 3.5 13.6 9 19 10.6 13.6 12.2 12 17.7 10.4 12.2 5 10.6 10.4 9z" />
-    <path d="M18.5 16.5l.6 2 2 .6-2 .6-.6 2-.6-2-2-.6 2-.6z" />
+    {/* 大星横半径 +8%、整体回中（原墨迹中心 x≈13.05 偏右）：归一 ~80×80%；
+        各向异性仅 8%，描边畸变 <0.1px，无需补偿 */}
+    <g transform="translate(12 12.3) scale(1.08 0.97) translate(-13.05 -12.3)">
+      <path d="M12 3.5 13.6 9 19 10.6 13.6 12.2 12 17.7 10.4 12.2 5 10.6 10.4 9z" />
+      <path d="M18.5 16.5l.6 2 2 .6-2 .6-.6 2-.6-2-2-.6 2-.6z" />
+    </g>
   </Base>
 )
 
@@ -399,9 +409,9 @@ export const IconSubtask = (p: IconProps) => (
 export const IconSeedling = (p: IconProps) => (
   <Base {...p}>
     {/* 原绘制内容仅占 viewBox ~50%（x 6.4-17.6 / y 7.2-20），在等尺寸图标中显小；
-        以内容中心 (12,13.6) 放大 1.4 倍到常规占比（~75%），描边按比例补偿以
+        以内容中心 (12,13.6) 放大（x 1.51 / y 1.4）到 ~80×79% 占比，描边按 y 向比例补偿以
         保持与其他图标一致的笔画视觉重量 */}
-    <g transform="translate(12 13.6) scale(1.4) translate(-12 -13.6)" strokeWidth={1.7 / 1.4}>
+    <g transform="translate(12 13.6) scale(1.51 1.4) translate(-12 -13.6)" strokeWidth={1.7 / 1.4}>
       <path d="M12 20v-7" />
       <path d="M12 13c0-3.3-2.4-5.8-5.6-5.8C6.4 10.5 8.8 13 12 13z" />
       <path d="M12 13c0-3.3 2.4-5.8 5.6-5.8C17.6 10.5 15.2 13 12 13z" />
@@ -436,8 +446,9 @@ export const IconLink = (p: IconProps) => (
 /** 表格：单元格网格。 */
 export const IconTable = (p: IconProps) => (
   <Base {...p}>
-    <rect x="3" y="4.5" width="18" height="15" rx="2" />
-    <path d="M3 9.5h18M3 14.5h18M9.5 9.5v10M15 9.5v10" />
+    {/* 外框 18×15 → 17.5×17.5 居中，墨迹归一 ~80×80%；分隔线保持三等分行 / 36%-67% 列 */}
+    <rect x="3.25" y="3.25" width="17.5" height="17.5" rx="2" />
+    <path d="M3.25 9.1h17.5M3.25 14.9h17.5M9.5 9.1v11.65M15 9.1v11.65" />
   </Base>
 )
 

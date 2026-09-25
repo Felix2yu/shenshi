@@ -371,8 +371,8 @@ function ViewTabs() {
         >
           {/* CJK 字形墨迹中心比行盒中心低约 1px（字体度量），items-center 只保证盒居中，
               图标需光学下移 1px 才与文字墨迹对齐（4x 截图墨迹实测）。
-              例外：IconChart 柱状图形在 viewBox 内天生偏下，与文字墨迹本就对齐，不下移。 */}
-          <v.icon size={13} className={v.key === 'stats' ? undefined : 'translate-y-px'} />
+              全体页签图标墨迹中心均近 viewBox 中心（统计柱状图已拔高归一），统一处理。 */}
+          <v.icon size={13} className="translate-y-px" />
           <span>{v.label}</span>
         </button>
       ))}
