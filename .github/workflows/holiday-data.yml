@@ -1,0 +1,86 @@
+name: 节假日数据
+
+# 国务院办公厅每年 11 月前后发布次年放假安排，数据不能靠推算 —— 本工作流负责盯着。
+#
+# 这里刻意**不在构建时联网拉取**，而是「检测到变化就开一个 PR」：
+#   ① 构建保持可复现 —— 同一份源码无论何时构建，产物一致，不会今天编出来的和上周不一样；
+#   ② 主构建不依赖外部服务 —— jsdelivr 抽风不会让 CI 变红；
+#   ③ 数据变更进 git —— 什么时候改的、改了哪天，diff 与 blame 可查；
+#   ④ 合并前仍经过 go test 的交叉校验（法定假日必须都被官方标为放假）。
+#
+# 与 .github/dependabot.yml 是同一套路：自动检测、开 PR、人工合并。
+
+on:
+  schedule:
+    # 每周一 UTC 04:00，避开 build.yml 的 03:00 空跑。
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      years:
+        description: 要同步的年份（逗号分隔）。留空默认「当年 + 次年」
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: holiday-data
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: 同步并开 PR
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      # 默认盯当年与次年：11 月发文后，次年数据一出现就会被这里捡到。
+      # 尚未发布的年份脚本会自动跳过（不算失败），所以定时任务不会因为「还没发文」而假红。
+      - name: 同步官方数据
+        id: sync
+        run: |
+          YEARS="${{ inputs.years }}"
+          if [ -z "$YEARS" ]; then
+            Y=$(date -u +%Y)
+            YEARS="$Y,$((Y + 1))"
+          fi
+          echo "years=$YEARS" >> "$GITHUB_OUTPUT"
+          node scripts/holiday-cn.mjs --sync "$YEARS"
+
+      # 数据自洽性校验：每一年的法定假日都必须被官方标成放假（法律写死放假，
+      # 通知不可能安排上班），另有 2024 / 2025 / 2026 三年的逐日用例钉住具体日期。
+      - name: 校验数据自洽
+        run: go test ./internal/lunar/
+        working-directory: server
+
+      # 无变更时这个 action 会自己什么都不做，不会开出空 PR。
+      - name: 开 PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: chore/holiday-data
+          title: "chore: 更新法定节假日数据"
+          commit-message: "chore(holiday): 同步国务院公布的放假安排"
+          body: |
+            国务院发布了新的放假安排，`scripts/holiday-cn.mjs --sync ${{ steps.sync.outputs.years }}` 检测到变化。
+
+            数据来源：[NateScarlet/holiday-cn](https://github.com/NateScarlet/holiday-cn)（每日抓取国务院公告），
+            文件里带国务院原文链接，可对照 `holidays.json` 的 `papers` 字段核对。
+
+            **合并前请扫一眼 diff**：确认放假区间与调休上班日的天数对得上。
+            合并后需重新构建（`holidays.json` 由 `go:embed` 打进二进制）。
+          labels: |
+            chore
+          delete-branch: true
