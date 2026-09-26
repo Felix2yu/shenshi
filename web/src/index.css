@@ -28,6 +28,8 @@
   --p-high: #c1453a;
   --p-mid: #bf8324;
   --p-low: #4f7f9e;
+  /* 法定节假日在日历里要能被一眼扫到：比正文亮、又不能和「高优先级」的标签撞色。 */
+  --holiday: #bf3b30;
   --shadow-sm: 0 1px 2px rgb(60 48 32 / 0.06), 0 1px 3px rgb(60 48 32 / 0.04);
   --shadow-md: 0 4px 16px -4px rgb(60 48 32 / 0.12), 0 2px 6px -2px rgb(60 48 32 / 0.08);
   --shadow-lg: 0 18px 48px -12px rgb(48 38 24 / 0.22), 0 4px 12px -4px rgb(48 38 24 / 0.1);
@@ -58,6 +60,7 @@
   --p-high: #e0705e;
   --p-mid: #dfaa55;
   --p-low: #7aa9c6;
+  --holiday: #e8836f;
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
   --shadow-md: 0 6px 20px -6px rgb(0 0 0 / 0.55);
   --shadow-lg: 0 22px 56px -16px rgb(0 0 0 / 0.7);
@@ -94,6 +97,7 @@
   --color-p-high: var(--p-high);
   --color-p-mid: var(--p-mid);
   --color-p-low: var(--p-low);
+  --color-holiday: var(--holiday);
 
   --font-serif: 'Songti SC', 'Noto Serif SC', 'Source Han Serif SC', 'STSong', serif;
   --font-sans: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB',

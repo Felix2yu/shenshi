@@ -15,11 +15,12 @@ import {
   weekDays,
   weekdayHeaders,
 } from '../lib/date'
+import { describeDay, labelClass, useCalendarInfo, workMark } from '../lib/calendar'
 import { applyFilter, type TaskFilter } from '../lib/filter'
 import { useIMEGuard } from '../lib/ime'
 import { parseQuickAdd } from '../lib/nlp'
 import { useStore } from '../store/AppStore'
-import type { Task } from '../types'
+import type { CalendarDayInfo, Task } from '../types'
 import { IconChevronLeft, IconChevronRight, IconClock, IconPlus, IconRepeat, IconX } from './icons'
 import { DRAG_MIME, PriorityFlag } from './TaskViews'
 import { IconButton, cx } from './ui'
@@ -37,6 +38,13 @@ const HOURS = Array.from({ length: 24 }, (_, i) => i)
 const BLOCK_MIN_H = 26
 
 const isTimeStr = (v: string | null): v is string => !!v && /^\d{2}:\d{2}$/.test(v)
+
+/** 把 [from, to] 摊成日期数组，交给农历缓存层一次性取回。 */
+function dateRange(from: string, to: string): string[] {
+  const out: string[] = []
+  for (let d = from; d <= to; d = addDays(d, 1)) out.push(d)
+  return out
+}
 
 /** 时间轴上的任务块布局：重叠的任务并排，互不重叠的各自占满整行。 */
 function placeDay(rows: { task: Task; start: number; end: number }[]) {
@@ -101,6 +109,10 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
   }, [range.from, range.to, version])
 
   const visible = useMemo(() => applyFilter(items, filter), [items, filter])
+
+  // 农历与法定节假日：按当前可见区间整段取回，翻月时只多打一个接口。
+  const calDays = useMemo(() => dateRange(range.from, range.to), [range.from, range.to])
+  const cal = useCalendarInfo(calDays)
 
   const byDay = useMemo(() => {
     const map = new Map<string, Task[]>()
@@ -219,6 +231,11 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
           <span className="hidden text-[0.71875rem] text-ink-3 lg:block">
             {mode === 'day' ? '拖动任务到时间轴即可改时间，点空白处新建' : '拖动任务卡片可直接改期'}
           </span>
+          {[...cal.values()].some((d) => d.estimated) ? (
+            <span className="hidden whitespace-nowrap text-[0.71875rem] text-ink-3 lg:block" title="该年的放假调休安排国务院尚未公布，日历只标注《放假办法》规定的法定假日">
+              · 含推算节假日（调休待公布）
+            </span>
+          ) : null}
           <div role="group" aria-label="日历粒度" className="flex shrink-0 rounded-lg border border-line p-0.5">
             {(['day', 'week', 'month'] as Mode[]).map((m) => (
               <button
@@ -285,6 +302,7 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
             anchor={anchor}
             weekStart={weekStart}
             byDay={byDay}
+            cal={cal}
             today={today}
             dropDay={dropDay}
             setDropDay={setDropDay}
@@ -301,6 +319,7 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
             anchor={anchor}
             weekStart={weekStart}
             byDay={byDay}
+            cal={cal}
             today={today}
             dropDay={dropDay}
             setDropDay={setDropDay}
@@ -315,6 +334,7 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
         ) : (
           <DayView
             day={anchor}
+            dayInfo={cal.get(anchor)}
             today={today}
             tasks={byDay.get(anchor) ?? []}
             onOpen={onOpen}
@@ -336,6 +356,8 @@ interface GridProps {
   anchor: string
   weekStart: 0 | 1
   byDay: Map<string, Task[]>
+  /** 农历与节假日信息，按日期索引；缺哪天就退化为只显示公历。 */
+  cal: Map<string, CalendarDayInfo>
   today: string
   dropDay: string | null
   setDropDay: (d: string | null) => void
@@ -353,6 +375,7 @@ function DayCell({
   tasks,
   today,
   isCurrentMonth,
+  dayInfo,
   dropDay,
   setDropDay,
   onDrop,
@@ -368,6 +391,7 @@ function DayCell({
   tasks: Task[]
   today: string
   isCurrentMonth: boolean
+  dayInfo?: CalendarDayInfo
   dropDay: string | null
   setDropDay: (d: string | null) => void
   onDrop: (e: DragEvent<HTMLDivElement>, day: string) => void
@@ -388,12 +412,14 @@ function DayCell({
   const cap = compact ? 6 : 3
   const visible = showAll ? tasks : tasks.slice(0, cap)
   const rest = tasks.length - visible.length
+  const calText = describeDay(dayInfo)
 
   return (
     <div
-      // 读屏浏览日期格时先报「几月几日、有几件事」，否则一串裸数字无从辨识
+      // 读屏浏览日期格时先报「几月几日、农历几何、有几件事」，否则一串裸数字无从辨识
       role="group"
-      aria-label={`${Number(day.slice(5, 7))} 月 ${Number(day.slice(8, 10))} 日，${tasks.length} 项任务`}
+      aria-label={`${Number(day.slice(5, 7))} 月 ${Number(day.slice(8, 10))} 日${calText ? `，${calText}` : ''}，${tasks.length} 项任务`}
+      title={calText || undefined}
       onDragOver={(e) => {
         e.preventDefault()
         // dragover 高频触发，只在进入新的日期格时才更新高亮
@@ -402,7 +428,8 @@ function DayCell({
       onDragLeave={() => setDropDay(null)}
       onDrop={(e) => void onDrop(e, day)}
       className={cx(
-        'group/day relative flex min-h-[92px] flex-col gap-1 border-b border-r border-line p-1.5 transition-colors',
+        // 多出一行农历，格子高度相应加一点，否则任务区会被挤没。
+        'group/day relative flex min-h-[106px] flex-col gap-0.5 border-b border-r border-line p-1.5 transition-colors',
         isCurrentMonth ? 'bg-surface' : 'bg-surface-2/40',
         dropDay === day && 'drop-target',
       )}
@@ -417,7 +444,7 @@ function DayCell({
         >
           {Number(day.slice(8, 10))}
         </span>
-          {overdue && tasks.some((t) => t.status !== 'done') ? (
+        {overdue && tasks.some((t) => t.status !== 'done') ? (
           <span className="text-[0.59375rem] text-p-high">逾期</span>
         ) : null}
         <IconButton
@@ -428,6 +455,33 @@ function DayCell({
           onClick={() => setAdding(adding === day ? null : day)}
           className="ml-auto opacity-0 transition-opacity group-hover/day:opacity-100"
         />
+      </div>
+
+      {/* 农历 / 节气 / 法定节假日：照苹果日历的样子，公历数字下面挂一行小字。 */}
+      <div className="flex min-h-[0.8125rem] items-center gap-1">
+        {dayInfo ? (
+          <>
+            <span
+              className={cx(
+                'min-w-0 flex-1 truncate text-[0.625rem] leading-tight',
+                labelClass(dayInfo),
+                !isCurrentMonth && 'opacity-60',
+              )}
+            >
+              {dayInfo.label}
+            </span>
+            {/* 休 / 班：只在「本来要上班却放假」或「本来休息却要上班」时挂，周末不提醒 */}
+            {workMark(dayInfo) === '休' ? (
+              <span className="shrink-0 rounded-[3px] bg-holiday/12 px-[3px] text-[0.5625rem] leading-tight text-holiday">
+                休
+              </span>
+            ) : workMark(dayInfo) === '班' ? (
+              <span className="shrink-0 rounded-[3px] bg-surface-3 px-[3px] text-[0.5625rem] leading-tight text-ink-3">
+                班
+              </span>
+            ) : null}
+          </>
+        ) : null}
       </div>
 
       {visible.map((t) => (
@@ -524,6 +578,7 @@ function MonthGrid(props: GridProps) {
             tasks={props.byDay.get(day) ?? []}
             today={props.today}
             isCurrentMonth={Number(day.slice(5, 7)) === monthIdx}
+            dayInfo={props.cal.get(day)}
             dropDay={props.dropDay}
             setDropDay={props.setDropDay}
             onDrop={props.onDrop}
@@ -549,18 +604,31 @@ function WeekGrid(props: GridProps) {
       className="overflow-hidden rounded-xl border-l border-t border-line"
     >
       <div className="grid grid-cols-7">
-        {days.map((day) => (
-          <div
-            key={day}
-            className={cx(
-              'flex items-center justify-center gap-1.5 border-b border-r border-line bg-surface-2 px-2 py-1.5 text-[0.71875rem]',
-              day === props.today ? 'text-seal' : 'text-ink-3',
-            )}
-          >
-            {weekdayHeaders(props.weekStart)[days.indexOf(day)]}
-            <span className={cx('tabular-nums', day === props.today && 'font-semibold')}>{Number(day.slice(8, 10))}</span>
-          </div>
-        ))}
+        {days.map((day) => {
+          const info = props.cal.get(day)
+          return (
+            <div
+              key={day}
+              title={describeDay(info) || undefined}
+              className={cx(
+                'flex min-w-0 flex-col items-center border-b border-r border-line bg-surface-2 px-2 py-1.5 text-[0.71875rem]',
+                day === props.today ? 'text-seal' : 'text-ink-3',
+              )}
+            >
+              <span className="flex min-w-0 items-center gap-1.5">
+                {weekdayHeaders(props.weekStart)[days.indexOf(day)]}
+                <span className={cx('tabular-nums', day === props.today && 'font-semibold')}>
+                  {Number(day.slice(8, 10))}
+                </span>
+              </span>
+              {info ? (
+                <span className={cx('max-w-full truncate text-[0.625rem] leading-tight', labelClass(info))}>
+                  {info.label}
+                </span>
+              ) : null}
+            </div>
+          )
+        })}
         {days.map((day) => (
           <DayCell
             key={day}
@@ -568,6 +636,7 @@ function WeekGrid(props: GridProps) {
             tasks={props.byDay.get(day) ?? []}
             today={props.today}
             isCurrentMonth
+            dayInfo={props.cal.get(day)}
             compact
             dropDay={props.dropDay}
             setDropDay={props.setDropDay}
@@ -591,6 +660,7 @@ function WeekGrid(props: GridProps) {
 
 interface DayProps {
   day: string
+  dayInfo?: CalendarDayInfo
   today: string
   tasks: Task[]
   onOpen: (t: Task) => void
@@ -605,7 +675,8 @@ interface DayProps {
 
 /** 日视图：24 小时时间轴，任务按时段成块排布，可拖动改时间、点空白处新建。 */
 function DayView(props: DayProps) {
-  const { day, today, tasks, onOpen, onMoveToTime, onCreateAt, adding, setAdding, draft, setDraft, onDropDay } = props
+  const { day, dayInfo, today, tasks, onOpen, onMoveToTime, onCreateAt, adding, setAdding, draft, setDraft, onDropDay } =
+    props
   const { compositionProps, isComposing } = useIMEGuard()
   const scroller = useRef<HTMLDivElement>(null)
   const [dragTime, setDragTime] = useState<string | null>(null)
@@ -679,6 +750,32 @@ function DayView(props: DayProps) {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-line">
+      {/* 农历与法定节假日：日视图只盯一天，信息铺开说清楚。 */}
+      {dayInfo ? (
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 border-b border-line bg-surface-2/40 px-3 py-1.5 text-[0.71875rem]">
+          <span className="whitespace-nowrap text-ink-2">{dayInfo.lunarFull}</span>
+          {dayInfo.solarTerm && !dayInfo.holiday.startsWith(dayInfo.solarTerm) ? (
+            <span className="whitespace-nowrap text-ink-3">{dayInfo.solarTerm}</span>
+          ) : null}
+          {dayInfo.festival ? (
+            <span className="whitespace-nowrap text-holiday">{dayInfo.festival}</span>
+          ) : dayInfo.holiday ? (
+            <span className="whitespace-nowrap text-holiday">{dayInfo.holiday}</span>
+          ) : null}
+          {dayInfo.kind === 'workday' ? (
+            <span className="shrink-0 rounded-[3px] bg-surface-3 px-1 text-[0.625rem] text-ink-3">调休上班</span>
+          ) : dayInfo.isHoliday ? (
+            <span className="shrink-0 rounded-[3px] bg-holiday/12 px-1 text-[0.625rem] text-holiday">放假</span>
+          ) : dayInfo.holidaySpan ? (
+            <span className="whitespace-nowrap text-ink-3">{dayInfo.holidaySpan}假期</span>
+          ) : null}
+          <span className="ml-auto whitespace-nowrap text-ink-3">
+            {dayInfo.zodiac}年 · {dayInfo.ganZhi}
+            {dayInfo.estimated ? ' · 调休安排待公布' : ''}
+          </span>
+        </div>
+      ) : null}
+
       {/* 全天区：无时刻的任务；把时间轴上的块拖回这里可撤销时刻。 */}
       <div
         onDragOver={(e) => {

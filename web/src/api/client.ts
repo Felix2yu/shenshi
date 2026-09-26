@@ -6,6 +6,7 @@ import type {
   BackupStatus,
   BatchAction,
   Bootstrap,
+  CalendarMeta,
   FocusSession,
   Habit,
   HabitBoard,
@@ -322,6 +323,8 @@ export const api = {
     request<{ ok: boolean }>('POST', '/api/reminders/reset', taskId ? { taskId } : {}),
 
   repeatMeta: () => request<RepeatMeta>('GET', '/api/meta/repeat'),
+  calendarMeta: (from: string, to: string) =>
+    request<CalendarMeta>('GET', `/api/meta/calendar?from=${from}&to=${to}`),
 
   // ---- 附件 ----
   listAttachments: (taskId: number) => request<Attachment[]>('GET', `/api/tasks/${taskId}/attachments`),

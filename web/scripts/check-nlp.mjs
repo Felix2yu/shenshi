@@ -95,6 +95,11 @@ check('每周', '读书 每周', { repeatRule: 'weekly', title: '读书' })
 check('每周某几日', '每周一、三、五晨跑', { repeatRule: 'weekly:1,3,5', title: '晨跑' })
 check('每月某日', '每月15日交房租', { repeatRule: 'monthly:15', title: '交房租' })
 check('每月最后一天', '每月最后一天结账', { repeatRule: 'monthly:last', title: '结账' })
+check('农历每月', '农历每月给家里转钱', { repeatRule: 'lunar:monthly', title: '给家里转钱' })
+check('农历每年', '农历每年生日提醒', { repeatRule: 'lunar:yearly', title: '生日提醒' })
+check('法定工作日', '法定工作日写周报', { repeatRule: 'legalworkday', title: '写周报' })
+check('法定节假日', '法定节假日给长辈打电话', { repeatRule: 'legalholiday', title: '给长辈打电话' })
+check('每个周末', '每个周末大扫除', { repeatRule: 'weekends', title: '大扫除' })
 check('每隔N天', '每2天浇花', { repeatRule: 'every:2:day', title: '浇花' })
 check('艾宾浩斯', '复习笔记 艾宾浩斯', { repeatRule: 'ebbinghaus:0', title: '复习笔记' })
 
@@ -157,6 +162,11 @@ console.log('\n重复规则描述')
 for (const [rule, expect] of [
   ['daily', '每天'],
   ['weekdays', '每个工作日'],
+  ['weekends', '每个周末'],
+  ['legalworkday', '每个法定工作日'],
+  ['legalholiday', '每个法定节假日'],
+  ['lunar:monthly', '农历每月'],
+  ['lunar:yearly', '农历每年'],
   ['weekly:1,3,5', '每周一、三、五'],
   ['monthly:last', '每月最后一天'],
   ['monthly:15', '每月 15 日'],

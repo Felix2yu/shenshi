@@ -369,6 +369,54 @@ export interface RepeatMeta {
   ebbinghausOffsets: number[]
 }
 
+/** 一天的农历 / 节气 / 法定节假日信息。全部由后端计算，前端只负责渲染。 */
+export interface CalendarDayInfo {
+  date: string
+  /** 农历月 1~12 */
+  lunarMonth: number
+  /** 农历日 1~30 */
+  lunarDay: number
+  isLeapMonth: boolean
+  /** 初一显示「九月」，其余显示「十五」 */
+  lunarText: string
+  /** 「农历九月初五」 */
+  lunarFull: string
+  ganZhi: string
+  zodiac: string
+  /** 农历传统节日：春节 / 中秋 / 除夕 … */
+  festival: string
+  /** 二十四节气 */
+  solarTerm: string
+  /** 法定节假日名称（放假办法规定的 13 天口径）：元旦 / 春节 / 国庆节 … */
+  holiday: string
+  /** 所在官方连休区间的节名：10 月 5 日不是法定假日，但仍属「国庆节」假期 */
+  holidaySpan: string
+  /** 日历格里要显示的那一行文本 */
+  label: string
+  /** 该行文本的来源：festival（农历节日）/ holiday（法定节假日）/ term（节气）/ lunar（农历日） */
+  labelKind: 'festival' | 'holiday' | 'term' | 'lunar'
+  /** normal（普通工作日）/ weekend（周末）/ holiday（法定节假日）/ rest（调休放假）/ workday（调休上班） */
+  kind: 'normal' | 'weekend' | 'holiday' | 'rest' | 'workday'
+  /** 法定休息日 */
+  isRest: boolean
+  /** 法定工作日 */
+  isWorkday: boolean
+  /** 法定节假日（放假办法规定的 13 天） */
+  isHoliday: boolean
+  /** 周末调休上班 */
+  makeUpWork: boolean
+  /** 该年的调休安排尚未公布，休息日为按放假办法推算的结果 */
+  estimated: boolean
+  /** 超出农历数据范围（1900 ~ 2100 之外） */
+  notSupported: boolean
+}
+
+export interface CalendarMeta {
+  days: CalendarDayInfo[]
+  /** 已录入官方放假安排的年份 */
+  officialYears: number[]
+}
+
 /** 列表视图类型 */
 export type ViewKind = 'list' | 'board' | 'table' | 'calendar' | 'quadrant' | 'stats' | 'habits'
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 
 import { api } from '../api/client'
+import { describeDay, labelClass, useCalendarInfo } from '../lib/calendar'
 import { addDays, addMonths, dayDiff, fullDate, relativeTime, todayStr, weekday } from '../lib/date'
 import { renderMarkdown } from '../lib/markdown'
 import { describeRepeat } from '../lib/nlp'
@@ -296,6 +297,8 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
   const subTotal = task.subtaskDone + task.subtaskOpen
   const tagOptions = tags.filter((t) => !task.tags.some((x) => x.id === t.id))
   const repeatOptions = repeatMeta?.presets ?? []
+  // 到期日的农历与节假日：只取这一天，缓存命中后翻其他任务不再打接口。
+  const dueDayInfo = useCalendarInfo(task.dueDate ? [task.dueDate] : []).get(task.dueDate ?? '')
   // 按 group 分组并保持出现顺序：下拉不再逐行塞分组标签（既挤空间又逼长标签折行），
   // 改为每组一个小标题，横向空间释放后「每月最后一个工作日」这类长标签可单行容纳。
   const repeatGroups = useMemo(() => {
@@ -757,6 +760,9 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                   <IconClock size={12} />
                   {task.dueDate ? `${fullDate(task.dueDate)}${task.dueTime ? ` ${task.dueTime}` : ''}` : '选择日期'}
                 </button>
+                {dueDayInfo ? (
+                  <span className={cx('text-[0.6875rem]', labelClass(dueDayInfo))}>{describeDay(dueDayInfo)}</span>
+                ) : null}
               </div>
               <Popover open={datePopover} onClose={() => setDatePopover(false)} align="left" width={252} side="top">
                 <div className="space-y-2.5 p-1">
@@ -880,7 +886,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
               >
                 {describeRepeat(task.repeatRule)}
               </button>
-              <Popover open={repeatPopover} onClose={() => setRepeatPopover(false)} align="left" width={232} side="top">
+              <Popover open={repeatPopover} onClose={() => setRepeatPopover(false)} align="left" width={264} side="top">
                 {/* 字号/行高设在分组容器（<div>）上：index.css 里未分层的 `button { font: inherit }`
                     会让按钮继承父级字号，而写在按钮自身的 text-[…] / leading-… 会被那条规则盖掉。 */}
                 <div className="py-1">
@@ -938,7 +944,8 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                       </p>
                     </div>
                   ) : null}
-                  {repeatMeta?.ebbinghausOffsets.length ? (
+                  {/* 仅在选中艾宾浩斯时给间隔说明：常驻会在本已很长的菜单里白占一行。 */}
+                  {task.repeatRule?.startsWith('ebbinghaus') && repeatMeta?.ebbinghausOffsets.length ? (
                     <p className="border-t border-line px-2.5 pb-1 pt-2 text-[0.6875rem] leading-relaxed text-ink-3">
                       艾宾浩斯复习间隔（天）：{repeatMeta.ebbinghausOffsets.join(' / ')}
                     </p>

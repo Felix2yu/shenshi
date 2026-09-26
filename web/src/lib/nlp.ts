@@ -163,6 +163,13 @@ export function parseQuickAdd(input: string, ctx: ParseContext = {}): ParsedInpu
   //    否则「每月15日」会被「每月」抢先吞掉。
   const repeatPatterns: { re: RegExp; build: (m: RegExpExecArray) => string | null; label: string }[] = [
     { re: /艾宾浩斯/u, build: () => 'ebbinghaus:0', label: '艾宾浩斯记忆曲线' },
+    // 农历与节假日：这几条必须排在「每月 / 每年 / 每周」之前，
+    // 否则「农历每月」会被裸的「每月」先吞掉。
+    { re: /农历每(?:个)?月/u, build: () => 'lunar:monthly', label: '农历每月' },
+    { re: /农历每(?:个)?年/u, build: () => 'lunar:yearly', label: '农历每年' },
+    { re: /法定工作日/u, build: () => 'legalworkday', label: '每个法定工作日' },
+    { re: /法定节假日|每个?节假日/u, build: () => 'legalholiday', label: '每个法定节假日' },
+    { re: /每个?周末/u, build: () => 'weekends', label: '每个周末' },
     { re: /每个?工作日/u, build: () => 'weekdays', label: '每个工作日' },
     { re: /每月(?:的)?最后一个工作日/u, build: () => 'monthly:lastworkday', label: '每月最后一个工作日' },
     {
@@ -455,6 +462,14 @@ export function describeRepeat(rule: string | null | undefined): string {
       return '每天'
     case 'weekdays':
       return '每个工作日'
+    case 'weekends':
+      return '每个周末'
+    case 'legalworkday':
+      return '每个法定工作日'
+    case 'legalholiday':
+      return '每个法定节假日'
+    case 'lunar':
+      return arg === 'yearly' ? '农历每年' : '农历每月'
     case 'weekly':
       if (!arg) return '每周'
       return `每周${arg.split(',').map((n) => '日一二三四五六'[Number(n)] ?? n).join('、')}`
@@ -497,5 +512,5 @@ export const QUICK_ADD_HINTS = [
   { syntax: '!高', desc: '设定优先级（! / !! / !!!）' },
   { syntax: '@重要 @紧急', desc: '标记四象限' },
   { syntax: '＃标签 ／清单 ！高', desc: '全角符号同样识别' },
-  { syntax: '每天 / 每周一 / 每月15日', desc: '设定重复' },
+  { syntax: '每天 / 每周一 / 农历每月', desc: '设定重复' },
 ]
