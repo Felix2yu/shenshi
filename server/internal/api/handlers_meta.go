@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/yufei/shendu/server/internal/lunar"
 	"github.com/yufei/shendu/server/internal/model"
 	"github.com/yufei/shendu/server/internal/store"
 )
@@ -464,7 +465,7 @@ func (s *Server) repeatMeta(w http.ResponseWriter, r *http.Request) error {
 	presets := []repeatPreset{
 		{Value: "", Label: "不重复", Group: "基础"},
 		{Value: "daily", Label: "每天", Group: "基础"},
-		{Value: "weekdays", Label: "每个工作日", Group: "基础"},
+		{Value: "weekdays", Label: "每个工作日（周一至周五）", Group: "基础"},
 		{Value: "weekly", Label: "每周", Group: "基础"},
 		{Value: "monthly", Label: "每月", Group: "基础"},
 		{Value: "yearly", Label: "每年", Group: "基础"},
@@ -479,6 +480,13 @@ func (s *Server) repeatMeta(w http.ResponseWriter, r *http.Request) error {
 		{Value: "weekly:1", Label: "每周一", Group: "星期与月末"},
 		{Value: "weekly:5", Label: "每周五", Group: "星期与月末"},
 		{Value: "weekly:1,3,5", Label: "每周一、三、五", Group: "星期与月末"},
+		// 农历与节假日：判定口径与日历展示共用 internal/lunar 的数据。
+		// 排在使用频率更高的「记忆」之前，免得长菜单里要多滚一屏才找到。
+		{Value: "lunar:monthly", Label: "农历每月同一天", Group: "农历与节假日"},
+		{Value: "lunar:yearly", Label: "农历每年同一天", Group: "农历与节假日"},
+		{Value: "legalworkday", Label: "每个法定工作日", Group: "农历与节假日"},
+		{Value: "weekends", Label: "每个周末", Group: "农历与节假日"},
+		{Value: "legalholiday", Label: "每个法定节假日", Group: "农历与节假日"},
 		{Value: "ebbinghaus:0", Label: "艾宾浩斯记忆曲线", Group: "记忆"},
 	}
 	offsets := store.EbbinghausOffsets()
@@ -492,4 +500,42 @@ func (s *Server) repeatMeta(w http.ResponseWriter, r *http.Request) error {
 		"ebbinghausDays":    strOffsets,
 	})
 	return nil
+}
+
+// ---------- 日历元数据（农历 / 节气 / 法定节假日） ----------
+
+// calendarMeta 返回一段日期区间内每天的农历与节假日信息。
+//
+// 前端不自己算农历：一旦两端各算一遍，日历显示的农历和「农历每月重复」排出来的日子
+// 迟早会对不上。这里统一出一份结果，前端只负责渲染。
+func (s *Server) calendarMeta(w http.ResponseWriter, r *http.Request) error {
+	q := r.URL.Query()
+	from, err := time.ParseInLocation("2006-01-02", q.Get("from"), time.Local)
+	if err != nil {
+		return store.ValidationError{Msg: "from 应为 YYYY-MM-DD"}
+	}
+	to := from
+	if v := q.Get("to"); v != "" {
+		to, err = time.ParseInLocation("2006-01-02", v, time.Local)
+		if err != nil {
+			return store.ValidationError{Msg: "to 应为 YYYY-MM-DD"}
+		}
+	}
+	days := lunar.DayInfos(from, to)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"days":          days,
+		"officialYears": officialYearsList(),
+	})
+	return nil
+}
+
+// officialYearsList 列出已录入官方放假安排的年份，供前端提示「哪几年的调休是确定的」。
+func officialYearsList() []int {
+	var out []int
+	for y := lunar.MinYear; y <= lunar.MaxYear; y++ {
+		if lunar.HasOfficialData(y) {
+			out = append(out, y)
+		}
+	}
+	return out
 }

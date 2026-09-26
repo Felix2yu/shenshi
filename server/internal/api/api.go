@@ -235,6 +235,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/reminders/snooze", h(s.snoozeReminder))
 	s.mux.HandleFunc("POST /api/reminders/reset", h(s.resetReminders))
 	s.mux.HandleFunc("GET /api/meta/repeat", h(s.repeatMeta))
+	s.mux.HandleFunc("GET /api/meta/calendar", h(s.calendarMeta))
 
 	// 附件
 	s.mux.HandleFunc("GET /api/tasks/{id}/attachments", h(s.listAttachments))

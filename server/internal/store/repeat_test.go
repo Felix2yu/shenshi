@@ -87,6 +87,25 @@ func TestNextOccurrence(t *testing.T) {
 		{"ebbinghaus:7 下标越界", "ebbinghaus:7", "2026-09-22", "", ""},
 		{"ebbinghaus:xx 非数字按 0 处理", "ebbinghaus:xx", "2026-09-22", "2026-09-23", "ebbinghaus:1"},
 
+		// —— 农历与法定节假日 ——
+		// 判定口径全部走 internal/lunar，与日历展示同一份数据。
+		{"lunar:monthly 八月初五 → 九月初五", "lunar:monthly", "2026-09-15", "2026-10-14", ""},
+		{"lunar:monthly 冬月十七 → 腊月十七", "lunar:monthly", "2026-01-05", "2026-02-04", ""},
+		{"lunar:yearly 中秋 2026 → 2027", "lunar:yearly", "2026-09-25", "2027-09-15", ""},
+		{"lunar:weekly 未知子规则", "lunar:weekly", "2026-09-22", "", ""},
+		{"weekends 周二 → 周六", "weekends", "2026-09-22", "2026-09-26", ""},
+		{"weekends 周六 → 周日", "weekends", "2026-09-26", "2026-09-27", ""},
+		{"weekends 周日 → 下周六", "weekends", "2026-09-27", "2026-10-03", ""},
+		{"legalworkday 中秋假期中 → 9/28 周一", "legalworkday", "2026-09-26", "2026-09-28", ""},
+		{"legalworkday 国庆末日 → 10/8 周四", "legalworkday", "2026-10-07", "2026-10-08", ""},
+		{"legalworkday 周五 → 下周一", "legalworkday", "2026-11-06", "2026-11-09", ""},
+		{"legalworkday 调休补班的周日算工作日", "legalworkday", "2026-09-18", "2026-09-20", ""},
+		{"legalholiday 中秋前 → 中秋当天", "legalholiday", "2026-09-24", "2026-09-25", ""},
+		// 9-26/27 是中秋连休里的周末，不算法定假日，直接跳国庆。
+		{"legalholiday 中秋当天 → 国庆首日", "legalholiday", "2026-09-25", "2026-10-01", ""},
+		// 10-04 起是调休凑出来的假，也不算法定假日。
+		{"legalholiday 国庆法定假末日 → 次年元旦", "legalholiday", "2026-10-03", "2027-01-01", ""},
+
 		// —— 非法整体 ——
 		{"空规则", "", "2026-09-22", "", ""},
 		{"纯空白规则", "   ", "2026-09-22", "", ""},

@@ -4,6 +4,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/yufei/shendu/server/internal/lunar"
 )
 
 // 重复规则采用紧凑的字符串语法（由前端生成、后端解析），形如：
@@ -17,6 +19,15 @@ import (
 //	monthly:nth:3:0       // 每月第 3 个周日（0=周日）
 //	yearly:3-15           // 每年 3 月 15 日
 //	ebbinghaus:2          // 艾宾浩斯复习曲线，2 为下一次间隔下标
+//
+// 与农历 / 法定节假日相关的规则（农历数据、放假与调休均来自 internal/lunar）：
+//
+//	lunar:monthly         // 农历每月同一天（如农历每月初五）
+//	lunar:yearly          // 农历每年同一天（如农历生日、中秋）
+//	weekdays              // 每周工作日（周一至周五，不看放假安排）
+//	legalworkday          // 法定工作日（跳过法定节假日，含周末调休补班）
+//	weekends              // 每周末（周六、周日）
+//	legalholiday          // 法定节假日（放假期间每天）
 //
 // 之所以自建语法而非引入 RRULE 库，是因为这里只需要「下一次发生时间」这一件事，
 // 保持零依赖、易调试，也便于前端直接生成选项。
@@ -46,6 +57,46 @@ func NextOccurrence(rule string, from time.Time) (next time.Time, nextRule strin
 		next := d.AddDate(0, 0, 1)
 		for next.Weekday() == time.Saturday || next.Weekday() == time.Sunday {
 			next = next.AddDate(0, 0, 1)
+		}
+		return next, rule, true
+
+	// 以下是与农历 / 法定节假日挂钩的规则，判定一律走 internal/lunar，
+	// 与日历展示用的是同一份数据，不会出现「日历写着放假、任务却排到那天」。
+	case "lunar":
+		switch arg {
+		case "monthly":
+			next, ok := lunar.NextLunarMonthDay(d)
+			if !ok {
+				return time.Time{}, "", false
+			}
+			return next, rule, true
+		case "yearly":
+			next, ok := lunar.NextLunarYearDay(d)
+			if !ok {
+				return time.Time{}, "", false
+			}
+			return next, rule, true
+		}
+		return time.Time{}, "", false
+
+	case "weekends":
+		next, ok := lunar.NextWeekendDay(d)
+		if !ok {
+			return time.Time{}, "", false
+		}
+		return next, rule, true
+
+	case "legalworkday":
+		next, ok := lunar.NextLegalWorkday(d)
+		if !ok {
+			return time.Time{}, "", false
+		}
+		return next, rule, true
+
+	case "legalholiday":
+		next, ok := lunar.NextStatutoryHoliday(d)
+		if !ok {
+			return time.Time{}, "", false
 		}
 		return next, rule, true
 
@@ -182,7 +233,8 @@ func nthWeekdayOfMonth(year int, month time.Month, n int, wd time.Weekday, loc *
 	return d, true
 }
 
-func addMonthClamped(d time.Time, n int) time.Time {	y, m, day := d.Date()
+func addMonthClamped(d time.Time, n int) time.Time {
+	y, m, day := d.Date()
 	target := time.Date(y, m, 1, 0, 0, 0, 0, d.Location()).AddDate(0, n, 0)
 	day = min(day, daysInMonth(target.Year(), target.Month()))
 	return time.Date(target.Year(), target.Month(), day, 0, 0, 0, 0, d.Location())
