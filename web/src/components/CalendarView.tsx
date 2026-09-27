@@ -428,61 +428,64 @@ function DayCell({
       onDragLeave={() => setDropDay(null)}
       onDrop={(e) => void onDrop(e, day)}
       className={cx(
-        // 多出一行农历，格子高度相应加一点，否则任务区会被挤没。
-        'group/day relative flex min-h-[106px] flex-col gap-0.5 border-b border-r border-line p-1.5 transition-colors',
+        'group/day relative flex min-h-[92px] flex-col gap-1 border-b border-r border-line p-1.5 transition-colors',
         isCurrentMonth ? 'bg-surface' : 'bg-surface-2/40',
         dropDay === day && 'drop-target',
       )}
     >
-      <div className="flex items-center gap-1">
+      {/* 日期、农历 / 节气 / 节假日、休班角标同处一行：
+          农历紧跟日期数字（flex-1 让文本左对齐、把角标顶到右侧），
+          窄格子下被压缩的只会是农历，角标与「+」始终完整可见。 */}
+      <div className="flex min-w-0 items-center gap-1 overflow-hidden">
         <span
           className={cx(
-            'grid h-5 min-w-5 place-items-center rounded-full px-1 text-[0.71875rem] tabular-nums',
+            'grid h-5 min-w-5 shrink-0 place-items-center rounded-full px-1 text-[0.71875rem] tabular-nums',
             isToday ? 'bg-seal font-semibold text-seal-contrast' : isCurrentMonth ? 'text-ink-2' : 'text-ink-3',
             overdue && !isToday && 'text-p-high',
           )}
         >
           {Number(day.slice(8, 10))}
         </span>
-        {overdue && tasks.some((t) => t.status !== 'done') ? (
-          <span className="text-[0.59375rem] text-p-high">逾期</span>
+        {/* 农历只在桌面档出现：窄屏一个格子只有 ~55px，装不下「数字 + 农历 + 休/班」，
+            硬放会截出「廿」这样的半截字。日视图有完整的农历条，那里看更清楚。 */}
+        {dayInfo ? (
+          <span
+            className={cx(
+              'hidden min-w-0 flex-1 truncate text-[0.625rem] leading-tight lg:block',
+              labelClass(dayInfo),
+              !isCurrentMonth && 'opacity-60',
+            )}
+          >
+            {dayInfo.label}
+          </span>
         ) : null}
-        <IconButton
-          icon={IconPlus}
-          label={`在 ${day} 添加任务`}
-          size={12}
-          aria-expanded={adding === day}
-          onClick={() => setAdding(adding === day ? null : day)}
-          className="ml-auto opacity-0 transition-opacity group-hover/day:opacity-100"
-        />
+        {/* 休 / 班：只在「本来要上班却放假」或「本来休息却要上班」时挂，周末不提醒 */}
+        {workMark(dayInfo) === '休' ? (
+          <span className="shrink-0 rounded-[3px] bg-holiday/12 px-[3px] text-[0.5625rem] leading-tight text-holiday">
+            休
+          </span>
+        ) : workMark(dayInfo) === '班' ? (
+          <span className="shrink-0 rounded-[3px] bg-surface-3 px-[3px] text-[0.5625rem] leading-tight text-ink-3">
+            班
+          </span>
+        ) : null}
+        {/* 「逾期」在窄格子里最该让位：日期数字本身就是红色，文字是冗余的。
+            桌面档格子够宽才补上这行说明。 */}
+        {overdue && tasks.some((t) => t.status !== 'done') ? (
+          <span className="hidden shrink-0 text-[0.59375rem] text-p-high lg:inline">逾期</span>
+        ) : null}
       </div>
 
-      {/* 农历 / 节气 / 法定节假日：照苹果日历的样子，公历数字下面挂一行小字。 */}
-      <div className="flex min-h-[0.8125rem] items-center gap-1">
-        {dayInfo ? (
-          <>
-            <span
-              className={cx(
-                'min-w-0 flex-1 truncate text-[0.625rem] leading-tight',
-                labelClass(dayInfo),
-                !isCurrentMonth && 'opacity-60',
-              )}
-            >
-              {dayInfo.label}
-            </span>
-            {/* 休 / 班：只在「本来要上班却放假」或「本来休息却要上班」时挂，周末不提醒 */}
-            {workMark(dayInfo) === '休' ? (
-              <span className="shrink-0 rounded-[3px] bg-holiday/12 px-[3px] text-[0.5625rem] leading-tight text-holiday">
-                休
-              </span>
-            ) : workMark(dayInfo) === '班' ? (
-              <span className="shrink-0 rounded-[3px] bg-surface-3 px-[3px] text-[0.5625rem] leading-tight text-ink-3">
-                班
-              </span>
-            ) : null}
-          </>
-        ) : null}
-      </div>
+      {/* 新建按钮浮在格子右上角（absolute，不在流内）：
+          它平时 opacity-0，移动端又点不出 hover，若占 36px 横向空间会把农历挤没。 */}
+      <IconButton
+        icon={IconPlus}
+        label={`在 ${day} 添加任务`}
+        size={12}
+        aria-expanded={adding === day}
+        onClick={() => setAdding(adding === day ? null : day)}
+        className="absolute right-1.5 top-1.5 opacity-0 transition-opacity group-hover/day:opacity-100"
+      />
 
       {visible.map((t) => (
         <button
@@ -611,18 +614,17 @@ function WeekGrid(props: GridProps) {
               key={day}
               title={describeDay(info) || undefined}
               className={cx(
-                'flex min-w-0 flex-col items-center border-b border-r border-line bg-surface-2 px-2 py-1.5 text-[0.71875rem]',
+                'flex min-w-0 items-center justify-center gap-1.5 overflow-hidden border-b border-r border-line bg-surface-2 px-2 py-1.5 text-[0.71875rem]',
                 day === props.today ? 'text-seal' : 'text-ink-3',
               )}
             >
-              <span className="flex min-w-0 items-center gap-1.5">
-                {weekdayHeaders(props.weekStart)[days.indexOf(day)]}
-                <span className={cx('tabular-nums', day === props.today && 'font-semibold')}>
-                  {Number(day.slice(8, 10))}
-                </span>
+              <span className="shrink-0">{weekdayHeaders(props.weekStart)[days.indexOf(day)]}</span>
+              <span className={cx('shrink-0 tabular-nums', day === props.today && 'font-semibold')}>
+                {Number(day.slice(8, 10))}
               </span>
+              {/* 同月视图：窄屏表头也塞不下，只在桌面档显示农历。 */}
               {info ? (
-                <span className={cx('max-w-full truncate text-[0.625rem] leading-tight', labelClass(info))}>
+                <span className={cx('hidden min-w-0 truncate text-[0.625rem] leading-tight lg:block', labelClass(info))}>
                   {info.label}
                 </span>
               ) : null}
