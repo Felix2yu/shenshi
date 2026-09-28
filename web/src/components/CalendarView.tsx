@@ -15,7 +15,7 @@ import {
   weekDays,
   weekdayHeaders,
 } from '../lib/date'
-import { describeDay, labelClass, useCalendarInfo, workMark } from '../lib/calendar'
+import { describeDay, labelClass, officialYearsLoaded, useCalendarInfo, workMark } from '../lib/calendar'
 import { applyFilter, type TaskFilter } from '../lib/filter'
 import { useIMEGuard } from '../lib/ime'
 import { parseQuickAdd } from '../lib/nlp'
@@ -228,11 +228,22 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
         <h2 className="brand-serif ml-1 whitespace-nowrap text-[0.9375rem] font-semibold text-ink">{label}</h2>
         {loading ? <span className="text-[0.71875rem] text-ink-3">载入中…</span> : null}
         <div className="ml-auto flex items-center gap-2">
+          <span
+            className="hidden whitespace-nowrap text-[0.71875rem] text-ink-3 sm:block"
+            title="日历加载的是全部清单的任务，不跟随侧栏的清单/标签选择；顶部搜索与筛选器仍然生效"
+          >
+            · 全部任务
+          </span>
           <span className="hidden text-[0.71875rem] text-ink-3 lg:block">
             {mode === 'day' ? '拖动任务到时间轴即可改时间，点空白处新建' : '拖动任务卡片可直接改期'}
           </span>
           {[...cal.values()].some((d) => d.estimated) ? (
-            <span className="hidden whitespace-nowrap text-[0.71875rem] text-ink-3 lg:block" title="该年的放假调休安排国务院尚未公布，日历只标注《放假办法》规定的法定假日">
+            <span
+              className="hidden whitespace-nowrap text-[0.71875rem] text-ink-3 lg:block"
+              title={`该年的放假调休安排国务院尚未公布，日历只标注《放假办法》规定的法定假日（已确定：${
+                officialYearsLoaded().join('、') || '暂无'
+              }）`}
+            >
               · 含推算节假日（调休待公布）
             </span>
           ) : null}
@@ -295,8 +306,8 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
         </div>
       ) : null}
 
-      {/* 主体 */}
-      <div className="flex-1 overflow-auto px-5 py-3">
+      {/* 主体：窄屏压缩左右留白，把横向空间让给 7 列格子里的农历标签 */}
+      <div className="flex-1 overflow-auto px-2 py-3 md:px-5">
         {mode === 'month' ? (
           <MonthGrid
             anchor={anchor}
@@ -428,30 +439,43 @@ function DayCell({
       onDragLeave={() => setDropDay(null)}
       onDrop={(e) => void onDrop(e, day)}
       className={cx(
-        'group/day relative flex min-h-[92px] flex-col gap-1 border-b border-r border-line p-1.5 transition-colors',
+        'group/day relative flex min-h-[92px] flex-col gap-1 border-b border-r border-line p-1 transition-colors md:p-1.5',
         isCurrentMonth ? 'bg-surface' : 'bg-surface-2/40',
         dropDay === day && 'drop-target',
       )}
     >
-      {/* 日期、农历 / 节气 / 节假日、休班角标同处一行：
-          农历紧跟日期数字（flex-1 让文本左对齐、把角标顶到右侧），
-          窄格子下被压缩的只会是农历，角标与「+」始终完整可见。 */}
-      <div className="flex min-w-0 items-center gap-1 overflow-hidden">
+      {/* 日期数字 + 农历/节气/节假日同处一行：
+          桌面档：日期数字 → 农历(flex-1 截断) → 休/班角标 → 逾期；
+          窄屏档：隐藏休/班角标与逾期，日期数字染朱砂表达放假，农历常驻。 */}
+      <div className="flex min-w-0 items-center gap-0 overflow-hidden md:gap-1">
         <span
           className={cx(
-            'grid h-5 min-w-5 shrink-0 place-items-center rounded-full px-1 text-[0.71875rem] tabular-nums',
-            isToday ? 'bg-seal font-semibold text-seal-contrast' : isCurrentMonth ? 'text-ink-2' : 'text-ink-3',
-            overdue && !isToday && 'text-p-high',
+            'grid shrink-0 place-items-center rounded-full text-[0.6875rem] tabular-nums md:text-[0.71875rem]',
+            // 日期数字盒：今天用正方圆形；窄屏圆标略小于常规盒（h-4 w-4），
+            // 其余日期盒压到 min-w-[0.8125rem]、零内边距，把横向空间尽量让给农历
+            isToday ? 'h-4 w-4 md:h-5 md:w-5' : 'h-5 min-w-[0.8125rem] px-0 md:min-w-5 md:px-1',
+            // 配色优先级：今天（朱印底）> 逾期（红）> 放假（窄屏朱砂，桌面仍由角标表达）> 普通
+            isToday
+              ? 'bg-seal font-semibold text-seal-contrast'
+              : overdue
+                ? 'text-p-high'
+                : workMark(dayInfo) === '休'
+                  ? isCurrentMonth
+                    ? 'text-holiday lg:text-ink-2'
+                    : 'text-holiday lg:text-ink-3'
+                  : isCurrentMonth
+                    ? 'text-ink-2'
+                    : 'text-ink-3',
           )}
         >
           {Number(day.slice(8, 10))}
         </span>
-        {/* 农历只在桌面档出现：窄屏一个格子只有 ~55px，装不下「数字 + 农历 + 休/班」，
-            硬放会截出「廿」这样的半截字。日视图有完整的农历条，那里看更清楚。 */}
+        {/* 农历/节气/节假日：窄屏也常驻显示（约 2 汉字，更长截「中秋」），
+            原「休/班」角标让出的横向空间腾给它；角标只在桌面档保留。 */}
         {dayInfo ? (
           <span
             className={cx(
-              'hidden min-w-0 flex-1 truncate text-[0.625rem] leading-tight lg:block',
+              'min-w-0 flex-1 truncate text-[0.5rem] leading-tight md:text-[0.625rem]',
               labelClass(dayInfo),
               !isCurrentMonth && 'opacity-60',
             )}
@@ -459,13 +483,13 @@ function DayCell({
             {dayInfo.label}
           </span>
         ) : null}
-        {/* 休 / 班：只在「本来要上班却放假」或「本来休息却要上班」时挂，周末不提醒 */}
+        {/* 休/班：窄屏隐藏，放假信息改由日期数字朱砂配色表达；周末本就不挂。 */}
         {workMark(dayInfo) === '休' ? (
-          <span className="shrink-0 rounded-[3px] bg-holiday/12 px-[3px] text-[0.5625rem] leading-tight text-holiday">
+          <span className="hidden shrink-0 rounded-[3px] bg-holiday/12 px-[3px] text-[0.5625rem] leading-tight text-holiday lg:inline">
             休
           </span>
         ) : workMark(dayInfo) === '班' ? (
-          <span className="shrink-0 rounded-[3px] bg-surface-3 px-[3px] text-[0.5625rem] leading-tight text-ink-3">
+          <span className="hidden shrink-0 rounded-[3px] bg-surface-3 px-[3px] text-[0.5625rem] leading-tight text-ink-3 lg:inline">
             班
           </span>
         ) : null}
@@ -619,7 +643,16 @@ function WeekGrid(props: GridProps) {
               )}
             >
               <span className="shrink-0">{weekdayHeaders(props.weekStart)[days.indexOf(day)]}</span>
-              <span className={cx('shrink-0 tabular-nums', day === props.today && 'font-semibold')}>
+              <span
+                className={cx(
+                  'shrink-0 tabular-nums',
+                  day === props.today
+                    ? 'font-semibold'
+                    : workMark(info) === '休'
+                      ? 'text-holiday lg:text-ink-3'
+                      : '',
+                )}
+              >
                 {Number(day.slice(8, 10))}
               </span>
               {/* 同月视图：窄屏表头也塞不下，只在桌面档显示农历。 */}
@@ -711,7 +744,10 @@ function DayView(props: DayProps) {
         // 块高优先用结束时间；没有则按预计时长，再退回默认 45 分。
         const dur = t.estimateMinutes > 0 ? t.estimateMinutes : DEFAULT_DURATION
         const raw = t.endTime ? toMinutes(t.endTime) : start + dur
-        return { task: t, start, end: raw > start ? raw : start + dur }
+        // endTime ≤ dueTime 是跨午夜（23:00~次日 01:00）：今天这段画到午夜为止，
+        // 次日部分不归当天的轴管；不能回退成默认时长，那会把通宵任务画成 45 分钟。
+        const end = !t.endTime ? start + dur : raw > start ? raw : DAY_MINUTES
+        return { task: t, start, end }
       })
       .sort((a, b) => a.start - b.start || a.end - b.end)
     return placeDay(rows)

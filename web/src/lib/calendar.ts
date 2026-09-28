@@ -44,11 +44,6 @@ export function getDayInfo(date: string): CalendarDayInfo | undefined {
   return cache.get(date)
 }
 
-/** 某年的放假安排是否为推算值（国务院尚未公布）。未知时按「未公布」返回 false。 */
-export function isEstimatedYear(date: string): boolean {
-  return getDayInfo(date)?.estimated ?? false
-}
-
 /** 已录入官方安排的年份，用于提示用户哪几年的调休是确定的。 */
 export function officialYearsLoaded(): number[] {
   return officialYears

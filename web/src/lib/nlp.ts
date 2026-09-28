@@ -323,13 +323,19 @@ function extractDateSpan(source: string, base: string): DateSpan | null {
     return { src: removeSpan(src, mm), date: `${base.slice(0, 7)}-${String(day).padStart(2, '0')}`, label: '本月底' }
   }
 
-  // 「下周三」「本周五」「周三」
-  m = /(下|下个|本|这)?\s*(?:周|星期|礼拜)([一二三四五六日天])/u.exec(src)
+  // 「下周三」「本周五」「上周三」「下下周三」「周三」
+  // 前缀按最长优先交替排（上上/下下 要先于 上/下），否则「下下周三」
+  // 只吃掉一个「下」，标题里会残留半个词。
+  m = /(上上|下下|下个|下|本|这|上)?\s*(?:周|星期|礼拜)([一二三四五六日天])/u.exec(src)
   if (m) {
     const prefix = m[1] || ''
     // WEEKDAY_MAP 用的是 JS 的「周日=0」，这里统一换算成「周一=0」再算差值。
     const targetIdx = (WEEKDAY_MAP[m[2]] - 1 + 7) % 7
-    const delta = prefix.startsWith('下') ? 7 - curWd + targetIdx : (targetIdx - curWd + 7) % 7
+    const baseDelta = targetIdx - curWd // 「本周」口径，已过则为负
+    let delta: number
+    if (prefix === '上' || prefix === '上上') delta = baseDelta - (prefix === '上上' ? 14 : 7)
+    else if (prefix === '下' || prefix === '下个' || prefix === '下下') delta = baseDelta + (prefix === '下下' ? 14 : 7)
+    else delta = (baseDelta + 7) % 7
     const date = addDays(base, delta)
     return { src: removeSpan(src, m), date, label: `周${m[2]}` }
   }
