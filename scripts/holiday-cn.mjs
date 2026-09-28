@@ -46,7 +46,38 @@ async function fetchYear(y) {
   if (!Array.isArray(json.days) || json.days.length === 0) {
     throw new Error(`${y} 年暂无数据（国务院公告尚未发布，或 holiday-cn 还没抓到）`)
   }
+  validateYear(y, json)
   return json
+}
+
+/**
+ * 逐日对象的 schema 校验：字段类型对不上就 fail fast。
+ *
+ * 上游字段一改名（比如 isOffDay → isOff），渲染时 `${d.isOffDay}` 会变成
+ * 字面量 `undefined` 写进 holidays.json —— 那个文件由 go:embed 打进二进制，
+ * JSON 一坏，lunar 包 init 直接 panic，整个服务起不来。这里拦住第一环。
+ */
+function validateYear(y, json) {
+  const at = (i, field) => `${y}.days[${i}].${field}`
+  if (json.papers !== undefined && !Array.isArray(json.papers)) {
+    throw new Error(`${y}.papers 不是数组：${JSON.stringify(json.papers)}`)
+  }
+  const seen = new Set()
+  json.days.forEach((d, i) => {
+    if (!d || typeof d !== 'object') throw new Error(`${y}.days[${i}] 不是对象：${JSON.stringify(d)}`)
+    if (typeof d.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d.date)) {
+      throw new Error(`${at(i, 'date')} 不是 YYYY-MM-DD：${JSON.stringify(d.date)}`)
+    }
+    if (!d.date.startsWith(`${y}-`)) throw new Error(`${at(i, 'date')} ${d.date} 不属于 ${y} 年`)
+    if (seen.has(d.date)) throw new Error(`${at(i, 'date')} 重复：${d.date}`)
+    seen.add(d.date)
+    if (typeof d.name !== 'string' || d.name === '') {
+      throw new Error(`${at(i, 'name')} 缺失：${JSON.stringify(d.name)}`)
+    }
+    if (typeof d.isOffDay !== 'boolean') {
+      throw new Error(`${at(i, 'isOffDay')} 不是布尔值：${JSON.stringify(d.isOffDay)}`)
+    }
+  })
 }
 
 /** 逐日对象各自占一行：JSON.stringify 会把每个对象摊成 5 行，改起来没法看。 */
@@ -102,6 +133,13 @@ async function sync(spec) {
   data.source = 'https://github.com/NateScarlet/holiday-cn'
 
   const text = render(data)
+  // 渲染结果必须自己也是合法 JSON：render 手工拼串，哪天字段缺席拼出字面量
+  // undefined / 尾逗号，写进去就是让 Go 端 init panic。最后一道闸。
+  try {
+    JSON.parse(text)
+  } catch (e) {
+    throw new Error(`渲染出的 holidays.json 不是合法 JSON，已中止写入：${e.message}`)
+  }
   if (dryRun) {
     console.log(text)
     console.log(`（--dry-run，未写文件）`)

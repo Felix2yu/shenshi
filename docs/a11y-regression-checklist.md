@@ -18,6 +18,9 @@ NODE_BIN=/opt/homebrew/bin/node GO_BIN=/opt/homebrew/bin/go ./scripts/build.sh
 
 # 浏览器 UI 冒烟：本地可完整运行（自起临时实例与端口），改任何可见文案 / 交互步数后必跑
 /opt/homebrew/bin/node scripts/ui-smoke.mjs
+
+# 自然语言解析回归：改 web/src/lib/nlp.ts 必跑（固定基准日的确定性用例）
+/opt/homebrew/bin/node web/scripts/check-nlp.mjs
 ```
 
 ```bash
@@ -97,3 +100,10 @@ PY
 - **Esc 必须不依赖焦点**：`Modal` 也走 `useEscapeLayer` 注册仲裁栈，容器上的 `keydown` 只留 Tab 陷阱。焦点是会被夺走的 —— 被点击的元素一旦随之卸载，焦点就落回 `<body>`，只靠容器监听会漏掉按键（2026-09-24 冒烟实测）。
 - **改文案前先看 `scripts/ui-smoke.mjs`**：它按 `title=` / `aria-label=` / `data-*` 定位，是 UI 契约的守卫。改可见文案、图标按钮的 `label`、或交互步数（如把原生 `confirm()` 换成应用内确认框）之后，脚本要同步跟进 —— 且应补断言而非删断言。
 - **业务联动由调用方显式表达**：不在后端做「清 A 连带清 B」的隐式联动，否则违约 PATCH 三态契约（既有测试就是该契约的守卫）。
+- **hooks 一律在 early return 之前**：组件里任何 `if (!x) return` 之前必须已完成全部 hook 调用——任务在两次渲染间「从有到无」（批量删除、切视图、对账移除）会让同一组件 hook 数量不等，React 直接抛错。`web/src/main.tsx` 的 `ErrorBoundary` 是全站兜底，不是允许违反这条的理由。
+- **测试不写死未来年份**：农历/节假日断言的年份用动态计算（如 `firstEstimatedYear()`）——节假日数据是逐年录入的，写死 2027 会在数据推进后变成假失败。
+- **BatchBar 全局只挂一份**：多选批处理条在 `App.tsx` 挂一次，各视图不要再渲染第二份（`ui-smoke.mjs` 有 `=== 1` 断言守卫）。
+- **store value 的 `useMemo` 依赖必须同步**：`AppStore.tsx` 的 value 对象整体包了 `useMemo`，新增/改名任何字段都要更新那条长依赖数组（97 项，脚本生成后人工核对；项目无 ESLint，漏了不会有任何提示）。
+- **包 `memo` 的组件要配稳定的 props**：`TaskRow` 包了 `React.memo`——调用方传入的回调（`onOpen`、`onSortStart/End`）必须 `useCallback` 稳定，否则 memo 等于没包；注意 store 变化走 context，**穿透** memo，memo 只拦「父组件自己的本地状态」引发的重渲染。
+- **重复规则三处同步**：新增一种 repeat 规则要同时改 `store/repeat.go` 的 `NextOccurrence`（语义）、`ValidRepeatRule`（白名单校验，入口 400）与后端 `repeatMeta` presets（选项），少一处就是「规则能存不能算」或「下拉里没有」。
+- **对外返回日线要带对的时区**：`internal/lunar` 里 `ToSolar` 以 UTC 午夜为原点，凡是把 `time.Time` 交给调用方做时刻比较的出口，一律归一到 `from.Location()`（见 `solarIn`）——否则在 UTC 负时区部署时「同一天」会被判成过去，重复规则每次多跳一天。
