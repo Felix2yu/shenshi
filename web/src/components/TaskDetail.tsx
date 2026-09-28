@@ -39,6 +39,11 @@ import {
 } from './icons'
 import { DraftInput, IconButton, Popover, ProgressRing, RoundCheck, cx, inputClass, useAutoGrow, useDebouncedCallback } from './ui'
 
+/** 原生 date/time 的弹性版（与 inputClass 同外观，但去掉 w-full）：以自身固有宽度作 flex 基准，
+ *  并排放得下就并排、放不下随容器 flex-wrap 换行，避免大字号（fontScale）下被压窄裁切或溢出。 */
+const flexDateInputClass =
+  'grow shrink basis-auto rounded-lg border border-control-line bg-surface px-2.5 py-1.5 text-[0.8125rem] text-ink outline-none transition-colors focus:border-seal'
+
 const REMINDER_OPTIONS: { value: number; label: string }[] = [
   { value: 0, label: '准点' },
   { value: 5, label: '提前 5 分钟' },
@@ -803,23 +808,26 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
                   <span className={cx('text-[0.6875rem]', labelClass(dueDayInfo))}>{describeDay(dueDayInfo)}</span>
                 ) : null}
               </div>
-              <Popover open={datePopover} onClose={() => setDatePopover(false)} align="left" width={252} side="top">
+              <Popover open={datePopover} onClose={() => setDatePopover(false)} align="left" width={300} side="top">
                 <div className="space-y-2.5 p-1">
-                  <div className="flex gap-2">
+                  {/* 日期+时间并排：原生控件随字号放大。两个控件以各自固有宽度作 flex 基准
+                      （basis-auto + grow，且不设 w-full），常规字号下并排、并排放不下时 flex-wrap 自动换行堆叠，
+                      既不裁切日期文字、也不溢出弹层（同类于 Overlays 的「宁换行不可挤压」）。 */}
+                  <div className="flex flex-wrap items-stretch gap-2">
                     <DraftInput
                       type="date"
-                      className={inputClass}
+                      className={flexDateInputClass}
                       value={task.dueDate ?? ''}
                       onCommit={(v) => void setDue(v || null)}
                     />
                     <DraftInput
                       type="time"
-                      className={inputClass}
+                      className={flexDateInputClass}
                       value={task.dueTime ?? ''}
                       onCommit={(v) => void setDue(task.dueDate ?? todayStr(), v || null)}
                     />
                   </div>
-                  <div className="flex items-center justify-between text-[0.75rem] text-ink-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[0.75rem] text-ink-3">
                     <span>结束时间</span>
                     <DraftInput
                       type="time"
