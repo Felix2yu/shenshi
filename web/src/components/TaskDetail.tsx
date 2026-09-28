@@ -7,7 +7,7 @@ import { renderMarkdown } from '../lib/markdown'
 import { describeRepeat } from '../lib/nlp'
 import { useIMEGuard } from '../lib/ime'
 import { useStore } from '../store/AppStore'
-import type { Attachment, Priority, Subtask, Task } from '../types'
+import type { Attachment, Priority, RepeatPreset, Subtask, Task } from '../types'
 import {
   IconBell,
   IconCalendar,
@@ -55,6 +55,12 @@ const PRIORITY_OPTIONS: { value: Priority; label: string; color: string }[] = [
   { value: 2, label: '中', color: 'var(--p-mid)' },
   { value: 3, label: '高', color: 'var(--p-high)' },
 ]
+
+// repeatMeta 未就绪（接口失败、首帧）时的兜底：至少保留「不重复」，
+// 否则下拉全空，已设规则的任务连清除入口都没有。
+// 必须是模块级常量——写成 `?? []` 每次渲染都是新数组，repeatGroups 的
+// useMemo 依赖它就永远失效，分组每次重建等于没 memo。
+const FALLBACK_REPEAT_OPTIONS: RepeatPreset[] = [{ value: '', label: '不重复', group: '基础' }]
 
 export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () => void }) {
   const { compositionProps, isComposing } = useIMEGuard()
@@ -153,16 +159,37 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
   const notesFocus = useRef(false)
   const lastTaskId = useRef<number | null>(null)
 
-  // 切换任务：丢弃草稿，直接接受新任务的远端值
+  // 切换任务：先把还在防抖窗口里的标题/备注提交给**旧**任务（flush 执行的是调用
+  // 时刻记录的闭包，捕获的仍是旧 task —— 这正是不能用最新闭包的原因），再丢草稿。
   useEffect(() => {
     const id = task?.id ?? null
     if (id === lastTaskId.current) return
     lastTaskId.current = id
+    commitTitle.flush()
+    commitNotes.flush()
     titleSent.current = null
     notesSent.current = null
     setTitle(task?.title ?? '')
     setNotes(task?.notes ?? '')
+    // 未提交的「添加子任务」草稿跟着任务走：不清会把上一个任务的半截输入
+    // 回车加到新任务上（与标题/备注草稿同一处理）。
+    setSubInput('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task?.id, task?.title, task?.notes])
+
+  // 卸载（关面板 / 任务被移出视图）兜底：防抖窗口内的最后编辑必须落库，
+  // 否则"改完标题 450ms 内点关闭"这段输入会被静默丢掉。
+  useEffect(
+    () => () => {
+      commitTitle.flush()
+      commitNotes.flush()
+      commitEstimate.flush()
+      commitProgress.flush()
+    },
+    // 只在卸载时执行一次；flush 内部读的是 ref，引用旧一点无妨。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  )
 
   useEffect(() => {
     const remote = task?.title ?? ''
@@ -283,6 +310,24 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
     })
   }, [notes, commitNotes])
 
+  // 注意：以下 hook 必须位于 `if (!task) return` 之前 —— 任务从「存在」变为「不存在」
+  // （批量删除/归档、隐藏已完成时点完成、切视图、另一窗口删除后对账）会让同一组件两次
+  // 渲染的 hook 数量不等，React 直接抛错，全站无 ErrorBoundary 时整页白屏。
+  const repeatOptions = repeatMeta?.presets ?? FALLBACK_REPEAT_OPTIONS
+  // 到期日的农历与节假日：只取这一天，缓存命中后翻其他任务不再打接口。
+  const dueDayInfo = useCalendarInfo(task?.dueDate ? [task.dueDate] : []).get(task?.dueDate ?? '')
+  // 按 group 分组并保持出现顺序：下拉不再逐行塞分组标签（既挤空间又逼长标签折行），
+  // 改为每组一个小标题，横向空间释放后「每月最后一个工作日」这类长标签可单行容纳。
+  const repeatGroups = useMemo(() => {
+    const map = new Map<string, typeof repeatOptions>()
+    for (const o of repeatOptions) {
+      const arr = map.get(o.group) ?? []
+      arr.push(o)
+      map.set(o.group, arr)
+    }
+    return [...map.entries()]
+  }, [repeatOptions])
+
   if (!task) {
     return (
       <div className="flex h-full w-[22.25rem] max-w-full shrink-0 items-center justify-center border-l border-line bg-surface text-[0.8125rem] text-ink-3">
@@ -296,20 +341,6 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
   const subDone = task.subtaskDone
   const subTotal = task.subtaskDone + task.subtaskOpen
   const tagOptions = tags.filter((t) => !task.tags.some((x) => x.id === t.id))
-  const repeatOptions = repeatMeta?.presets ?? []
-  // 到期日的农历与节假日：只取这一天，缓存命中后翻其他任务不再打接口。
-  const dueDayInfo = useCalendarInfo(task.dueDate ? [task.dueDate] : []).get(task.dueDate ?? '')
-  // 按 group 分组并保持出现顺序：下拉不再逐行塞分组标签（既挤空间又逼长标签折行），
-  // 改为每组一个小标题，横向空间释放后「每月最后一个工作日」这类长标签可单行容纳。
-  const repeatGroups = useMemo(() => {
-    const map = new Map<string, typeof repeatOptions>()
-    for (const o of repeatOptions) {
-      const arr = map.get(o.group) ?? []
-      arr.push(o)
-      map.set(o.group, arr)
-    }
-    return [...map.entries()]
-  }, [repeatOptions])
 
 
   const addTagByName = async (name: string) => {
@@ -400,8 +431,16 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
       onKeyDown={(e) => {
         // 面板内的 Esc 关面板。stopPropagation 阻断冒泡，避免再触发全局上下文动作。
         if (e.key !== 'Escape') return
+        // 输入中的 Esc 归输入组件自己处理（清空/还原草稿），与 App.tsx 全局口径一致；
+        // 这里若直接关面板，标题/备注在防抖窗口内的输入会被卸载丢掉。
+        const t = e.target as HTMLElement | null
+        const typing =
+          t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+        if (typing) return
         e.preventDefault()
         e.stopPropagation()
+        commitTitle.flush()
+        commitNotes.flush()
         onClose()
       }}
     >

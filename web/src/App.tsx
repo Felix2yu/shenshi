@@ -12,7 +12,7 @@ import { SealLogo } from './components/icons'
 import { AppOverlays } from './components/Overlays'
 import { BatchBar, TaskListView } from './components/TaskViews'
 import { MobileTabBar, Toolbar } from './components/Toolbar'
-import { Button } from './components/ui'
+import { Button, cx } from './components/ui'
 import { applyFilter } from './lib/filter'
 import { useEscapeArbiter } from './lib/escStack'
 import { useModalLayerActive } from './lib/modalLayer'
@@ -27,6 +27,7 @@ import type { Selection, Task, ViewKind } from './types'
 export default function App() {
   const {
     loading,
+    tasksLoading,
     boot,
     tasks,
     view,
@@ -179,7 +180,19 @@ export default function App() {
       ) : null}
 
       {/* 主区 */}
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main className="relative flex min-w-0 flex-1 flex-col" aria-busy={tasksLoading || undefined}>
+        {/* 任务列表刷新指示：absolute 贴在工具栏上沿，不占布局、不加文案；
+            aria-busy 一并告诉读屏「内容正在刷新」。 */}
+        <div
+          aria-hidden="true"
+          className={cx(
+            'pointer-events-none absolute inset-x-0 top-0 z-20 h-0.5 overflow-hidden transition-opacity duration-300',
+            tasksLoading ? 'opacity-100' : 'opacity-0',
+          )}
+        >
+          <div className="h-full w-1/3 animate-pulse bg-seal" />
+        </div>
+
         {/* 窄屏的汉堡入口直接并入工具栏标题行（见 Toolbar），不再单设一条顶栏 ——
             顶部 chrome 少占一行，标题/搜索/页签全部留在一条紧凑头部里。 */}
 

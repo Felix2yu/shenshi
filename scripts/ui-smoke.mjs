@@ -316,7 +316,7 @@ async function main() {
     const tRow = page.locator('tbody tr[data-table-row]').first()
     await tRow.click()
     await page.waitForTimeout(300)
-    check('表格多选出现批处理条', (await page.getByText(/已选 1 项/).count()) > 0)
+    check('表格多选出现批处理条', (await page.getByText(/已选 1 项/).count()) === 1)
     check('表格行呈选中态', ((await tRow.getAttribute('class')) || '').includes('bg-seal/6'))
     await page.keyboard.press('Escape')
     await page.waitForTimeout(300)

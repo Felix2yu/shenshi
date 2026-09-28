@@ -50,10 +50,11 @@ export function setUnauthorizedHandler(fn: (() => void) | null): void {
   onUnauthorized = fn
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const init: RequestInit = {
     method,
     headers: { Accept: 'application/json' },
+    signal,
   }
   if (body !== undefined) {
     init.headers = { ...init.headers, 'Content-Type': 'application/json' }
@@ -62,7 +63,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   let resp: Response
   try {
     resp = await fetch(path, init)
-  } catch {
+  } catch (e) {
+    // 主动取消（signal.aborted）不是"连不上服务"：调用方按取消处理，别弹错误。
+    if (signal?.aborted) throw e
     throw new ApiError('无法连接到服务，请确认「慎始」服务正在运行', 0)
   }
   const text = await resp.text()
@@ -156,8 +159,13 @@ export const EXPORT_URLS = {
 export const api = {
   bootstrap: () => request<Bootstrap>('GET', '/api/bootstrap'),
 
-  listTasks: (query: TaskQuery) =>
-    request<{ tasks: Task[]; count: number }>('GET', `/api/tasks${qs(query as Record<string, string | number>)}`),
+  listTasks: (query: TaskQuery, signal?: AbortSignal) =>
+    request<{ tasks: Task[]; count: number }>(
+      'GET',
+      `/api/tasks${qs(query as Record<string, string | number>)}`,
+      undefined,
+      signal,
+    ),
 
   getTask: (id: number) => request<Task>('GET', `/api/tasks/${id}`),
   /** 依赖阻塞状态：blocked_by 且对端未完成时给出阻塞者清单。 */

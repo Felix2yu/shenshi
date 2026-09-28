@@ -416,18 +416,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // 列表请求序号：搜索/切换视图时会有多个请求并发在途，
   // 只允许"最新那次"写回结果，否则先发的慢响应会覆盖后发的快响应（搜索结果串台）。
   const tasksSeq = useRef(0)
+  // 在途请求句柄：序号负责"结果不串台"，句柄负责"旧请求真的被取消"（省带宽也省服务端）。
+  const tasksAbort = useRef<AbortController | null>(null)
 
   const refreshTasks = useCallback(async () => {
     const seq = ++tasksSeq.current
+    tasksAbort.current?.abort()
+    const ctrl = new AbortController()
+    tasksAbort.current = ctrl
     setTasksLoading(true)
     try {
-      const r = await api.listTasks(queryFor(selection, keyword, sortBy))
+      const r = await api.listTasks(queryFor(selection, keyword, sortBy), ctrl.signal)
       if (seq !== tasksSeq.current) return
       const doneView =
         selection.kind === 'smart' && (selection.key === 'done' || selection.key === 'recentdone')
       setTasks(!showCompleted && !doneView ? r.tasks.filter((t) => t.status !== 'done') : r.tasks)
     } catch (e) {
       if (seq !== tasksSeq.current) return
+      // 被主动取消的请求不是错误：下一次请求已经在路上。
+      if (ctrl.signal.aborted) return
       handleError(e, '加载任务失败')
     } finally {
       if (seq === tasksSeq.current) setTasksLoading(false)
@@ -638,13 +645,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const setSortBy = useCallback((v: TaskSort) => void saveSettings({ sortBy: v }), [saveSettings])
 
-  // 排序方式真正变化时才重拉列表；首次由 bootstrap 流程负责，避免重复请求。
-  const sortRef = useRef(sortBy)
-  useEffect(() => {
-    if (sortRef.current === sortBy) return
-    sortRef.current = sortBy
-    void refreshTasks()
-  }, [sortBy, refreshTasks])
+  // 排序变化的重拉不在此单设 effect：sortBy 是 refreshTasks 的依赖，
+  // 上方「视图 / 选择变化时拉取任务」的 effect 已随其引用变化触发 —— 再挂一条就是
+  // 一次改排序打两个请求（09-24 审查 G14 的遗留，勿再加回）。
 
   // ---------- 拖拽排序 ----------
 
@@ -703,16 +706,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async (patch: TaskPatch) => {
       try {
         // 新建任务的归属：要让任务**留在当前视图里**，否则用户看到的是一条 toast
-        // 加一个空列表，第一反应是"没记上"。
+        // 加一个空列表，第一反应是"没记上"。凡当前视图的约束能被表达的，就直接写进任务：
+        // 标签视图补标签、逾期视图补过期日、高优先级补优先级、收藏补星标。
         if (patch.listId === undefined && selection.kind === 'list') patch.listId = selection.id
+        if (selection.kind === 'tag' && patch.tagIds === undefined) patch.tagIds = [selection.id]
         if (patch.dueDate === undefined && patch.listId === undefined && selection.kind === 'smart') {
-          // 智能清单：能靠日期推断的补上日期（任务默认就是"今天做"的）
+          // 智能清单：能靠日期/属性推断的补上（任务默认就是"今天做"的）
           if (selection.key === 'today') patch.dueDate = todayStr()
           else if (selection.key === 'tomorrow') patch.dueDate = addDays(todayStr(), 1)
           else if (selection.key === 'week' || selection.key === 'next7') patch.dueDate = todayStr()
+          else if (selection.key === 'overdue') patch.dueDate = addDays(todayStr(), -1)
+          else if (selection.key === 'high' && patch.priority === undefined) patch.priority = 3
+          else if (selection.key === 'starred' && patch.starred === undefined) patch.starred = true
         }
         const t = await api.createTask(patch)
-        // 推断不出归属时（分组 / 标签 / 搜索 / 逾期等视图）如实说明它去了哪里
+        // 分组 / 搜索等推断不出归属的视图如实说明它去了哪里（否则任务"即刻消失"）
         const home = selection.kind === 'list' ? '' : t.listName
         toast(home ? `已记下「${t.title}」· 存入「${home}」` : `已记下「${t.title}」`)
         reconcile()
@@ -1463,7 +1471,125 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const setFilters = useCallback((f: TaskFilter) => setFiltersState(f), [])
   const resetFilters = useCallback(() => setFiltersState(EMPTY_FILTER), [])
 
-  const value: StoreShape = {
+  // value 必须 memo：Provider 因任意一次 setState 重渲染时，未 memo 的新对象会
+  // 让全部 useStore 消费者（侧栏 / 工具栏 / 详情 / 各视图）无谓地整棵重渲染。
+  // 依赖 = 下方对象引用到的每一个变量，改动对象成员时**必须**同步补依赖。
+  const value: StoreShape = useMemo(
+    () => ({
+      loading,
+      boot,
+      tasks,
+      tasksLoading,
+      selection,
+      view,
+      keyword,
+      filters,
+      settings,
+      themeMode,
+      resolvedTheme,
+      toasts,
+      reminders,
+      stats,
+      statsError,
+      repeatMeta,
+      selectedTaskId,
+      selectedIds,
+      multiSelect,
+      focus,
+      confirmState,
+      folders: boot?.folders ?? [],
+      lists: boot?.lists ?? [],
+      tags: boot?.tags ?? [],
+      counts: boot?.counts ?? {},
+      todayFocusIds,
+      taskIndex,
+      savedFilters,
+      undo,
+      activities,
+      activitiesLoaded,
+      version,
+
+      select,
+      selectSmart,
+      setView,
+      setKeyword,
+      setFilters,
+      resetFilters,
+      setSelectedTask: setSelectedTaskId,
+      setMultiSelect,
+      toggleSelected,
+      clearSelected,
+
+      refreshTasks,
+      refreshBoot,
+      reconcile,
+
+      createTask,
+      updateTask,
+      deleteTask,
+      toggleTask,
+      moveTask,
+      skipTask,
+      duplicateTask,
+      batch,
+      purgeCompleted,
+      reorderTasks,
+
+      undoDelete,
+      dropUndo,
+
+      loadActivities,
+      clearActivities,
+
+      saveFilter,
+      applySavedFilter,
+      renameSavedFilter,
+      deleteSavedFilter,
+
+      locked,
+      unlock,
+
+      addSubtask,
+      updateSubtask,
+      deleteSubtask,
+      addTaskLink,
+      removeTaskLink,
+
+      createFolder,
+      updateFolder,
+      deleteFolder,
+      reorderFolders,
+      createList,
+      updateList,
+      deleteList,
+      reorderLists,
+
+      ensureTags,
+      createTag,
+      updateTag,
+      deleteTag,
+
+      saveSettings,
+      sortBy,
+      setSortBy,
+      toast,
+      dismissToast,
+
+      dismissReminder,
+      snoozeReminder,
+
+      loadStats,
+      setTodayFocus,
+      registerTasks,
+
+      startFocus,
+      stopFocus,
+      tickFocus,
+
+      confirm,
+      resolveConfirm,
+    }),
+    [
     loading,
     boot,
     tasks,
@@ -1485,10 +1611,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     multiSelect,
     focus,
     confirmState,
-    folders: boot?.folders ?? [],
-    lists: boot?.lists ?? [],
-    tags: boot?.tags ?? [],
-    counts: boot?.counts ?? {},
     todayFocusIds,
     taskIndex,
     savedFilters,
@@ -1496,22 +1618,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     activities,
     activitiesLoaded,
     version,
-
     select,
     selectSmart,
     setView,
     setKeyword,
     setFilters,
     resetFilters,
-    setSelectedTask: setSelectedTaskId,
+    setSelectedTaskId,
     setMultiSelect,
     toggleSelected,
     clearSelected,
-
     refreshTasks,
     refreshBoot,
     reconcile,
-
     createTask,
     updateTask,
     deleteTask,
@@ -1522,27 +1641,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     batch,
     purgeCompleted,
     reorderTasks,
-
     undoDelete,
     dropUndo,
-
     loadActivities,
     clearActivities,
-
     saveFilter,
     applySavedFilter,
     renameSavedFilter,
     deleteSavedFilter,
-
     locked,
     unlock,
-
     addSubtask,
     updateSubtask,
     deleteSubtask,
     addTaskLink,
     removeTaskLink,
-
     createFolder,
     updateFolder,
     deleteFolder,
@@ -1551,32 +1664,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
     updateList,
     deleteList,
     reorderLists,
-
     ensureTags,
     createTag,
     updateTag,
     deleteTag,
-
     saveSettings,
     sortBy,
     setSortBy,
     toast,
     dismissToast,
-
     dismissReminder,
     snoozeReminder,
-
     loadStats,
     setTodayFocus,
     registerTasks,
-
     startFocus,
     stopFocus,
     tickFocus,
-
     confirm,
-    resolveConfirm,
-  }
+    resolveConfirm
+    ],
+  )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

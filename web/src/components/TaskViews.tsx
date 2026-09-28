@@ -1,4 +1,6 @@
 import {
+  memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -15,7 +17,10 @@ import { useIMEGuard } from '../lib/ime'
 import { useStore } from '../store/AppStore'
 import type { Folder, List, Priority, Selection, Tag, Task, TaskPatch } from '../types'
 import {
+  IconArrowDown,
+  IconArrowUp,
   IconBell,
+  IconCalendar,
   IconCheck,
   IconCircle,
   IconClock,
@@ -150,7 +155,16 @@ export function TaskMeta({ task }: { task: Task }) {
 
 /* ---------------- 任务行 ---------------- */
 
-export function TaskRow({
+/**
+ * 任务行。
+ *
+ * 包 memo 是为了拦住「父组件因自己的本地状态重渲染」——折叠分组、进入拖拽、
+ * 悬浮高亮都会让列表整棵重渲染，行本身的数据其实一个字没变。
+ * 注意它**拦不住** store 变化（context 直达消费者，绕过 props 比较），
+ * 所以调用方必须保证传进来的 props 引用稳定（onOpen 用 useCallback、
+ * 排序回调同理），否则 memo 等于没包。
+ */
+export const TaskRow = memo(function TaskRow({
   task,
   onOpen,
   draggable = true,
@@ -391,7 +405,7 @@ export function TaskRow({
       </div>
     </div>
   )
-}
+})
 
 function RowMenuItems({
   task,
@@ -404,9 +418,27 @@ function RowMenuItems({
   onOpen: () => void
   onDelete: () => void
 }) {
-  const { updateTask, confirm, moveTask, skipTask, duplicateTask, lists, folders } = useStore()
+  const { updateTask, confirm, moveTask, skipTask, duplicateTask, lists, folders, tasks, sortBy, reorderTasks } =
+    useStore()
   const today = todayStr()
   const menuRef = useRef<HTMLDivElement>(null)
+
+  /** 手动排序的键盘等价入口：拖拽之外，上下移动同一分区里的相邻两项。 */
+  const moveWithinBucket = (delta: -1 | 1) => {
+    if (sortBy !== 'manual') return
+    const bucket = bucketize(tasks).find((b) => b.tasks.some((t) => t.id === task.id))
+    if (!bucket) return
+    const i = bucket.tasks.findIndex((t) => t.id === task.id)
+    const j = i + delta
+    if (i < 0 || j < 0 || j >= bucket.tasks.length) return
+    const ids = tasks.map((t) => t.id)
+    const a = ids.indexOf(bucket.tasks[i].id)
+    const c = ids.indexOf(bucket.tasks[j].id)
+    if (a < 0 || c < 0) return
+    ids[a] = bucket.tasks[j].id
+    ids[c] = bucket.tasks[i].id
+    void reorderTasks(ids)
+  }
 
   /** ↑↓ 在菜单项之间移动焦点（标准选单的键盘约定），省得一路 Tab 穿过十几项。 */
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -471,6 +503,22 @@ function RowMenuItems({
           onClose()
         }}
       />
+      {/* 任意日期改期：拖拽只能落到今天/明天两格，键盘与触屏用户需要一个完整入口
+          （日历拖到具体日期的等价操作）。原生 date 输入自带键盘可达的日期选择器。 */}
+      <label className="flex items-center gap-2.5 px-2.5 py-1.5 text-[0.78125rem] text-ink hover:bg-surface-2">
+        <IconCalendar size={13} className="text-ink-3" />
+        <span className="flex-1">选择日期…</span>
+        <input
+          type="date"
+          aria-label={`「${task.title}」的到期日`}
+          value={task.dueDate ?? ''}
+          onChange={(e) => {
+            const v = e.target.value
+            if (v && v !== task.dueDate) void moveTask(task.id, { dueDate: v })
+          }}
+          className="rounded-md border border-control-line bg-surface px-1.5 py-0.5 text-[0.75rem] text-ink-2"
+        />
+      </label>
       {/* 重要与紧急原先是同一条「一起翻转」：只想改一个也会连带另一个。拆成两条独立开关。 */}
       <RowAction
         icon={IconSparkle}
@@ -547,6 +595,27 @@ function RowMenuItems({
           onClose()
         }}
       />
+      {/* 手动排序的键盘等价：拖拽之外提供上移/下移（仅手动排序模式） */}
+      {sortBy === 'manual' ? (
+        <>
+          <RowAction
+            icon={IconArrowUp}
+            label="上移一位"
+            onClick={() => {
+              moveWithinBucket(-1)
+              onClose()
+            }}
+          />
+          <RowAction
+            icon={IconArrowDown}
+            label="下移一位"
+            onClick={() => {
+              moveWithinBucket(1)
+              onClose()
+            }}
+          />
+        </>
+      ) : null}
       {/* 重复任务才有「跳过本次」：这次不做，日期直接推到下一次 */}
       {task.repeatRule && task.status !== 'done' ? (
         <RowAction
@@ -1105,6 +1174,13 @@ export function TaskListView({
   const sortable = sortBy === 'manual' && !multiSelect
   const [dragId, setDragId] = useState<number | null>(null)
   const [dropAt, setDropAt] = useState<{ id: number; after: boolean } | null>(null)
+  // 排序回调必须引用稳定：TaskRow 包了 memo，内联箭头会让每一行的 props 都变，
+  // memo 等于白包（折叠/悬浮引发的整列表重渲染也拦不住）。
+  const handleSortStart = useCallback((id: number) => setDragId(id), [])
+  const handleSortEnd = useCallback(() => {
+    setDragId(null)
+    setDropAt(null)
+  }, [])
 
   /** 松手落位：把拖动行插到目标行之前或之后，新顺序以整个可见列表为准。 */
   const commitSort = (bucketTasks: Task[], targetId: number, after: boolean) => {
@@ -1208,11 +1284,8 @@ export function TaskListView({
                         onOpen={onOpen}
                         showList={b.key === 'done'}
                         sortable={sortable}
-                        onSortStart={(id) => setDragId(id)}
-                        onSortEnd={() => {
-                          setDragId(null)
-                          setDropAt(null)
-                        }}
+                        onSortStart={handleSortStart}
+                        onSortEnd={handleSortEnd}
                       />
                     </div>
                   ))}
@@ -1223,8 +1296,8 @@ export function TaskListView({
         )}
       </div>
 
-      {/* 多选操作条 */}
-      <BatchBar />
+      {/* 多选操作条由 App 全局统一渲染一份（见 App.tsx）——此处若再挂一份会与
+          全局那份同位置叠加：Tab 键序翻倍、读屏把操作读两遍、双层 backdrop-blur。 */}
     </div>
   )
 }

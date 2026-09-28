@@ -167,7 +167,12 @@ export function BoardView({ onOpen, filter }: { onOpen: (t: Task) => void; filte
         later: str(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 14)),
         none: null,
       }
-      await updateTask(id, { dueDate: map[col.key] ?? null })
+      await updateTask(id, {
+        dueDate: map[col.key] ?? null,
+        // 清日期必须显式连带清时刻（PATCH 三态由调用方表达），否则留下
+        // 「无到期日却挂着 09:00」的脏数据，下次设日期旧时刻会悄然复活。
+        dueTime: map[col.key] === null ? null : undefined,
+      })
       toast(map[col.key] ? `到期日已改为 ${map[col.key]}` : '已清除到期日')
     }
   }

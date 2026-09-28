@@ -740,20 +740,52 @@ export function useKeepVisible<T extends HTMLElement>(dep: unknown) {
 }
 
 /** 输入框防抖提交：本地即时反馈，落库走延迟。 */
-export function useDebouncedCallback<A extends unknown[]>(fn: (...args: A) => void, delay: number) {
+type Debounced<A extends unknown[]> = ((...args: A) => void) & {
+  /** 立即执行还在窗口内的那次调用（没有则什么都不做）。 */
+  flush: () => void
+  /** 丢弃还在窗口内的那次调用。 */
+  cancel: () => void
+}
+
+export function useDebouncedCallback<A extends unknown[]>(fn: (...args: A) => void, delay: number): Debounced<A> {
   const timer = useRef<number | null>(null)
-  const fnRef = useRef(fn)
-  fnRef.current = fn
+  // 记录**调用时刻**的参数与闭包，而不是到期时再取最新的 ——
+  // 切换任务后若用最新闭包执行，旧任务的输入会以新任务的 id 提交（串任务）。
+  const pending = useRef<{ args: A; fn: (...args: A) => void } | null>(null)
+
+  const take = () => {
+    if (timer.current) window.clearTimeout(timer.current)
+    timer.current = null
+    const p = pending.current
+    pending.current = null
+    return p
+  }
+
+  // 卸载只取消不提交：丢不丢字由调用方决定（它才知道"关面板前是否该落库"）。
+  // 需要落库的场景（标题/备注/预计时长）在 TaskDetail 里显式 flush。
   useEffect(
     () => () => {
       if (timer.current) window.clearTimeout(timer.current)
     },
     [],
   )
-  return (...args: A) => {
+
+  const deb = ((...args: A) => {
     if (timer.current) window.clearTimeout(timer.current)
-    timer.current = window.setTimeout(() => fnRef.current(...args), delay)
+    pending.current = { args, fn }
+    timer.current = window.setTimeout(() => {
+      const p = take()
+      if (p) p.fn(...p.args)
+    }, delay)
+  }) as Debounced<A>
+  deb.flush = () => {
+    const p = take()
+    if (p) p.fn(...p.args)
   }
+  deb.cancel = () => {
+    take()
+  }
+  return deb
 }
 
 /**
