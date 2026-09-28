@@ -67,8 +67,11 @@ jobs:
         working-directory: server
 
       # 无变更时这个 action 会自己什么都不做，不会开出空 PR。
+      # 必须 ≥ v7.0.9：checkout@v6+ 把凭据放进临时 git-credentials-*.config，
+      # 老版本会再写一份 extraheader，两个 Authorization 头叠起来 GitHub 直接 400
+      # （remote: Duplicate header: "Authorization"）。
       - name: 开 PR
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           branch: chore/holiday-data
           title: "chore: 更新法定节假日数据"
