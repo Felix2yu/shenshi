@@ -581,6 +581,9 @@ func (s *Store) CreateTemplate(in model.TemplateInput) (*model.TaskTemplate, err
 		}
 	}
 	ts := model.Now()
+	if err := checkRepeatRule(derefPtr(in.RepeatRule, nil)); err != nil {
+		return nil, err
+	}
 	res, err := s.db.Exec(
 		`INSERT INTO task_templates(name, title, notes, list_id, priority, due_offset, due_time, reminders,
 			repeat_rule, important, urgent, tag_ids, subtasks, sort_order, created_at, updated_at)
@@ -639,6 +642,9 @@ func (s *Store) UpdateTemplate(id int64, in model.TemplateInput) (*model.TaskTem
 		add("reminders = ?", mustJSON(nonNilInts(in.Reminders.Value)))
 	}
 	if in.RepeatRule.Set {
+		if err := checkRepeatRule(in.RepeatRule.Value); err != nil {
+			return nil, err
+		}
 		add("repeat_rule = ?", nullableStrPtr(in.RepeatRule.Value))
 	}
 	if in.Important.Set {

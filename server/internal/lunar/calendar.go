@@ -182,7 +182,7 @@ func NextLunarMonthDay(from time.Time) (time.Time, bool) {
 	if next.Year > MaxYear {
 		return time.Time{}, false
 	}
-	return ToSolar(Date{Year: next.Year, Month: next.Month, Day: cur.Day, IsLeap: next.IsLeap})
+	return solarIn(from, Date{Year: next.Year, Month: next.Month, Day: cur.Day, IsLeap: next.IsLeap})
 }
 
 // NextLunarYearDay 返回农历「每年这一天」在 from 之后的下一次。
@@ -195,7 +195,23 @@ func NextLunarYearDay(from time.Time) (time.Time, bool) {
 	if cur.Year+1 > MaxYear {
 		return time.Time{}, false
 	}
-	return ToSolar(Date{Year: cur.Year + 1, Month: cur.Month, Day: cur.Day, IsLeap: cur.IsLeap})
+	return solarIn(from, Date{Year: cur.Year + 1, Month: cur.Month, Day: cur.Day, IsLeap: cur.IsLeap})
+}
+
+// solarIn 是 ToSolar 的「按 from 所在时区落地」版本。
+//
+// ToSolar 以 UTC 午夜为原点（base 是 UTC），直接返回会让这条日线与
+// nextDay 系（from.Location() 午夜）不一致：调用方（NextRepeat 的
+// `next.Before(today)`）拿本地午夜比 UTC 午夜，在 UTC 负时区（如美洲部署）
+// 会把「同一天」判成落在过去，lunar 重复规则于是每次多跳一天。
+// 只取日期分量（Format）的地方不受影响，故只在这里、把结果交给外部比较的
+// 出口统一归一。
+func solarIn(from time.Time, d Date) (time.Time, bool) {
+	t, ok := ToSolar(d)
+	if !ok {
+		return time.Time{}, false
+	}
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, from.Location()), true
 }
 
 // nextLunarMonth 给出农历意义上的「下一个月」：闰月紧随同月的平月之后，腊月之后进下一年。

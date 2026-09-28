@@ -844,3 +844,85 @@ func TestShiftStart(t *testing.T) {
 		t.Error("非法旧到期日返回 nil")
 	}
 }
+
+// TestRepeatRuleValidation 重复规则的入口校验：创建与更新写入非法规则时
+// 返回 ValidationError（HTTP 层映射 400），空串表示清除规则始终合法。
+func TestRepeatRuleValidation(t *testing.T) {
+	s := newTestStore(t)
+	inbox, err := s.InboxListID()
+	if err != nil {
+		t.Fatalf("InboxListID: %v", err)
+	}
+
+	var ve ValidationError
+	_, err = s.CreateTask(model.TaskInput{Title: optOf("坏规则"), RepeatRule: optOfPtr(sp("fancy:9"))}, inbox)
+	if !errors.As(err, &ve) {
+		t.Fatalf("创建带非法规则应为 ValidationError，得到 %T: %v", err, err)
+	}
+
+	task := mustCreateTask(t, s, "规则校验", func(in *model.TaskInput) {
+		in.RepeatRule = optOfPtr(sp("daily"))
+	})
+
+	_, err = s.UpdateTask(task.ID, model.TaskInput{RepeatRule: optOfPtr(sp("weekly:9"))})
+	if !errors.As(err, &ve) {
+		t.Fatalf("更新为非法规则应为 ValidationError，得到 %T: %v", err, err)
+	}
+
+	// 空串 = 清除规则，放行且落库为空。
+	cleared, err := s.UpdateTask(task.ID, model.TaskInput{RepeatRule: optOfPtr(sp(""))})
+	if err != nil {
+		t.Fatalf("清空规则应放行: %v", err)
+	}
+	if cleared.RepeatRule != nil && *cleared.RepeatRule != "" {
+		t.Errorf("清空后应无规则，得到 %q", *cleared.RepeatRule)
+	}
+}
+
+// TestSmartRespectsExplicitStatus smart 视图只在未指定 status 时给默认口径，
+// 显式传入的 status 必须原样生效 —— 此前多数 smart 分支无条件覆盖它，
+// `smart=X&status=todo` 会被静默改写成「未完成+今日已完成」。
+func TestSmartRespectsExplicitStatus(t *testing.T) {
+	s := newTestStore(t)
+	task := mustCreateTask(t, s, "星标的已完成项", func(in *model.TaskInput) {
+		in.Starred = optOf(true)
+	})
+	if _, err := s.UpdateTask(task.ID, model.TaskInput{Status: optOf(model.StatusDone)}); err != nil {
+		t.Fatalf("置为已完成: %v", err)
+	}
+
+	idsOf := func(tasks []model.Task) map[int64]bool {
+		m := map[int64]bool{}
+		for _, x := range tasks {
+			m[x.ID] = true
+		}
+		return m
+	}
+
+	// 显式 status=todo：今天刚完成的任务不在其中（曾被覆盖成「今日已完成」而混进来）。
+	open, err := s.ListTasks(TaskFilter{Smart: model.SmartStarred, Status: model.StatusTodo, SortBy: "manual"})
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if idsOf(open)[task.ID] {
+		t.Error("显式 status=todo 时，已完成任务不应混入")
+	}
+
+	// 显式 status=all：完整状态可见。
+	all, err := s.ListTasks(TaskFilter{Smart: model.SmartStarred, Status: "all", SortBy: "manual"})
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if !idsOf(all)[task.ID] {
+		t.Error("显式 status=all 时应能看到已完成任务")
+	}
+
+	// 不传 status：走 smart 自己的默认口径（未完成 + 今日已完成），今天完成的应在。
+	fallback, err := s.ListTasks(TaskFilter{Smart: model.SmartStarred, SortBy: "manual"})
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if !idsOf(fallback)[task.ID] {
+		t.Error("缺省口径应包含今日已完成的任务")
+	}
+}

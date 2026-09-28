@@ -96,7 +96,8 @@ func (s *Store) Undo() (int, error) {
 		return 0, err
 	}
 	var payload string
-	if err := s.db.QueryRow(`SELECT payload FROM undo_slot WHERE id = 1`).Scan(&payload); err != nil {
+	var createdAt string
+	if err := s.db.QueryRow(`SELECT payload, created_at FROM undo_slot WHERE id = 1`).Scan(&payload, &createdAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, ValidationError{Msg: "没有可撤销的操作"}
 		}
@@ -124,6 +125,16 @@ func (s *Store) Undo() (int, error) {
 	restored := make([]int64, 0, len(tasks))
 	idMap := make(map[int64]int64, len(tasks))
 	for _, t := range tasks {
+		// 槽位先于删除落库（stageUndo 在 deleteTaskRows 之前），若上次删除中途失败，
+		// 槽位里会留着**仍在库中**的任务 —— 此时不加校验地恢复，等于复制出一条重复任务。
+		// 原 id 还在就说明它没被删成，跳过（links 回放按 idMap 走，未映射的自然跳过）。
+		var stillThere int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM tasks WHERE id = ?`, t.ID).Scan(&stillThere); err != nil {
+			return 0, err
+		}
+		if stillThere > 0 {
+			continue
+		}
 		listID := t.ListID
 		// 清单若在删除之后也被删掉了，退回收件箱，而不是让整次撤销失败。
 		var present int
@@ -210,7 +221,9 @@ func (s *Store) Undo() (int, error) {
 	}
 
 	// 记录已经回来，引用的文件自然不能删：清槽位时保留文件。
-	if _, err := s.db.Exec(`DELETE FROM undo_slot WHERE id = 1`); err != nil {
+	// 带 created_at 条件：读与删之间若有新的删除占了槽位，别把**新槽位**连同其
+	// 文件清单一起抹掉（那会让新删除永远无法撤销，附件也泄漏在磁盘上）。
+	if _, err := s.db.Exec(`DELETE FROM undo_slot WHERE id = 1 AND created_at = ?`, createdAt); err != nil {
 		return 0, err
 	}
 	for _, id := range restored {
@@ -218,7 +231,7 @@ func (s *Store) Undo() (int, error) {
 			s.emit(model.EventTaskCreated, t)
 		}
 	}
-	if restored[0] > 0 {
+	if len(restored) > 0 && restored[0] > 0 {
 		title := tasks[0].Title
 		detail := "撤销删除，已恢复"
 		if len(restored) > 1 {

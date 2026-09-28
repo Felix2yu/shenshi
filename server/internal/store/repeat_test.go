@@ -157,7 +157,7 @@ func TestNthWeekdayOfMonth(t *testing.T) {
 	}
 }
 
-// TestLastWeekdayOfMonth 覆盖「最后一个工作日」遇到周末回退。
+// TestLastWeekdayOfMonth 覆盖「最后一个工作日」的周末与法定假日回退。
 func TestLastWeekdayOfMonth(t *testing.T) {
 	// 2026-10-31 是周六 → 退到 10-30 周五。
 	got := lastWeekdayOfMonth(2026, time.October, time.Local)
@@ -168,6 +168,12 @@ func TestLastWeekdayOfMonth(t *testing.T) {
 	got = lastWeekdayOfMonth(2026, time.November, time.Local)
 	if got.Format("2006-01-02") != "2026-11-30" {
 		t.Errorf("2026 年 11 月最后工作日 = %s，期望 2026-11-30", got.Format("2006-01-02"))
+	}
+	// 2033 年春节是 1-31：月末 1-29（周六）~1-31 全在假里，
+	// 必须越过假日与周末回到 1-28 周五 —— 只按周六日回退会错取 1-29。
+	got = lastWeekdayOfMonth(2033, time.January, time.Local)
+	if got.Format("2006-01-02") != "2033-01-28" {
+		t.Errorf("2033 年 1 月最后工作日 = %s，期望 2033-01-28（春节假前的周五）", got.Format("2006-01-02"))
 	}
 }
 
@@ -202,5 +208,43 @@ func TestEblinghausOffsets(t *testing.T) {
 	again := EbbinghausOffsets()
 	if again[0] != 1 {
 		t.Errorf("调用方改写了内部表，第二次读到 %v", again)
+	}
+}
+
+// TestValidRepeatRule 白名单校验：合法规则（含「空参数等同裸规则」的既有契约
+// 与 ebbinghaus 已推进到末尾的存量下标）放行，未知前缀与越界参数一律拒绝。
+// 与 TestNextOccurrence 分工——那里校验「能否算出下一次」，这里只看语法。
+func TestValidRepeatRule(t *testing.T) {
+	valid := []string{
+		"daily", "weekdays", "weekends", "legalworkday", "legalholiday",
+		"weekly", "weekly:", "weekly:1,3,5", "weekly:0", "weekly: 1 , 3 ",
+		"monthly", "monthly:", "monthly:15", "monthly:31", "monthly:last", "monthly:lastworkday",
+		"monthly:nth:3:0", "monthly:nth:5:6",
+		"yearly", "yearly:", "yearly:3-15", "yearly:12-31",
+		"every:3:day", "every:2:week", "every:6:month", "every:1:year",
+		"ebbinghaus", "ebbinghaus:0", "ebbinghaus:7",
+		"lunar:monthly", "lunar:yearly",
+		"  daily  ",
+	}
+	invalid := []string{
+		"", "   ", "foo", "DAILY",
+		"daily:3", "weekdays:1",
+		"weekly:7", "weekly:-1", "weekly:abc", "weekly:1,,2",
+		"monthly:0", "monthly:32", "monthly:xx",
+		"monthly:nth:0:1", "monthly:nth:1:7", "monthly:nth:x:1", "monthly:nth:1",
+		"yearly:13-1", "yearly:3-32", "yearly:3", "yearly:3/15",
+		"every:0:day", "every:3:hour", "every:x:day", "every:3", "every",
+		"ebbinghaus:8", "ebbinghaus:-1", "ebbinghaus:2x",
+		"lunar:weekly", "lunar",
+	}
+	for _, r := range valid {
+		if !ValidRepeatRule(r) {
+			t.Errorf("ValidRepeatRule(%q) = false，应放行", r)
+		}
+	}
+	for _, r := range invalid {
+		if ValidRepeatRule(r) {
+			t.Errorf("ValidRepeatRule(%q) = true，应拒绝", r)
+		}
 	}
 }

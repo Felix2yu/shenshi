@@ -1,6 +1,7 @@
 package lunar
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -229,6 +230,18 @@ func TestOfficialHolidays2024(t *testing.T) {
 	}
 }
 
+// firstEstimatedYear 返回第一个尚无国务院官方安排的年份（官方数据逐年录入：
+// 每年 11 月发文后由 CI 同步），全部已收录时返回 0。
+// 断言必须基于这个动态量，绝不能写死某个未来年份 —— 否则数据一到，CI 必红。
+func firstEstimatedYear() int {
+	for y := 2024; y <= 2100; y++ {
+		if !HasOfficialData(y) {
+			return y
+		}
+	}
+	return 0
+}
+
 // TestEmbeddedHolidayData 校验 go:embed 进来的 holidays.json。
 // 文件缺失或 JSON 坏了会在包 init 里 panic，测试根本跑不起来；这里只管内容对不对。
 func TestEmbeddedHolidayData(t *testing.T) {
@@ -239,9 +252,13 @@ func TestEmbeddedHolidayData(t *testing.T) {
 		if len(OfficialPapers(year)) == 0 {
 			t.Errorf("%d 年缺国务院原文链接，无法溯源", year)
 		}
+		if IsEstimated(year) {
+			t.Errorf("%d 年已有官方数据，不应标记为推算", year)
+		}
 	}
-	if HasOfficialData(2027) {
-		t.Error("2027 年安排尚未公布，不应有官方数据")
+	// 第一个未收录年份必须标记为推算（找得到才校验：全部收录是远期才会发生的事）。
+	if y := firstEstimatedYear(); y != 0 && !IsEstimated(y) {
+		t.Errorf("%d 年尚无官方数据，应标记为推算值", y)
 	}
 	// 每年的法定假日必须都被官方标成放假：法律写死放假，通知不可能安排上班。
 	for _, year := range []int{2024, 2025, 2026} {
@@ -264,13 +281,14 @@ func TestEmbeddedHolidayData(t *testing.T) {
 }
 
 // TestEstimatedYears 国务院尚未公布的年份，退回放假办法规定的 13 天法定假日。
+// 「哪年已公布」逐年变化（每年 11 月发文 + CI 同步），凡与此相关的断言都必须用
+// firstEstimatedYear() 这个动态量，写死未来年份会让数据一到 CI 就红。
 func TestEstimatedYears(t *testing.T) {
-	if HasOfficialData(2027) {
-		t.Fatal("2027 年安排尚未录入，HasOfficialData 应为 false")
-	}
 	if !HasOfficialData(2026) {
 		t.Fatal("2026 年安排已录入，HasOfficialData 应为 true")
 	}
+	// 推算算法的确定性快照：法定假日由《放假办法》+ 农历决定，与官方调休通知无关，
+	// 即便 2027 官方数据日后录入，这组日期也不会变，断言依然成立。
 	days := StatutoryDays(2027)
 	if len(days) != 13 {
 		t.Fatalf("2027 年法定假日 %d 天，应为 13 天：%v", len(days), days)
@@ -292,8 +310,26 @@ func TestEstimatedYears(t *testing.T) {
 			t.Errorf("%s 应算休息日", d)
 		}
 	}
-	if !DayInfoOf(day("2027-10-01")).Estimated {
-		t.Error("2027 年应标记为推算值")
+	// Estimated 标记跟着数据走：校验「第一个未收录年份」而非写死 2027。
+	y := firstEstimatedYear()
+	if y == 0 {
+		t.Skip("官方数据已覆盖全部年份，无推算年份可校验")
+	}
+	if HasOfficialData(y) {
+		t.Fatalf("%d 年尚无官方数据，HasOfficialData 应为 false", y)
+	}
+	if !DayInfoOf(day(fmt.Sprintf("%d-10-01", y))).Estimated {
+		t.Errorf("%d 年应标记为推算值", y)
+	}
+	// 推算年份同样必须凑齐 13 天法定假日，且全部落在休息日。
+	if n := len(StatutoryDays(y)); n != 13 {
+		t.Errorf("%d 年推算法定假日 %d 天，应为 13 天", y, n)
+	}
+	for _, d := range StatutoryDays(y) {
+		t0, _ := time.ParseInLocation("2006-01-02", d.Day, time.Local)
+		if !IsRestDay(t0) {
+			t.Errorf("%s（%s）是推算法定假日，却未被判定为休息日", d.Day, d.Name)
+		}
 	}
 }
 

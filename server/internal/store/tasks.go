@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -71,6 +72,9 @@ func (f TaskFilter) build(countOnly bool) (string, []any) {
 	weekEnd := now.AddDate(0, 0, (7-int(now.Weekday()))%7).Format("2006-01-02")
 
 	status := f.Status
+	// 各 smart 视图只在调用方**没有**指定 status 时才给出自己的默认口径；
+	// 显式传来的 status 必须原样生效（早前这里无条件覆盖，导致
+	// `smart=overdue&status=done` 之类的组合被静默改写成「未完成+今日已完成」）。
 	switch f.Smart {
 	case model.SmartInbox:
 		where = append(where, "l.is_inbox = 1")
@@ -81,42 +85,62 @@ func (f TaskFilter) build(countOnly bool) (string, []any) {
 		// 「今天」包含今日到期与已逾期未完成的事项，避免遗漏。
 		where = append(where, "t.due_date IS NOT NULL AND t.due_date <= ?")
 		args = append(args, today)
-		status = statusOpenWithTodayDone
+		if status == "" {
+			status = statusOpenWithTodayDone
+		}
 	case model.SmartTomorrow:
 		where = append(where, "t.due_date = ?")
 		args = append(args, tomorrow)
-		status = statusOpenWithTodayDone
+		if status == "" {
+			status = statusOpenWithTodayDone
+		}
 	case model.SmartWeek:
 		where = append(where, "t.due_date IS NOT NULL AND t.due_date >= ? AND t.due_date <= ?")
 		args = append(args, today, weekEnd)
-		status = statusOpenWithTodayDone
+		if status == "" {
+			status = statusOpenWithTodayDone
+		}
 	case model.SmartNext7:
 		where = append(where, "t.due_date IS NOT NULL AND t.due_date > ? AND t.due_date <= ?")
 		args = append(args, today, in7)
-		status = statusOpenWithTodayDone
+		if status == "" {
+			status = statusOpenWithTodayDone
+		}
 	case model.SmartOverdue:
 		where = append(where, "t.due_date IS NOT NULL AND t.due_date < ?")
 		args = append(args, today)
-		status = statusOpenWithTodayDone
+		if status == "" {
+			status = statusOpenWithTodayDone
+		}
 	case model.SmartNoDate:
 		where = append(where, "t.due_date IS NULL")
-		status = statusOpenWithTodayDone
+		if status == "" {
+			status = statusOpenWithTodayDone
+		}
 	case model.SmartHigh:
 		where = append(where, "t.priority = ?")
 		args = append(args, model.PriorityHigh)
-		status = statusOpenWithTodayDone
+		if status == "" {
+			status = statusOpenWithTodayDone
+		}
 	case model.SmartStarred:
 		where = append(where, "t.starred = 1")
-		status = statusOpenWithTodayDone
+		if status == "" {
+			status = statusOpenWithTodayDone
+		}
 	case model.SmartUpdated:
 		// 「最近修改」看的是全部状态（刚改过的往往是刚勾掉的），由排序决定读法。
 		if status == "" {
 			status = "all"
 		}
 	case model.SmartRecentDone:
-		status = model.StatusDone
+		if status == "" {
+			status = model.StatusDone
+		}
 	case model.SmartDone:
-		status = model.StatusDone
+		if status == "" {
+			status = model.StatusDone
+		}
 	case model.SmartAll:
 		if status == "" {
 			status = "all"
@@ -347,6 +371,56 @@ func (s *Store) GetTask(id int64) (*model.Task, error) {
 		return nil, err
 	}
 	return &list[0], nil
+}
+
+// getTasksByIDs 按 id 批量取完整任务（含子任务/标签/附件/依赖）。
+// 批量删除的撤销暂存与批量操作的历史汇总用它 —— 逐个 GetTask 会把一次
+// 批量操作放大成 N×5 条查询（主查询 + 4 条装配查询）。不存在的 id 静默跳过，
+// 返回顺序不作保证（调用方都只关心集合本身）。
+func (s *Store) getTasksByIDs(ids []int64) ([]model.Task, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	ph := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		ph[i] = "?"
+		args[i] = id
+	}
+	rows, err := s.db.Query(taskSelect+" WHERE t.id IN ("+strings.Join(ph, ",")+")", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]model.Task, 0, len(ids))
+	for rows.Next() {
+		t, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// 装配前必须关掉游标：SQLite 同一连接上不允许查询与查询并行。
+	rows.Close()
+	if len(out) == 0 {
+		return out, nil
+	}
+	if err := s.attachSubtasks(out); err != nil {
+		return nil, err
+	}
+	if err := s.attachTags(out); err != nil {
+		return nil, err
+	}
+	if err := s.attachAttachments(out); err != nil {
+		return nil, err
+	}
+	if err := s.attachLinks(out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 type rowScanner interface {
@@ -580,6 +654,9 @@ func (s *Store) CreateTask(in model.TaskInput, defaultListID int64) (*model.Task
 	if repeatRule != nil && strings.TrimSpace(*repeatRule) == "" {
 		repeatRule = nil
 	}
+	if err := checkRepeatRule(repeatRule); err != nil {
+		return nil, err
+	}
 	repeatFrom := normalizeRepeatFrom(deref(in.RepeatFrom, model.RepeatFromDue))
 
 	if err := checkPriority(priority); err != nil {
@@ -771,6 +848,9 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 		add("reminders = ?", mustJSON(r))
 	}
 	if in.RepeatRule.Set {
+		if err := checkRepeatRule(in.RepeatRule.Value); err != nil {
+			return nil, err
+		}
 		add("repeat_rule = ?", ptrStr(in.RepeatRule.Value))
 	}
 	if in.RepeatFrom.Set {
@@ -809,17 +889,16 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 		add("urgent = ?", boolInt(deriveUrgent(newDue, false)))
 	}
 
+	// 状态更新不进通用 sets：它要走**条件更新**（与 toggleTask 同口径），
+	// 并发下只有真正让状态变化的那一方才算"本次完成了它"——否则两个并发 PATCH
+	// 各自读到 cur.Status != done，就会 spawn 出两份下一次任务。
+	// 非法状态值也在此拦下：三态解析只区分"传/不传"，不校验值本身，从前
+	// {"status":"completed"} 会返回 200 却什么都没改，客户端以为成功了。
 	if in.Status.Set {
 		switch in.Status.Value {
-		case model.StatusDone:
-			add("status = 'done'")
-			add("completed_at = ?", model.Now())
-		case model.StatusInProgress:
-			add("status = 'in_progress'")
-			add("completed_at = NULL")
-		case model.StatusTodo:
-			add("status = 'todo'")
-			add("completed_at = NULL")
+		case model.StatusDone, model.StatusInProgress, model.StatusTodo:
+		default:
+			return nil, ValidationError{Msg: "未知任务状态：" + in.Status.Value}
 		}
 	}
 
@@ -834,6 +913,30 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.Exec("UPDATE tasks SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...); err != nil {
 		return nil, err
+	}
+	// 状态转换单独一条条件更新：WHERE status<>目标值 让"是否真的变了状态"由
+	// RowsAffected 回答，而不是拿事务外的旧读 cur 猜（旧读在并发下会误判）。
+	statusChanged := false
+	if in.Status.Set {
+		var res sql.Result
+		var err error
+		if in.Status.Value == model.StatusDone {
+			res, err = tx.Exec(
+				"UPDATE tasks SET status='done', completed_at = ?, updated_at = ? WHERE id = ? AND status <> 'done'",
+				model.Now(), model.Now(), id,
+			)
+		} else {
+			res, err = tx.Exec(
+				"UPDATE tasks SET status = ?, completed_at = NULL, updated_at = ? WHERE id = ? AND status <> ?",
+				in.Status.Value, model.Now(), id, in.Status.Value,
+			)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			statusChanged = true
+		}
 	}
 	if in.TagIDs.Set {
 		if err := syncTaskTags(tx, id, in.TagIDs.Value); err != nil {
@@ -854,17 +957,23 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 	}
 	// 经 PATCH 把状态改为完成时，重复任务同样要续期——与 /toggle 同一口径，
 	// 否则从详情面板完成的重复任务会静默断链（只完成、不再生成下一次）。
-	if in.Status.Set && in.Status.Value == model.StatusDone && cur.Status != model.StatusDone {
+	// 只认本次条件更新**真的赢了**（statusChanged），并发下输的一方不重复续期。
+	if statusChanged && in.Status.Set && in.Status.Value == model.StatusDone {
 		if _, err := s.spawnNextRepeat(t); err != nil {
-			return nil, err
+			// 续期失败不能把整个请求打回 500：状态已提交，客户端重试会看到
+			// status=done 又不再续期，且这次完成的事件与历史全部丢失。
+			// 降级为记日志：任务本体的完成是成功的，续期是"下一次"的增强。
+			log.Printf("shenshi: 重复任务续期失败 task=%d rule=%v: %v", t.ID, cur.RepeatRule, err)
 		}
 	}
 	// 完成与恢复比「改了某个字段」更值得单独订阅，因此拆成独立事件。
+	// 判定一律用 statusChanged（条件更新的结果），不用事务外旧读 cur ——
+	// 并发下只改标题的 PATCH 若读到旧状态，会误发"完成"事件。
 	switch {
-	case cur.Status != t.Status && t.Status == model.StatusDone:
+	case statusChanged && t.Status == model.StatusDone:
 		s.emit(model.EventTaskCompleted, t)
 		s.logActivity(model.ActCompleted, t.ID, t.Title, "在 "+t.ListName+" 中完成")
-	case cur.Status != t.Status && t.Status != model.StatusDone:
+	case statusChanged && t.Status != model.StatusDone:
 		s.emit(model.EventTaskReopened, t)
 		s.logActivity(model.ActReopened, t.ID, t.Title, "恢复为未完成")
 	case cur.ListID != t.ListID:
@@ -927,6 +1036,19 @@ func (s *Store) emitTaskUpdatedQuietly(id int64) {
 	}
 }
 
+// clearSubtaskDone 复制一棵子任务树并把所有 done 归零（含嵌套子子任务）。
+// 「副本」与「重复续期」共用：新一轮从头开始做，不能带着上一轮的勾。
+func clearSubtaskDone(items []model.Subtask) []model.Subtask {
+	out := make([]model.Subtask, 0, len(items))
+	for _, sub := range items {
+		cp := sub
+		cp.Done = false
+		cp.Children = clearSubtaskDone(sub.Children)
+		out = append(out, cp)
+	}
+	return out
+}
+
 // DuplicateTask 复制一条任务：结构照搬，状态归零。
 //
 // 复制出的新任务不继承「置顶」（置顶是对此刻的一个表态，不该自己长出来），
@@ -936,19 +1058,7 @@ func (s *Store) DuplicateTask(id int64) (*model.Task, error) {
 	if err != nil {
 		return nil, err
 	}
-	subs := make([]model.Subtask, 0, len(cur.Subtasks))
-	var clearDone func(items []model.Subtask) []model.Subtask
-	clearDone = func(items []model.Subtask) []model.Subtask {
-		out := make([]model.Subtask, 0, len(items))
-		for _, sub := range items {
-			cp := sub
-			cp.Done = false
-			cp.Children = clearDone(sub.Children)
-			out = append(out, cp)
-		}
-		return out
-	}
-	subs = clearDone(cur.Subtasks)
+	subs := clearSubtaskDone(cur.Subtasks)
 	in := model.TaskInput{
 		Title:      optOf(cur.Title + "（副本）"),
 		Notes:      optOf(cur.Notes),
@@ -1136,6 +1246,13 @@ func (s *Store) spawnNextRepeat(cur *model.Task) (*model.Task, error) {
 	}
 	in.Important = optOf(cur.Important)
 	in.Urgent = optOf(deriveUrgent(&nd, false))
+	// 子任务与预计时长跟随续期：子任务是任务的执行清单，预计时长是排期依据，
+	// 丢了它们「下一次」就只继承了标题，做的时候要重新拆一遍。
+	// 完成勾选不继承（clearSubtaskDone）；进度不继承，新一轮从 0 开始。
+	if len(cur.Subtasks) > 0 {
+		in.Subtasks = optOf(clearSubtaskDone(cur.Subtasks))
+	}
+	in.EstimateMinutes = optOf(cur.EstimateMinutes)
 	nt, err := s.CreateTask(in, cur.ListID)
 	if err != nil {
 		return nil, err
@@ -1159,8 +1276,12 @@ func (s *Store) spawnNextRepeat(cur *model.Task) (*model.Task, error) {
 // 「从实际完成日生成」则适合「松一口气再排下一次」的安排。
 func NextRepeat(rule string, startDate, dueDate *string, repeatFrom string, now time.Time) (time.Time, string, bool) {
 	base := now
-	// 有开始日期时以开始日为锚，没有才退到到期日 —— 与「任务从哪天起算」的直觉一致。
-	for _, src := range []*string{startDate, dueDate} {
+	// 节奏锚**优先取到期日**：续期（spawnNextRepeat/SkipTask）把推算结果写进的
+	// 正是 due_date —— 锚与落点必须一致。若以 start_date 为锚，"开始 09-01、
+	// 到期 09-05、每天一次"的任务在 09-03 完成时会被顺推逻辑压到 09-03（今天），
+	// 且 shiftStart 按同一偏移把 start 也推回过去，序列永远停在"今天"不往前走。
+	// 无到期日的任务才退回开始日期作锚。
+	for _, src := range []*string{dueDate, startDate} {
 		if src == nil {
 			continue
 		}
@@ -1185,6 +1306,12 @@ func NextRepeat(rule string, startDate, dueDate *string, repeatFrom string, now 
 				return time.Time{}, "", false
 			}
 			next, nextRule = n2, r2
+		}
+		// 400 次是防死循环的护栏，不是"打满也算成功"的许可证：
+		// 超长逾期（如 daily 拖了两年多）推进不完时，宁可明确失败让调用方
+		// 走「无后续」分支，也不生成一条落地即在过去、看起来像倒退的任务。
+		if next.Before(today) {
+			return time.Time{}, "", false
 		}
 	}
 	return next, nextRule, true
@@ -1307,11 +1434,9 @@ func (s *Store) BatchAction(ids []int64, action string, listID *int64, dueDate *
 	}
 
 	if action == "delete" {
-		found := make([]model.Task, 0, len(ids))
-		for _, id := range ids {
-			if cur, err := s.GetTask(id); err == nil {
-				found = append(found, *cur)
-			}
+		found, err := s.getTasksByIDs(ids)
+		if err != nil {
+			return 0, err
 		}
 		if len(found) > 0 {
 			label := "删除「" + found[0].Title + "」"
@@ -1336,53 +1461,64 @@ func (s *Store) BatchAction(ids []int64, action string, listID *int64, dueDate *
 		return n, nil
 	}
 
+	// 一条 UPDATE 覆盖得掉的动作整批做掉：逐条走是 N×(UPDATE + 回读×5 + emit)，
+	// 勾选上千行时每行七条查询，前端早就超时了。
+	// complete / move 留在循环里 —— 完成要各自续期重复任务，移动要各自派生
+	// urgent 并发移动事件，语义就是逐条的。
+	batchSet, hasBatch := map[string]string{
+		"reopen":    "status = 'todo', completed_at = NULL",
+		"pin":       "pinned = 1",
+		"unpin":     "pinned = 0",
+		"star":      "starred = 1",
+		"unstar":    "starred = 0",
+		"archive":   "archived = 1",
+		"unarchive": "archived = 0",
+	}[action]
+
 	n := 0
+	// 首件标题只用于历史汇总，循环外批量回读一次即可 —— 原先在循环里逐条
+	// GetTask，读的还是完全相同的字段。
 	firstTitle := ""
-	for _, id := range ids {
-		var err error
-		switch action {
-		case "complete":
-			// 幂等完成：已是 done 的项保持完成，不会被 toggle 翻回未完成。
-			if _, err = s.completeTask(id, true); err == nil {
-				n++
-			}
-		case "reopen":
-			if _, err = s.db.Exec(`UPDATE tasks SET status='todo', completed_at=NULL, updated_at=? WHERE id=?`, model.Now(), id); err == nil {
-				n++
-				s.emitTaskUpdatedQuietly(id)
-			}
-		case "move":
-			if _, err = s.MoveTask(id, listID, dueDate, nil); err == nil {
-				n++
-			}
-		case "pin", "unpin", "star", "unstar":
-			col, val := "pinned", 1
-			if action == "unpin" || action == "unstar" {
-				val = 0
-			}
-			if action == "star" || action == "unstar" {
-				col = "starred"
-			}
-			if _, err = s.db.Exec(`UPDATE tasks SET `+col+` = ?, updated_at = ? WHERE id = ?`, val, model.Now(), id); err == nil {
-				n++
-				s.emitTaskUpdatedQuietly(id)
-			}
-		case "archive", "unarchive":
-			val := 1
-			if action == "unarchive" {
-				val = 0
-			}
-			if _, err = s.db.Exec(`UPDATE tasks SET archived = ?, updated_at = ? WHERE id = ?`, val, model.Now(), id); err == nil {
-				n++
-				s.emitTaskUpdatedQuietly(id)
+	if tasks, err := s.getTasksByIDs(ids); err == nil && len(tasks) > 0 {
+		firstTitle = tasks[0].Title
+	}
+	if hasBatch {
+		ph := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
+		args := make([]any, 0, len(ids)+1)
+		args = append(args, model.Now())
+		for _, id := range ids {
+			args = append(args, id)
+		}
+		res, err := s.db.Exec(
+			"UPDATE tasks SET "+batchSet+", updated_at = ? WHERE id IN ("+ph+")", args...)
+		if err != nil {
+			return 0, err
+		}
+		if affected, _ := res.RowsAffected(); affected > 0 {
+			n = int(affected)
+			// 批量回读后逐条发事件：订阅方拿到的是完整任务，不能只给个 id。
+			if tasks, err := s.getTasksByIDs(ids); err == nil {
+				for i := range tasks {
+					s.emit(model.EventTaskUpdated, &tasks[i])
+				}
 			}
 		}
-		if err != nil && !errors.Is(err, ErrNotFound) {
-			return n, err
-		}
-		if firstTitle == "" {
-			if t, gerr := s.GetTask(id); gerr == nil {
-				firstTitle = t.Title
+	} else {
+		for _, id := range ids {
+			var err error
+			switch action {
+			case "complete":
+				// 幂等完成：已是 done 的项保持完成，不会被 toggle 翻回未完成。
+				if _, err = s.completeTask(id, true); err == nil {
+					n++
+				}
+			case "move":
+				if _, err = s.MoveTask(id, listID, dueDate, nil); err == nil {
+					n++
+				}
+			}
+			if err != nil && !errors.Is(err, ErrNotFound) {
+				return n, err
 			}
 		}
 	}

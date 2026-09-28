@@ -212,13 +212,117 @@ func NextOccurrence(rule string, from time.Time) (next time.Time, nextRule strin
 	return time.Time{}, "", false
 }
 
-// lastWeekdayOfMonth 返回某月最后一个工作日（周一至周五）。
+// lastWeekdayOfMonth 返回某月最后一个「法定工作日」。
+//
+// 口径与 internal/lunar 一致（同 legalworkday 规则）：调休补班的周末算上班，
+// 法定假日与连休区间不算 —— 只按周六日回退会把「月末恰逢国庆/春节假」的
+// 周五当成工作日排任务。整月无工作日（农历数据异常）时退回周末口径兜底。
 func lastWeekdayOfMonth(year int, month time.Month, loc *time.Location) time.Time {
-	d := time.Date(year, month, daysInMonth(year, month), 0, 0, 0, 0, loc)
+	last := daysInMonth(year, month)
+	first := time.Date(year, month, 1, 0, 0, 0, 0, loc)
+	d := time.Date(year, month, last, 0, 0, 0, 0, loc)
+	for !d.Before(first) {
+		if lunar.IsLegalWorkday(d) {
+			return d
+		}
+		d = d.AddDate(0, 0, -1)
+	}
+	// 理论上不可能（没有整月都是假日的日历），数据异常时按周末口径退回月末。
+	d = time.Date(year, month, last, 0, 0, 0, 0, loc)
 	for d.Weekday() == time.Saturday || d.Weekday() == time.Sunday {
 		d = d.AddDate(0, 0, -1)
 	}
 	return d
+}
+
+// ValidRepeatRule 按语法白名单校验重复规则写得对不对，不试算具体日期。
+//
+// 与 NextOccurrence 的 ok=false 分工明确：那里表示「这一刻算不出下一次」
+// （可能是规则本身非法，也可能是规则已耗尽——如 ebbinghaus 走完全部间隔、
+// weekly 挑的日子 14 天内没出现），而这里只看语法。若拿试算当校验，
+// ebbinghaus:7 这类「已经推进到末尾的合法存量值」会被误拒。
+func ValidRepeatRule(rule string) bool {
+	rule = strings.TrimSpace(rule)
+	if rule == "" {
+		return false
+	}
+	parts := strings.Split(rule, ":")
+	arg := ""
+	if len(parts) > 1 {
+		arg = strings.Join(parts[1:], ":")
+	}
+	intIn := func(s string, lo, hi int) bool {
+		n, err := strconv.Atoi(s)
+		return err == nil && n >= lo && n <= hi
+	}
+	switch parts[0] {
+	case "daily", "weekdays", "weekends", "legalworkday", "legalholiday":
+		return arg == ""
+
+	case "weekly":
+		if arg == "" {
+			return true
+		}
+		for _, s := range strings.Split(arg, ",") {
+			if !intIn(strings.TrimSpace(s), 0, 6) {
+				return false
+			}
+		}
+		return true
+
+	case "monthly":
+		if arg == "" || arg == "last" || arg == "lastworkday" {
+			return true
+		}
+		if seg := strings.Split(arg, ":"); len(seg) == 3 && seg[0] == "nth" {
+			return intIn(seg[1], 1, 5) && intIn(seg[2], 0, 6)
+		}
+		return intIn(arg, 1, 31)
+
+	case "yearly":
+		if arg == "" {
+			return true
+		}
+		md := strings.Split(arg, "-")
+		return len(md) == 2 && intIn(md[0], 1, 12) && intIn(md[1], 1, 31)
+
+	case "every":
+		seg := strings.Split(arg, ":")
+		if len(seg) != 2 {
+			return false
+		}
+		n, err := strconv.Atoi(seg[0])
+		if err != nil || n < 1 {
+			return false
+		}
+		switch seg[1] {
+		case "day", "week", "month", "year":
+			return true
+		}
+		return false
+
+	case "ebbinghaus":
+		// 下标 0 ~ len 都可能已存在库里（nextRule 会把它推进到 len）。
+		if arg == "" {
+			return true
+		}
+		return intIn(arg, 0, len(ebbinghausOffsets))
+
+	case "lunar":
+		return arg == "monthly" || arg == "yearly"
+	}
+	return false
+}
+
+// checkRepeatRule 校验「可为空的重复规则」：空 = 不设规则，直接放行。
+func checkRepeatRule(p *string) error {
+	if p == nil || strings.TrimSpace(*p) == "" {
+		return nil
+	}
+	if !ValidRepeatRule(*p) {
+		return ValidationError{Msg: "重复规则不合法: " + *p}
+	}
+	return nil
 }
 
 // nthWeekdayOfMonth 返回某月第 n 个指定的星期几。该月凑不满 n 个时返回 ok=false
