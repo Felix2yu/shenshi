@@ -504,19 +504,37 @@ function RowMenuItems({
         }}
       />
       {/* 任意日期改期：拖拽只能落到今天/明天两格，键盘与触屏用户需要一个完整入口
-          （日历拖到具体日期的等价操作）。原生 date 输入自带键盘可达的日期选择器。 */}
-      <label className="flex items-center gap-2.5 px-2.5 py-1.5 text-[0.78125rem] text-ink hover:bg-surface-2">
-        <IconCalendar size={13} className="text-ink-3" />
-        <span className="flex-1">选择日期…</span>
+          （日历拖到具体日期的等价操作）。原生 date 输入自带键盘可达的日期选择器。
+          排版注意：浮层宽度固定 200px（px 口径），而原生 date 控件的固有宽度随字号
+          （fontScale）放大——120% 字号下已达 ~136px，占满整行后会把文字标签压成逐字
+          竖排（2026-09-28 修）。故改为：输入框铺满整行且视觉透明，点整行即弹出系统
+          日期选择器；文字标签兜底 whitespace-nowrap，任何字号下都不再折行。 */}
+      <label className="relative flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[0.78125rem] text-ink transition-colors hover:bg-surface-2 focus-within:bg-surface-2 focus-within:ring-1 focus-within:ring-seal/40">
+        <IconCalendar size={13} className="shrink-0 text-ink-3" />
+        <span className="flex-1 whitespace-nowrap">选择日期…</span>
         <input
           type="date"
           aria-label={`「${task.title}」的到期日`}
           value={task.dueDate ?? ''}
+          onClick={(e) => {
+            // 整行都落在输入框上，所以点行内任意位置都能拉起系统日期选择器
+            // （原生只在右侧日历图标上响应点击，对触屏/键盘用户太窄）。
+            // 不支持 showPicker 的环境（老 Safari）退化：聚焦后 iOS 会自动弹原生选择器。
+            try {
+              e.currentTarget.showPicker?.()
+            } catch {
+              /* 非用户激活等场景下浏览器会拒绝，忽略即可，输入本身仍可用 */
+            }
+          }}
           onChange={(e) => {
             const v = e.target.value
-            if (v && v !== task.dueDate) void moveTask(task.id, { dueDate: v })
+            if (v === (task.dueDate ?? '')) return
+            // 与「清除日期」同口径：清日期必须一并清时刻，否则会留下"没有到期日、却还挂着
+            // 09:00"的脏数据（系统日期选择器自带「清除」按钮，这条分支不是摆设）。
+            void moveTask(task.id, v ? { dueDate: v } : { dueDate: null, dueTime: null })
+            onClose()
           }}
-          className="rounded-md border border-control-line bg-surface px-1.5 py-0.5 text-[0.75rem] text-ink-2"
+          className="absolute inset-0 h-full w-full cursor-pointer rounded-lg border border-control-line bg-surface px-1.5 text-[0.75rem] text-ink-2 opacity-0 focus:opacity-100"
         />
       </label>
       {/* 重要与紧急原先是同一条「一起翻转」：只想改一个也会连带另一个。拆成两条独立开关。 */}
