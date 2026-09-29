@@ -350,6 +350,70 @@ function mapFolderInTree(tree: Folder[], id: number, fn: (f: Folder) => Folder):
   })
 }
 
+/**
+ * 「这条提醒已经弹过桌面通知」的记账集合。
+ *
+ * 必须落盘：只记在内存里的话，刷新一次页面就等于从头开始，服务端台账里那些
+ * 「尚未处理」的提醒会被当成新提醒重新弹一遍——用户看到的是同一件事反复轰炸。
+ * 键沿用去重口径 `ackId|fireAt`。
+ */
+const NOTIFIED_KEY = 'shenshi-reminders-notified'
+/** 上限只是防止长年累月把 localStorage 撑大，超出按先进先出丢最早的。 */
+const NOTIFIED_MAX = 400
+
+/** 单例：Provider 全应用只有一个，没必要每个渲染都去读一次存储。 */
+let notifiedKeys: Set<string> | null = null
+
+function notified(): Set<string> {
+  if (notifiedKeys) return notifiedKeys
+  const s = new Set<string>()
+  notifiedKeys = s
+  try {
+    const raw = localStorage.getItem(NOTIFIED_KEY)
+    const parsed = raw ? (JSON.parse(raw) as unknown) : []
+    if (Array.isArray(parsed)) for (const k of parsed) s.add(String(k))
+  } catch {
+    // 读不出来就当没弹过：多弹一次远比永久不再弹好。
+  }
+  return s
+}
+
+/** Set 的插入序就是先后序，从头截断即先进先出。 */
+function rememberNotified(keys: string[]): void {
+  if (!keys.length) return
+  const s = notified()
+  for (const k of keys) s.add(k)
+  while (s.size > NOTIFIED_MAX) {
+    const oldest = s.values().next().value
+    if (oldest === undefined) break
+    s.delete(oldest)
+  }
+  try {
+    localStorage.setItem(NOTIFIED_KEY, JSON.stringify([...s]))
+  } catch {
+    /* 隐私模式或配额满：退化成本次页面内去重 */
+  }
+}
+
+function forgetNotified(key: string): void {
+  if (!notified().delete(key)) return
+  try {
+    localStorage.setItem(NOTIFIED_KEY, JSON.stringify([...notified()]))
+  } catch {
+    /* 同上 */
+  }
+}
+
+/** 「彻底清除缓存并重载」连这份记账一起抹掉，否则清完之后 overdue 的老提醒不再提示。 */
+function clearNotified(): void {
+  notifiedKeys = null
+  try {
+    localStorage.removeItem(NOTIFIED_KEY)
+  } catch {
+    /* 清不掉也不该拦住彻底清除的其余步骤 */
+  }
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [boot, setBoot] = useState<Bootstrap | null>(null)
@@ -396,7 +460,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const online = useOnline()
   const [pendingSync, setPendingSync] = useState(0)
   const [localTasks, setLocalTasks] = useState<LocalTask[]>([])
-  const { updateReady, applyUpdate, hardReset, controlled } = useServiceWorker()
+  const { updateReady, applyUpdate, hardReset: reloadWithoutSW, controlled } = useServiceWorker()
+  // 彻底清除：SW、缓存、离线队列之外，桌面通知「弹过了」的记账也要抹掉，
+  // 否则清完之后 overdue 的旧提醒再也提示不了。
+  const hardReset = useCallback(async () => {
+    clearNotified()
+    await reloadWithoutSW()
+  }, [reloadWithoutSW])
   const [undo, setUndo] = useState<UndoState | null>(null)
   const [activities, setActivities] = useState<Activity[]>([])
   const [activitiesLoaded, setActivitiesLoaded] = useState(false)
@@ -417,7 +487,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const toastSeq = useRef(0)
   const confirmSeq = useRef(0)
   const reconcileTimer = useRef<number | null>(null)
-  const seenReminders = useRef<Set<string>>(new Set())
   /** 提醒的跨标签页广播通道，由下方 effect 装配/销毁。 */
   const remindChannel = useRef<BroadcastChannel | null>(null)
 
@@ -684,6 +753,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // 口径：服务端集合为准全量对齐本地状态——改期/完成/别的标签页处理过的旧 hit
   // 自动消失，刷新后未处理的自动回来；「收到即回执」改成了「用户处理时才回执」，
   // 否则「稍后提醒」到期后服务端已永久静默，永远弹不回来。
+  //
+  // 桌面通知只对 fireAt 已到的那几条弹（服务端 lookahead 会提前两小时把提醒送进来，
+  // 那是给提醒中心列「即将」用的，不是催办）。去重键落在 localStorage：
+  // 只记在内存里，刷新一次就等于把未处理的提醒重新弹一遍。
   useEffect(() => {
     if (loading) return
     const poll = async () => {
@@ -692,12 +765,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const hits = r.reminders
         // 去重与回执统一用 ackId（子任务为负数）：用 task.id 会让所有子任务提醒
         // 挤在「0|fireAt」一个键上互相过滤，且 ack 传 0 必被服务端拒绝。
-        const fresh = hits.filter((h) => !seenReminders.current.has(`${h.ackId}|${h.fireAt}`))
+        const due = hits.filter((h) => h.overdue)
+        const fresh = due.filter((h) => !notified().has(`${h.ackId}|${h.fireAt}`))
         const freshKeys = fresh.map((h) => `${h.ackId}|${h.fireAt}`)
+        rememberNotified(freshKeys)
         for (const h of fresh) {
-          seenReminders.current.add(`${h.ackId}|${h.fireAt}`)
           const name = h.subtask ? `${h.task.title} · ${h.subtask.title}` : h.task.title
-          pushNotification(`慎始 · ${name}`, `${h.dueLabel}${h.overdue ? '（已到时间）' : ''}`)
+          pushNotification(`慎始 · ${name}`, `${h.dueLabel}（已到时间）`)
         }
         if (fresh.length) {
           if (settings.soundOn !== '0') playChime()
@@ -728,13 +802,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
       if (msg.type === 'dismiss' && msg.key) {
         drop([msg.key])
-        // 对方已落回执：本页也标记已见，防 stale 轮询把它带回来再弹一次。
-        seenReminders.current.add(msg.key)
+        // 对方已落回执：本页也记下「弹过了」，防 stale 轮询把它带回来再弹一次。
+        rememberNotified([msg.key])
       } else if (msg.type === 'snooze' && msg.key) {
         drop([msg.key])
-        // 不动本页 seen：到期重弹时由各标签页自行决定是否通知。
+        // 抹掉记号：推迟到期后应当重新弹一次。
+        forgetNotified(msg.key)
       } else if (msg.type === 'seen' && msg.keys) {
-        for (const k of msg.keys) seenReminders.current.add(k)
+        rememberNotified(msg.keys)
       }
     }
     remindChannel.current = ch
@@ -1696,8 +1771,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return
       }
       setReminders((prev) => prev.filter((h) => `${h.ackId}|${h.fireAt}` !== key))
-      // 到期重弹要重新通知：把 key 从已见集合挪开，交给下一次轮询当「新提醒」。
-      seenReminders.current.delete(key)
+      // 到期重弹要重新通知：抹掉「弹过了」的记号，交给下一次轮询当新提醒。
+      forgetNotified(key)
       remindChannel.current?.postMessage({ type: 'snooze', key })
       toast(`${minutes} 分钟后再提醒`)
     },
