@@ -115,6 +115,13 @@ jobs:
         env:
           SHOT_DIR: ${{ github.workspace }}/screenshots
 
+      # PWA / 离线：装得下来、断网能读能写、联网能补账。
+      # 依赖上一步已经装好的 Chromium 与构建产物。
+      - name: PWA 与离线冒烟
+        run: node scripts/pwa-smoke.mjs
+        env:
+          SHOT_DIR: ${{ github.workspace }}/screenshots
+
       # 失败时截图是排查的主要线索，所以无论如何都传。
       - name: 上传 UI 截图
         if: always()

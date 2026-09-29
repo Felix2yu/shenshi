@@ -1424,6 +1424,52 @@ def run_auth(base: str, token: str) -> None:
     check("节流后正确口令同样被拦", codes[-1] == 429, str(codes[-1]))
 
 
+def run_offline_sync(base: str) -> None:
+    """验证离线队列重放所依赖的幂等完成端点（POST /api/tasks/{id}/done）。"""
+    section("㉚ 离线同步：幂等完成端点")
+
+    status, t = call(base, "POST", "/api/tasks", {
+        "title": "离线重放用的重复任务",
+        "dueDate": "2026-10-05",
+        "repeatRule": "daily",
+    })
+    check("创建离线重放用任务", status in (200, 201) and t.get("id"), str(status))
+    tid = t.get("id")
+
+    # 第一次：置为完成，重复任务照常续期。
+    status, r1 = call(base, "POST", f"/api/tasks/{tid}/done", {"completed": True})
+    check("置为完成返回 200", status == 200, str(status))
+    check("完成状态已生效", r1.get("task", {}).get("status") == "done", str(r1.get("task", {}).get("status")))
+    check("重复任务完成后续期出下一条", bool(r1.get("nextTask")), str(r1.get("nextTask")))
+
+    # 重放：同一条请求再来一次，必须无副作用。
+    status, r2 = call(base, "POST", f"/api/tasks/{tid}/done", {"completed": True})
+    check("重放置为完成仍返回 200", status == 200, str(status))
+    check("重放不会翻回未完成", r2.get("task", {}).get("status") == "done", str(r2.get("task", {}).get("status")))
+    check("重放不重复续期", r2.get("nextTask") is None, str(r2.get("nextTask")))
+
+    # 续期只能有一条，否则离线重放会把每日任务凭空翻倍。
+    # 全量拉回本地数标题：搜索接口对中文的切词口径与本用例无关，别把两件事混在一起测。
+    status, lst = call(base, "GET", "/api/tasks?status=all")
+    same = [x for x in (lst or {}).get("tasks", []) if x.get("title") == "离线重放用的重复任务"]
+    check("重放后同标题任务恰为 2 条", len(same) == 2, f"实得 {len(same)} 条")
+
+    # 恢复未完成，同样要幂等。
+    status, r3 = call(base, "POST", f"/api/tasks/{tid}/done", {"completed": False})
+    check("恢复为未完成", status == 200 and r3.get("task", {}).get("status") == "todo", str(r3))
+    status, r4 = call(base, "POST", f"/api/tasks/{tid}/done", {"completed": False})
+    check("重放恢复未完成不报错", status == 200 and r4.get("task", {}).get("status") == "todo", str(r4))
+
+    status, _ = call(base, "POST", "/api/tasks/99999999/done", {"completed": True})
+    check("不存在的任务返回 404", status == 404, str(status))
+
+    # 清掉这两条，别影响后续用例的计数。
+    call(base, "DELETE", f"/api/tasks/{tid}")
+    for x in same:
+        if x.get("id") != tid:
+            call(base, "DELETE", f"/api/tasks/{x['id']}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="", help="对已运行的服务做测试，不自动启动实例")
@@ -1453,6 +1499,7 @@ def main() -> int:
         run(base)
         run_extras(base)
         run_new_features(base)
+        run_offline_sync(base)
         if binary and tmp:
             # 鉴权需要独立实例：主实例是不带口令的，用来验证「不设口令时一切照旧」
             auth_proc, auth_base = spawn_instance(binary, repo_root, tmp, "test-token-9f3a2b7c")

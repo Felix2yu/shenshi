@@ -269,6 +269,89 @@ func TestToggleAndRepeatSpawn(t *testing.T) {
 	}
 }
 
+// TestCompleteAndReopenAreIdempotent 覆盖离线队列重放所依赖的「置位」语义。
+//
+// 队列里一条「完成」可能在几分钟后才重放，期间服务端状态完全可能已被别的入口改过。
+// 用 /toggle 重放就会翻转成与用户意图相反的结果，所以这两条路径必须是可重复执行的。
+func TestCompleteAndReopenAreIdempotent(t *testing.T) {
+	s := newTestStore(t)
+	due := time.Now().Format("2006-01-02")
+	task := mustCreateTask(t, s, "每日站会", func(in *model.TaskInput) {
+		in.DueDate = optOfPtr(sp(due))
+		in.RepeatRule = optOfPtr(sp("daily"))
+	})
+
+	// 第一次：正常完成，重复任务照常续期。
+	res, err := s.CompleteTask(task.ID)
+	if err != nil {
+		t.Fatalf("CompleteTask: %v", err)
+	}
+	if !res.Completed || res.Task.Status != model.StatusDone {
+		t.Fatalf("应完成: completed=%v status=%q", res.Completed, res.Task.Status)
+	}
+	if res.NextTask == nil {
+		t.Fatal("重复任务完成后应续期出下一条")
+	}
+
+	// 重放：再调一次，已完成的任务必须保持完成，且不再多续一条出来。
+	res2, err := s.CompleteTask(task.ID)
+	if err != nil {
+		t.Fatalf("CompleteTask(重放): %v", err)
+	}
+	if res2.Task.Status != model.StatusDone {
+		t.Errorf("重放不应翻回未完成，得到 %q", res2.Task.Status)
+	}
+	if res2.Completed {
+		t.Error("重放不应再记一次「本次为完成」")
+	}
+	if res2.NextTask != nil {
+		t.Error("重放不应再续期出第二条")
+	}
+	// 续期只能有一条，否则离线重放会把每天的站会凭空翻倍。
+	all, err := s.ListTasks(TaskFilter{ListID: &task.ListID})
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if n := countByTitle(all, "每日站会"); n != 2 {
+		t.Errorf("续期任务数 = %d，期望 2（本次 + 下一次）", n)
+	}
+
+	// 恢复：第一次真的改回未完成。
+	re, err := s.ReopenTask(task.ID)
+	if err != nil {
+		t.Fatalf("ReopenTask: %v", err)
+	}
+	if re.Task.Status != model.StatusTodo {
+		t.Errorf("应恢复未完成，得到 %q", re.Task.Status)
+	}
+
+	// 重放：对本来就未完成的任务再调一次，不该报错，也不该多记一条操作历史。
+	re2, err := s.ReopenTask(task.ID)
+	if err != nil {
+		t.Fatalf("ReopenTask(重放): %v", err)
+	}
+	if re2.Task.Status != model.StatusTodo {
+		t.Errorf("重放不应把未完成任务改成别的状态，得到 %q", re2.Task.Status)
+	}
+
+	if _, err := s.CompleteTask(999999); !errors.Is(err, ErrNotFound) {
+		t.Errorf("不存在任务应 ErrNotFound，得到 %v", err)
+	}
+	if _, err := s.ReopenTask(999999); !errors.Is(err, ErrNotFound) {
+		t.Errorf("不存在任务应 ErrNotFound，得到 %v", err)
+	}
+}
+
+func countByTitle(tasks []model.Task, title string) int {
+	n := 0
+	for _, t := range tasks {
+		if t.Title == title {
+			n++
+		}
+	}
+	return n
+}
+
 // TestNextRepeat 两种续期基准与「不落过去」的顺推。
 func TestNextRepeat(t *testing.T) {
 	now := time.Date(2026, 9, 23, 15, 0, 0, 0, time.Local)

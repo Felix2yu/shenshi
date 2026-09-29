@@ -176,6 +176,12 @@ func spaHandler(fsys fs.FS) http.Handler {
 		if strings.HasPrefix(clean, "assets/") {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		}
+		// Service Worker 与 manifest 必须能被立刻拿到。sw.js 若被缓存住，
+		// 浏览器会一直用旧版本接管页面，「有新版本」的提示也就永远等不来。
+		// 具体的离线资源缓存由 sw.js 自己按构建号管理，这里只保证它本身不过期。
+		if clean == "sw.js" || clean == "manifest.webmanifest" {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 		fileServer.ServeHTTP(w, r)
 	})
 }

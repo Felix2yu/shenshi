@@ -1518,7 +1518,21 @@ const NOTIFY_LABEL: Record<NotifyState, string> = {
 }
 
 function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { settings, saveSettings, toast, confirm, themeMode, resolvedTheme } = useStore()
+  const {
+    settings,
+    saveSettings,
+    toast,
+    confirm,
+    themeMode,
+    resolvedTheme,
+    online,
+    pendingSync,
+    syncNow,
+    updateReady,
+    applyUpdate,
+    hardReset,
+    offlineReady,
+  } = useStore()
   const { diag, request } = useNotifyDiagnosis()
   const scale = fontScaleOf(settings.fontScale)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -1767,6 +1781,64 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
             className="hidden"
             onChange={(e) => void handleFile(e)}
           />
+        </Field>
+
+        <Field
+          label="离线与更新"
+          hint="装到主屏幕后可断网查看与记事，恢复联网自动同步。"
+        >
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={cx('text-[0.71875rem]', offlineReady ? 'text-jade' : 'text-ink-3')}>
+                离线能力：{offlineReady ? '已就绪' : '未启用（需 HTTPS）'}
+              </span>
+              <span className={cx('text-[0.71875rem]', online ? 'text-ink-3' : 'text-p-high')}>
+                {online ? '网络正常' : '当前离线'}
+              </span>
+              {pendingSync > 0 ? (
+                <span className="text-[0.71875rem] text-p-high">{pendingSync} 项待同步</span>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {updateReady ? (
+                <Button variant="primary" size="sm" onClick={() => void applyUpdate()}>
+                  有新版，更新并重新加载
+                </Button>
+              ) : null}
+              {pendingSync > 0 && online ? (
+                <Button variant="outline" size="sm" onClick={() => void syncNow()}>
+                  立即同步待办
+                </Button>
+              ) : null}
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-p-high"
+                onClick={() =>
+                  void (async () => {
+                    const ok = await confirm({
+                      title: '彻底清除本地缓存',
+                      message:
+                        '将清空本机缓存的离线数据，并注销 Service Worker 后重新加载。' +
+                        (pendingSync > 0
+                          ? `\n\n注意：还有 ${pendingSync} 项没有同步，这部分会一并丢失，无法找回。`
+                          : '\n\n适用于「更新后界面还是旧的」这类缓存残留的情况。'),
+                      confirmText: '清除并重新加载',
+                      danger: true,
+                    })
+                    if (ok) await hardReset()
+                  })()
+                }
+              >
+                彻底清除缓存并重载
+              </Button>
+            </div>
+            <p className="text-[0.6875rem] leading-relaxed text-ink-3">
+              离线时可以查看、新建、完成与编辑，联网后自动补交；重复任务的下一次安排也会一并补上。
+              附件、导出、批量操作与子任务仍需联网。
+              平时新版本会自动在后台准备就绪，顶部出现提示后点一下即可切换。
+            </p>
+          </div>
         </Field>
 
         <Field label="快捷键">

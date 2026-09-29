@@ -125,6 +125,49 @@ docker pull ghcr.io/felix2yu/shenshi:latest    # 只拉镜像，不启动
 由于 SQLite 驱动是纯 Go 实现，构建期 `CGO_ENABLED=0`，可交叉编译到 `amd64` / `arm64`。
 确实想在服务器上本地出镜像时，`docker build -t shenshi:local .`（`docker-compose.yml` 里留了改法注释）。
 
+### 前置 Nginx 做 HTTPS（装成应用的前提）
+
+Service Worker 与「添加到主屏幕」都要求**安全上下文**：HTTPS，或 `localhost`。
+直接用 `http://<服务器地址>:8787` 访问可以正常使用，但**装不成应用、也没有离线能力**。
+
+Nginx 反代一份最小可用配置（应用容器仍监听 8787，由 Nginx 终结 TLS）：
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name shenshi.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/shenshi.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/shenshi.example.com/privkey.pem;
+
+    # 接口与页面都由后端处理，这里只做透传
+    location / {
+        proxy_pass         http://127.0.0.1:8787;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        # 后端据此判断外部是否走 HTTPS，决定会话 Cookie 是否加 Secure
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+    }
+}
+
+server {
+    listen 80;
+    server_name shenshi.example.com;
+    return 301 https://$host$request_uri;
+}
+```
+
+要点：
+
+- **`sw.js` 与 `manifest.webmanifest` 不要缓存**。后端自己已经对这两个文件发 `Cache-Control: no-cache`，
+  但如果 Nginx 另配了 `location` 或全局缓存规则，很容易把它盖掉——Service Worker 一旦被缓存住，
+  「有新版本」的提示就永远等不来。
+- 证书链要完整（`fullchain.pem`）。iOS 对缺失中间证书比桌面浏览器严格得多，会直接判定连接不可信。
+- 换了域名或协议后，浏览器会把它当成另一个应用重新安装，旧图标与离线数据留在原处；
+  「外观与设置 → 彻底清除缓存并重载」可以清干净重来。
+
 ---
 
 ## 持续集成
@@ -308,6 +351,29 @@ Node / Go 的**大版本不冻结**，这类 PR 正常提；只改镜像 tag 的
 - 桌面三栏（清单树 · 视图 · 详情），窄屏自动收为抽屉与整屏浮层
 - 快捷键：`N` 新建 · `/` 搜索 · `T` 今天 · `I` 收集箱 · `C` 日历 · `Q` 四象限 · `B` 看板 · `H` 习惯 · `S` 统计 · `Esc` 退出
 
+### 11. 装成应用（PWA）与离线
+
+- **可安装**：iOS Safari 分享 →「添加到主屏幕」；macOS Safari 文件 →「添加到程序坞」；Chrome 地址栏安装图标。
+  装完是独立窗口，有自己的图标，断网也能启动。
+- **断网可用**：短时断网（地铁、电梯、信号空档）不影响记事。仍可**查看**、**新建**、**完成 / 恢复**、
+  改期改清单、删除、编辑标题备注；联网后自动逐条补交。
+- **补账是幂等的**：离线期间攒下的操作排进本地队列，恢复联网后按原顺序重放。
+  完成走「置位」接口而不是「翻转」，因此重复重放不会把状态改反，重复任务的下一次安排在重放那一刻补上。
+- **读缓存网络优先**：读接口先走网络、失败才回退缓存，所以联网时看到的永远是最新数据；
+  带内容哈希的静态资源命中即用。
+- **更新不会残留**：发布新版本后，页面顶部出现「慎始有新版了」，点一下即切换并重载。
+  万一界面还是旧的，「外观与设置 → 离线与更新 → 彻底清除缓存并重载」一键清干净重来。
+
+**离线支持的边界**（这几项仍需联网，界面上会明说「该操作需要联网」）：
+
+| 支持 | 不支持 |
+| --- | --- |
+| 查看、新建、编辑标题/备注/优先级/日期、完成与恢复、改期改清单、删除 | 附件上传下载、导出与导入、批量操作、子任务增删改、习惯打卡、日省复盘 |
+
+多标签页同时开着时，各页都会各自重放队列。除「新建」外的动作都是幂等的，重复执行没有副作用；
+「新建」在多标签**同时**重放时可能重复落库。慎始是单用户应用、离线重放又集中在恢复联网那一刻，
+撞上的概率很低，但确实存在——离线期间请只在一个标签页里记事。
+
 ---
 
 ## 架构
@@ -333,17 +399,24 @@ shendu/
 │   ├── internal/caldav/          # CalDAV 服务端（Apple 客户端兼容 + RFC 6578 增量同步）
 │   └── dist/                     # 前端构建产物（由 build.sh 生成，供 embed）
 ├── web/                          # React 前端
+│   ├── public/
+│   │   ├── sw.js                 # Service Worker：只管「读」的离线回退
+│   │   ├── manifest.webmanifest  # PWA 清单（图标 / 独立窗口）
+│   │   └── icons/                # 192 / 512 / maskable / apple-touch（PNG）
 │   └── src/
 │       ├── App.tsx               # 三栏装配、全局快捷键
-│       ├── store/AppStore.tsx    # 全局状态（乐观更新 + 对账）
+│       ├── store/AppStore.tsx    # 全局状态（乐观更新 + 对账 + 离线分支）
 │       ├── api/client.ts         # 接口封装
 │       ├── lib/                  # 日期、自然语言解析、筛选、文案、通知
+│       │   └── offline.ts        # 离线写队列、临时任务、SW 注册与更新
 │       └── components/           # 视图与组件
-└── scripts/
-    ├── build.sh                  # 一键构建
-    ├── check-toolchain.sh        # 校验各处版本声明是否一致
-    ├── smoke.py                  # 后端端到端冒烟
-    └── ui-smoke.mjs              # 真实浏览器 UI 冒烟
+├── scripts/
+│   ├── build.sh                  # 一键构建
+│   ├── check-toolchain.sh        # 校验各处版本声明是否一致
+│   ├── smoke.py                  # 后端端到端冒烟
+│   ├── ui-smoke.mjs              # 真实浏览器 UI 冒烟
+│   ├── pwa-smoke.mjs             # PWA / 离线冒烟（安装、断网读写、补账）
+│   └── lib/harness.mjs           # 浏览器测试的公共设施（找 Chromium、起实例）
 ```
 
 CI 配置另在 `.github/`（`workflows/build.yml`、`workflows/release.yml`、`dependabot.yml`）。
@@ -351,6 +424,13 @@ CI 配置另在 `.github/`（`workflows/build.yml`、`workflows/release.yml`、`
 **几处设计取舍**
 
 - **单文件交付**：前端产物 `go:embed` 进二进制，省掉 Nginx 与跨域配置；开发时用 `-web` 指向磁盘目录即可热更新。
+- **离线读写分家**：Service Worker 只管「读」（GET 回退缓存），「写」的排队与重放放在页面侧 `lib/offline.ts`。
+  理由有二：合成给前端看的响应体需要完整类型信息；而 Safari 至今没有 Background Sync，
+  指望浏览器在恢复联网时叫醒 SW 这条路在 iOS / macOS 上不存在，重放必须由页面自己驱动。
+- **重放必须幂等**：队列里一条「完成」可能隔几小时才送达，期间服务端状态早被别的入口改过。
+  因此完成走 `POST /api/tasks/{id}/done`（置位），而不是 `/toggle`（翻转）。
+- **构建号进缓存名**：`vite.config.ts` 的 `swBuildStamp` 插件把时间戳打进 `sw.js`，
+  缓存名随之变化，新 SW 的 `activate` 阶段把旧缓存整批删除——这是更新不残留旧资源的根本保障。
 - **纯 Go SQLite**（`modernc.org/sqlite`）：不依赖 cgo，交叉编译与 CI 都简单；开启 WAL 与 `busy_timeout` 应对并发写。
 - **筛选口径在后端**：智能清单（今天 / 最近 7 天 / 逾期…）由 SQL 条件驱动，不把全量数据拉到前端再过滤。
 - **三态字段**：`Opt[T]` 区分「未传」与「显式置空」，PATCH 语义清晰（例如把 `dueDate` 置为 `null` 表示清空日期）。
@@ -369,6 +449,7 @@ CI 配置另在 `.github/`（`workflows/build.yml`、`workflows/release.yml`、`
 | POST | `/api/tasks` | 新建任务 |
 | GET/PATCH/DELETE | `/api/tasks/{id}` | 读取 / 局部更新 / 删除 |
 | POST | `/api/tasks/{id}/toggle` | 完成或恢复（重复任务自动续期） |
+| POST | `/api/tasks/{id}/done` | 幂等地置为完成 / 恢复（离线队列重放用，可重复执行） |
 | POST | `/api/tasks/{id}/skip` | 跳过重复任务的本次发生（只推进到下一次） |
 | POST | `/api/tasks/reorder` · PUT `/api/folders/reorder`、`/api/lists/reorder` | 拖拽排序落库 |
 | POST | `/api/tasks/{id}/move` | 改期或改清单（拖拽用） |
@@ -414,6 +495,9 @@ cd web && node scripts/check-nlp.mjs && cd ..
 # 前端 UI（真实 Chromium，验证渲染、交互与运行时零报错；脚本在仓库根目录）
 cd web && npm ci && cd ..
 node scripts/ui-smoke.mjs
+
+# PWA 与离线（同一套 Chromium，验证装得下来、断网能读写、联网能补账）
+node scripts/pwa-smoke.mjs
 ```
 
 UI 冒烟脚本需要 Chromium，按以下顺序查找：`CHROMIUM_PATH` → `PLAYWRIGHT_BROWSERS_PATH` /
@@ -426,16 +510,27 @@ cd web && npx playwright-core install --with-deps chromium
 
 两个脚本都不需要事先手动准备数据 —— 各自起临时实例与临时数据库，跑完即清理。
 
-当前状态：后端单元测试（重复规则推演等）全绿；端到端冒烟 **368/368** 通过；自然语言解析回归 **54/54** 通过；
-前端 UI 冒烟 **107/107** 通过（含「无控制台错误 / 无未捕获异常」两项硬性检查）。
-UI 冒烟脚本会把各视图截图写到 `SHOT_DIR`（默认 `/tmp/shenshi-shots`），便于人工复核；
-CI 里该目录被改到仓库内并作为 artifact 上传，失败时可直接下载定位。
+当前状态：后端单元测试（重复规则推演等）全绿；端到端冒烟 **379/379** 通过；自然语言解析回归 **77/77** 通过；
+前端 UI 冒烟 **112/112** 通过（含「无控制台错误 / 无未捕获异常」两项硬性检查）；
+PWA / 离线冒烟 **36/36** 通过。
+UI 冒烟脚本会把各视图截图写到 `SHOT_DIR`（默认 `/tmp/shenshi-shots`），PWA 冒烟写到 `/tmp/shenshi-pwa-shots`，
+便于人工复核；CI 里该目录被改到仓库内并作为 artifact 上传，失败时可直接下载定位。
 
 ---
 
 ## 已知限制
 
 - **单用户**：没有账号体系，`SHENSHI_TOKEN` 是一道全局门禁而非多用户隔离；多人共用同一份数据。
+- **离线能力需要 HTTPS**：Service Worker 与「添加到主屏幕」都要求安全上下文。
+  `http://<局域网地址>` 下功能照常，但没有离线、也装不成应用。
+- **离线只覆盖日常那几件事**：查看 / 新建 / 编辑 / 完成 / 改期 / 删除。附件、导出导入、批量、子任务、
+  习惯打卡、复盘仍需联网，界面上会明说。附件与离线队列都不进备份 ZIP（队列只在本机）。
+- **离线重放由打开着的页面驱动**：Safari 没有 Background Sync，恢复联网后的补账靠页面收到
+  `online` 事件、切回前台、以及 20 秒的兜底重试。把应用从后台彻底划掉又一直不打开，
+  队列会一直攒着——但不会丢，下次打开就会补上。
+- **iOS 会清理长期不用的站点数据**：Safari 对超过一周（7 天）没打开过的 PWA，可能清掉它的
+  缓存与 IndexedDB。这是系统行为，前端绕不过；被清掉后第一次打开需要联网拉一次，
+  之后照常。习惯每天开一次的人不会碰到。
 - 提醒依赖前端轮询（30 秒一次）：关闭页面则不会弹出桌面通知，需要常驻后台提醒时应另接系统级通知
   ——或者用 CalDAV 把任务挂到系统日历上，让系统替你提醒。
 - 日历视图按月/周拉取数据，未做跨时区换算，一律按本机时区处理。

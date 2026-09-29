@@ -1137,6 +1137,41 @@ type ToggleResult struct {
 // 「敬终」之后立即「慎始」，让循环不断。
 func (s *Store) ToggleTask(id int64) (*ToggleResult, error) { return s.toggleTask(id, false) }
 
+// CompleteTask 幂等地把任务置为已完成，语义见 completeTask 的说明。
+//
+// 与 ToggleTask 的区别在于「翻转」与「置位」：前端离线时会把「完成」操作排进
+// 队列，等恢复联网后再逐条重放。队列里隔了多久、服务端状态被别的入口改成什么样
+// 都不确定，翻转式重放会把状态改反，而重放必须是可重复执行的。
+func (s *Store) CompleteTask(id int64) (*ToggleResult, error) { return s.completeTask(id, false) }
+
+// ReopenTask 幂等地把任务恢复为未完成。已经是未完成的任务原样返回，不会误记一次「恢复」。
+func (s *Store) ReopenTask(id int64) (*ToggleResult, error) {
+	cur, err := s.GetTask(id)
+	if err != nil {
+		return nil, err
+	}
+	if cur.Status != model.StatusDone {
+		return &ToggleResult{Task: cur, Completed: false}, nil
+	}
+	// 条件更新兜住并发：两个入口同时点恢复时，只有赢的那一方记历史、发事件。
+	res, err := s.db.Exec(
+		`UPDATE tasks SET status='todo', completed_at=NULL, updated_at=? WHERE id=? AND status='done'`,
+		model.Now(), id)
+	if err != nil {
+		return nil, err
+	}
+	t, err := s.GetTask(id)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return &ToggleResult{Task: t, Completed: false}, nil
+	}
+	s.emit(model.EventTaskReopened, t)
+	s.logActivity(model.ActReopened, t.ID, t.Title, "恢复为未完成")
+	return &ToggleResult{Task: t, Completed: false}, nil
+}
+
 // toggleTask 是 ToggleTask 的内部实现。quiet 用于批量场景：
 // 一次勾掉三十件不该在操作历史里刷出三十行，由调用方记一笔汇总。
 func (s *Store) toggleTask(id int64, quiet bool) (*ToggleResult, error) {

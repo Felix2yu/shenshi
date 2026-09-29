@@ -10,11 +10,13 @@ import type { Folder, SmartKey, ViewKind } from '../types'
 import {
   IconChart,
   IconCheck,
+  IconCloudOff,
   IconColumns,
   IconFlag,
   IconGrid,
   IconList,
   IconPin,
+  IconRefresh,
   IconSearch,
   IconSeedling,
   IconSort,
@@ -158,7 +160,22 @@ export function Toolbar({
   /** 窄屏（<lg）打开清单抽屉；桌面端汉堡不渲染。 */
   onOpenNav?: () => void
 }) {
-  const { selection, view, tasks, multiSelect, setMultiSelect, lists, folders, tags, keyword } = useStore()
+  const {
+    selection,
+    view,
+    tasks,
+    multiSelect,
+    setMultiSelect,
+    lists,
+    folders,
+    tags,
+    keyword,
+    online,
+    pendingSync,
+    syncNow,
+    updateReady,
+    applyUpdate,
+  } = useStore()
   // 与 App 的抽屉语义同一口径：<1024px 都算移动档
   const isMobile = useMediaQuery('(max-width: 1023px)')
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false)
@@ -321,6 +338,63 @@ export function Toolbar({
       )}
 
       <div className="px-3 lg:px-5">
+        {/* 状态条。都不常驻：条件不满足时一行高度都不占。
+            顺序按「要用户动手的排前面」——更新要用户点，同步不用。 */}
+        {updateReady ? (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pb-2 pt-2 text-[0.71875rem]">
+            <span className="inline-flex items-center gap-1.5 text-seal">
+              <IconRefresh size={12} />
+              慎始有新版了
+            </span>
+            <button
+              type="button"
+              onClick={() => void applyUpdate()}
+              className="rounded-md border border-seal/40 px-2 py-0.5 text-seal transition-colors hover:bg-seal/10"
+            >
+              更新并重新加载
+            </button>
+            <span className="text-ink-3">当前页面会保留，重载后生效</span>
+          </div>
+        ) : null}
+
+        {!online || pendingSync > 0 ? (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pb-2 pt-2 text-[0.71875rem]">
+            {!online ? (
+              <span className="inline-flex items-center gap-1.5 text-p-high">
+                <IconCloudOff size={12} />
+                当前离线
+              </span>
+            ) : null}
+            {pendingSync > 0 ? (
+              <>
+                {online ? (
+                  <span className="inline-flex items-center gap-1.5 text-p-high">
+                    <IconCloudOff size={12} />
+                    {pendingSync} 项待同步
+                  </span>
+                ) : (
+                  <span className="text-p-high">{pendingSync} 项待同步</span>
+                )}
+                <span className="text-ink-3">
+                  {online ? '正在与服务器对账' : '仍可查看、新建与完成，联网后自动同步'}
+                </span>
+              </>
+            ) : (
+              <span className="text-ink-3">仍可查看、新建与完成，联网后自动同步</span>
+            )}
+            {online && pendingSync > 0 ? (
+              <button
+                type="button"
+                onClick={() => void syncNow()}
+                className="inline-flex items-center gap-1 text-p-high hover:underline"
+              >
+                <IconRefresh size={11} />
+                立即同步
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
         {/* 今日重点 */}
         {view === 'list' && selection.kind === 'smart' && (selection.key === 'today' || selection.key === 'all') ? (
           <TodayFocusStrip />

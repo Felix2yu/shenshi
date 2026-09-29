@@ -6,6 +6,24 @@
     <meta name="theme-color" content="#faf7f2" />
     <meta name="description" content="慎始 · 慎始而敬终，行稳致远。一个注重规划与善始善终的任务管理应用。" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23b4553d'/%3E%3Ctext x='16' y='22' font-size='17' text-anchor='middle' fill='%23fdf6ef' font-family='Songti SC,serif'%3E%E6%85%8E%3C/text%3E%3C/svg%3E" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+
+    <!-- 可安装（PWA）。断网时靠 Service Worker 回退缓存，详见 public/sw.js。 -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!-- iOS / macOS Safari 的安装入口。
+         apple-touch-icon 必须是 PNG 且不透明：iOS 认不下 SVG，
+         也不接受透明通道（会被渲成黑底）。系统会自己按固定遮罩裁圆角，
+         所以图本身是满幅正方形，不要预先裁。
+         apple-mobile-web-app-capable 是 manifest 的 display 之前的旧开关，
+         新版 Safari 已改读 manifest，这里留着兼容较老的 iOS。 -->
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="慎始" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="format-detection" content="telephone=no" />
+
     <title>慎始 · 慎始而敬终</title>
   </head>
   <body>

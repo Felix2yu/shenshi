@@ -478,6 +478,23 @@ export const IconHistory = (p: IconProps) => (
   </Base>
 )
 
+/** 刷新：环形箭头，尾端带一道短促的收笔。 */
+export const IconRefresh = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M20 12a8 8 0 1 1-2.6-5.9" />
+    <path d="M20 4.2V9h-4.8" />
+  </Base>
+)
+
+/** 离线：被划掉的云——有网才有同步的活。 */
+export const IconCloudOff = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M7.5 18.5h9.8a3.7 3.7 0 0 0 .7-7.3 5.6 5.6 0 0 0-3-3.5" />
+    <path d="M6.9 7.2A5.6 5.6 0 0 0 6 11.2a3.7 3.7 0 0 0 1.5 7.3" />
+    <path d="M4 4l16 16" />
+  </Base>
+)
+
 /** 复制：两张叠起来的纸。 */
 export const IconCopy = (p: IconProps) => (
   <Base {...p}>

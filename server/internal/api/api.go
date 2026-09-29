@@ -165,6 +165,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PATCH /api/tasks/{id}", h(s.updateTask))
 	s.mux.HandleFunc("DELETE /api/tasks/{id}", h(s.deleteTask))
 	s.mux.HandleFunc("POST /api/tasks/{id}/toggle", h(s.toggleTask))
+	// 离线队列重放专用：语义是「置位」而非「翻转」，可重复执行。
+	s.mux.HandleFunc("POST /api/tasks/{id}/done", h(s.setTaskDone))
 	s.mux.HandleFunc("POST /api/tasks/{id}/skip", h(s.skipTask))
 	s.mux.HandleFunc("POST /api/tasks/{id}/move", h(s.moveTask))
 	s.mux.HandleFunc("POST /api/tasks/{id}/duplicate", h(s.duplicateTask))

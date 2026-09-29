@@ -41,6 +41,15 @@ export class ApiError extends Error {
 }
 
 /**
+ * 请求是否「根本没送到服务端」——断网、服务没起、或被中途取消。
+ * 离线能力靠它分流：status 0 才值得排进离线队列等联网重放，
+ * 4xx/5xx 是服务端给的明确答复，排队只会把错误推迟，不会消失。
+ */
+export function isNetworkError(e: unknown): e is ApiError {
+  return e instanceof ApiError && e.status === 0
+}
+
+/**
  * 401 的统一出口。服务端启用访问口令后，会话可能在页面开着的时候失效
  * （Cookie 过期、服务重启换口令），这时不该只在角上弹一条错误，而应直接请用户重新输入。
  */
@@ -175,6 +184,13 @@ export const api = {
   updateTask: (id: number, patch: TaskPatch) => request<Task>('PATCH', `/api/tasks/${id}`, patch),
   deleteTask: (id: number) => request<{ ok: boolean }>('DELETE', `/api/tasks/${id}`),
   toggleTask: (id: number) => request<ToggleResult>('POST', `/api/tasks/${id}/toggle`),
+  /**
+   * 幂等地把任务置为完成 / 恢复未完成。
+   * 与 toggle 的区别：toggle 是「翻转」，done 是「置位」——
+   * 离线队列隔一段时间重放时，服务端状态可能早被别的入口改过，只有置位才靠得住。
+   */
+  setTaskDone: (id: number, completed: boolean) =>
+    request<ToggleResult>('POST', `/api/tasks/${id}/done`, { completed }),
   /** 跳过重复任务的本次发生：只推进到下一次，不记为完成。 */
   skipTask: (id: number) => request<Task>('POST', `/api/tasks/${id}/skip`),
   moveTask: (id: number, body: { listId?: number; dueDate?: string | null; dueTime?: string | null }) =>

@@ -9,9 +9,24 @@ import {
   type ReactNode,
 } from 'react'
 
-import { ApiError, api, setUnauthorizedHandler, type TaskQuery, type TaskSort } from '../api/client'
+import { ApiError, api, isNetworkError, setUnauthorizedHandler, type TaskQuery, type TaskSort } from '../api/client'
 import { addDays, todayStr } from '../lib/date'
 import { EMPTY_FILTER, filterFromQuery, filterToQuery, isFilterActive, type TaskFilter } from '../lib/filter'
+import {
+  buildLocalTask,
+  dropLocalTask,
+  enqueue,
+  getLocalTasks,
+  isTempTaskId,
+  localTaskMatches,
+  nextTempId,
+  pendingCount,
+  putLocalTask,
+  replayOutbox,
+  useOnline,
+  useServiceWorker,
+  type LocalTask,
+} from '../lib/offline'
 import { playChime, playTick, pushNotification } from '../lib/notify'
 import {
   fontScaleOf,
@@ -100,6 +115,20 @@ interface StoreShape {
   version: number
   /** 统计接口最近一次加载是否失败。与「还没加载」区分开，避免把故障显示成空态。 */
   statsError: boolean
+  /** 浏览器报的在线状态。只作提示用——它说有网卡，不代表服务在跑。 */
+  online: boolean
+  /** 离线队列里待同步的条数。 */
+  pendingSync: number
+  /** 联网后把队列重放一遍。返回是否真的送出去了（true 时界面已对账）。 */
+  syncNow: () => Promise<boolean>
+  /** 已经有装好的新版本，等用户点「更新」。 */
+  updateReady: boolean
+  /** 切到新版本：让等待中的 SW 立刻接管，然后整页重载。 */
+  applyUpdate: () => Promise<void>
+  /** 设置里的「彻底清除」：删光缓存与离线数据、注销 SW 后重载。 */
+  hardReset: () => Promise<void>
+  /** 是否由 Service Worker 接管（装到主屏幕 / 程序坞后为真）。 */
+  offlineReady: boolean
 
   select: (s: Selection) => void
   selectSmart: (key: SmartKey) => void
@@ -224,6 +253,33 @@ export function useStore(): StoreShape {
 
 const DEFAULT_SELECTION: Selection = { kind: 'smart', key: 'today' }
 
+/** 两条本地任务表是否等价（按 id + 内容判重）。用于避免无谓的状态更新。 */
+function sameLocalTasks(a: LocalTask[], b: LocalTask[]): boolean {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  return a.every((t, i) => {
+    const o = b[i]
+    return o.id === t.id && o.updatedAt === t.updatedAt && o.title === t.title && o.status === t.status
+  })
+}
+
+/**
+ * 把离线新建、尚未同步的任务并进当前列表。
+ *
+ * 放在这里而不是让 SW 去合并：这类任务的视图归属由「它是在哪儿建的」决定（见
+ * LocalTask.origin），只有页面知道当时的 selection。SW 拿不到这个上下文。
+ * 排序按创建时间倒序放在最前——离线记下的事通常是刚发生、且正想再看一眼的。
+ */
+function mergeLocalTasks(base: Task[], locals: LocalTask[], selection: Selection, keyword: string): Task[] {
+  if (!locals.length) return base
+  const kw = keyword.trim()
+  const extra = locals
+    .filter((l) => localTaskMatches(l, selection))
+    .filter((t) => (kw ? `${t.title}\n${t.notes}`.toLowerCase().includes(kw.toLowerCase()) : true))
+    .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+  return extra.length ? [...extra, ...base] : base
+}
+
 function queryFor(selection: Selection, keyword: string, sortBy: TaskSort): TaskQuery {
   if (keyword.trim()) return { q: keyword.trim(), status: 'all', sortBy }
   switch (selection.kind) {
@@ -335,6 +391,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [statsError, setStatsError] = useState(false)
   const [repeatMeta, setRepeatMeta] = useState<RepeatMeta | null>(null)
   const [savedFilters, setSavedFilters] = useState<SavedFilter[]>([])
+  // 离线相关：online 只作提示，pendingSync 是「还有多少件事没送到服务端」，
+  // localTasks 是离线新建、尚未同步的任务（负数临时 id）。
+  const online = useOnline()
+  const [pendingSync, setPendingSync] = useState(0)
+  const [localTasks, setLocalTasks] = useState<LocalTask[]>([])
+  const { updateReady, applyUpdate, hardReset, controlled } = useServiceWorker()
   const [undo, setUndo] = useState<UndoState | null>(null)
   const [activities, setActivities] = useState<Activity[]>([])
   const [activitiesLoaded, setActivitiesLoaded] = useState(false)
@@ -371,6 +433,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const handleError = useCallback(
     (e: unknown, fallback = '操作失败') => {
+      // 「连不上」不等于「服务没启动」：有这套离线能力之后，断网也会走到这里。
+      // 不说清楚是哪一种，用户会跑去重启一个其实好好跑着的服务。
+      if (isNetworkError(e)) {
+        toast(
+          typeof navigator !== 'undefined' && !navigator.onLine
+            ? '当前离线，该操作需要联网'
+            : '服务没响应，请确认「慎始」正在运行',
+          'error',
+        )
+        return
+      }
       const msg = e instanceof ApiError ? e.message : fallback
       toast(msg, 'error')
     },
@@ -419,6 +492,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // 在途请求句柄：序号负责"结果不串台"，句柄负责"旧请求真的被取消"（省带宽也省服务端）。
   const tasksAbort = useRef<AbortController | null>(null)
 
+  /**
+   * 刷新待同步条数与本地任务表。
+   *
+   * 两者都只在离线动作之后才可能变，所以比对相同就保持原引用不动：
+   * localTasks 一变，refreshTasks 的引用就变，而 refreshTasks 又被
+   * 「视图 / 选择变化时拉取任务」的 effect 依赖 —— 每次都换新数组的话，
+   * 每做一次写操作都会白白多打一次列表请求。
+   */
+  const refreshOfflineState = useCallback(async () => {
+    const [pending, locals] = await Promise.all([pendingCount(), getLocalTasks()])
+    setPendingSync(pending)
+    setLocalTasks((prev) => (sameLocalTasks(prev, locals) ? prev : locals))
+  }, [])
+
   const refreshTasks = useCallback(async () => {
     const seq = ++tasksSeq.current
     tasksAbort.current?.abort()
@@ -430,7 +517,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (seq !== tasksSeq.current) return
       const doneView =
         selection.kind === 'smart' && (selection.key === 'done' || selection.key === 'recentdone')
-      setTasks(!showCompleted && !doneView ? r.tasks.filter((t) => t.status !== 'done') : r.tasks)
+      const base = !showCompleted && !doneView ? r.tasks.filter((t) => t.status !== 'done') : r.tasks
+      // 离线时这个请求由 SW 回退到缓存，里面不含本机离线新建的那几条，补回来。
+      setTasks(mergeLocalTasks(base, localTasks, selection, keyword))
     } catch (e) {
       if (seq !== tasksSeq.current) return
       // 被主动取消的请求不是错误：下一次请求已经在路上。
@@ -439,7 +528,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } finally {
       if (seq === tasksSeq.current) setTasksLoading(false)
     }
-  }, [selection, keyword, sortBy, showCompleted, handleError])
+  }, [selection, keyword, sortBy, showCompleted, localTasks, handleError])
 
   /** 写操作后统一做一次去抖对账：刷新角标、必要时刷新列表。 */
   const reconcile = useCallback(() => {
@@ -450,6 +539,67 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setVersion((v) => v + 1)
     }, 220)
   }, [refreshBoot, refreshTasks])
+
+  /**
+   * 把离线队列重放一遍。
+   *
+   * 刻意不依赖 Background Sync：Safari 至今没有 SyncManager，iOS/macOS 上
+   * 「等浏览器叫醒你」这条路是不存在的。重放由页面自己驱动——
+   * online 事件、切回前台、以及一道兜底定时，三条路都通向这里。
+   */
+  const syncNow = useCallback(async () => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return false
+    const report = await replayOutbox()
+    await refreshOfflineState()
+    if (report.replayed > 0) {
+      // 重放期间服务端可能已经被别处改动过（而且本机刚补进去几条），
+      // 所以必须整体对账一次，不能只相信队列送出去的那些。
+      reconcile()
+    }
+    if (report.dropped > 0) {
+      toast(`有 ${report.dropped} 项离线操作已失效，已丢弃`, 'error')
+    }
+    if (report.replayed > 0 && report.created > 0) {
+      toast(`已同步 ${report.replayed} 项离线操作`)
+    }
+    return report.replayed > 0
+  }, [refreshOfflineState, reconcile, toast])
+
+  // 队列条数放进 ref：调度用的定时器与事件不该因为这个数字变化而反复重建。
+  const pendingRef = useRef(0)
+  pendingRef.current = pendingSync
+
+  useEffect(() => {
+    void refreshOfflineState()
+  }, [refreshOfflineState])
+
+  // 联网后送队列。刚进来先等一拍，让首次加载的请求先落地，免得两边抢带宽。
+  useEffect(() => {
+    if (!online) return
+    const t = window.setTimeout(() => void syncNow(), 1200)
+    return () => window.clearTimeout(t)
+  }, [online, syncNow])
+
+  // 从后台切回前台时补一次。iOS 上从「已切走」的状态恢复，online 事件经常根本不触发。
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && navigator.onLine && pendingRef.current > 0) {
+        void syncNow()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [syncNow])
+
+  // 兜底：online 事件也未必每次都准。iOS 从后台切回、弱网反复切换时都常见
+  // 「其实已经联网，却没有 online 事件」的情况，所以另有一道定期重试。
+  // 只看 navigator.onLine 与积压量，不看 online 状态——状态是提示，浏览器才是事实。
+  useEffect(() => {
+    const t = window.setInterval(() => {
+      if (pendingRef.current > 0 && navigator.onLine) void syncNow()
+    }, 20_000)
+    return () => window.clearInterval(t)
+  }, [syncNow])
 
   const loadStats = useCallback(async (days = 30) => {
     try {
@@ -702,6 +852,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)))
   }, [])
 
+  /**
+   * 断网时新建任务：造一条带临时 id 的本地任务存起来，同时把 create 排进队列。
+   * 联网重放成功前它不占服务端 id，也就还不会被别的设备看到——这是有意为之。
+   */
+  const createTaskOffline = useCallback(
+    async (patch: TaskPatch): Promise<Task | null> => {
+      const tempId = await nextTempId()
+      const local = buildLocalTask({
+        id: tempId,
+        patch,
+        lists: boot?.lists ?? [],
+        inboxListId: boot?.inboxListId ?? 0,
+        origin:
+          selection.kind === 'smart'
+            ? { kind: 'smart', key: selection.key }
+            : { kind: selection.kind, id: selection.kind === 'search' ? undefined : selection.id },
+      })
+      await putLocalTask(local)
+      await enqueue({ kind: 'create', taskId: tempId, tempId, patch })
+      await refreshOfflineState()
+      setTasks((prev) => [local, ...prev])
+      setTaskIndex((prev) => ({ ...prev, [tempId]: local }))
+      toast(`已离线记下「${local.title}」· 联网后自动同步`)
+      return local
+    },
+    [boot, selection, toast, refreshOfflineState],
+  )
+
   const createTask = useCallback(
     async (patch: TaskPatch) => {
       try {
@@ -726,11 +904,63 @@ export function AppProvider({ children }: { children: ReactNode }) {
         reconcile()
         return t
       } catch (e) {
+        if (isNetworkError(e)) return createTaskOffline(patch)
         handleError(e, '创建任务失败')
         return null
       }
     },
-    [selection, toast, reconcile, handleError],
+    [selection, toast, reconcile, handleError, createTaskOffline],
+  )
+
+  /**
+   * 离线时改一条任务。
+   *
+   * 两条分支：改的是离线新建的任务（负数 id）就直接改本地那份，不必再排一条队列；
+   * 改的是服务端已有的任务则既改本地（让界面立刻反映）又排一条 patch。
+   */
+  const updateTaskOffline = useCallback(
+    async (id: number, patch: TaskPatch): Promise<Task | null> => {
+      const isNew = isTempTaskId(id)
+      if (isNew) {
+        const current = localTasks.find((t) => t.id === id)
+        if (!current) return null
+        // subtasks 故意不并进来：TaskPatch 里那是「一串草稿」，
+        // 而 Task.subtasks 是带 id / 父子关系的成品结构。离线这条路也不支持改子任务
+        // （addSubtask 仍走在线接口），硬拼只会造出半成品。
+        const { subtasks: _drafts, ...fields } = patch
+        const next: LocalTask = { ...current, ...fields, id }
+        if (patch.tagIds) {
+          next.tags = patch.tagIds
+            .map((tid) => (boot?.tags ?? []).find((t) => t.id === tid))
+            .filter((t): t is Tag => !!t)
+        }
+        next.updatedAt = new Date().toISOString()
+        await putLocalTask(next)
+        await refreshOfflineState()
+        setTasks((prev) => prev.map((t) => (t.id === id ? next : t)))
+        return next
+      }
+      setTasks((prev) =>
+        prev.map((t) => {
+          if (t.id !== id) return t
+          const { subtasks: _drafts, ...fields } = patch
+          const merged: Task = { ...t, ...fields, id }
+          if (patch.tagIds) {
+            merged.tags = patch.tagIds
+              .map((tid) => (boot?.tags ?? []).find((g) => g.id === tid))
+              .filter((g): g is Tag => !!g)
+          }
+          if (patch.status === 'done') merged.completedAt = t.completedAt ?? new Date().toISOString()
+          if (patch.status === 'todo' || patch.status === 'in_progress') merged.completedAt = null
+          return merged
+        }),
+      )
+      await enqueue({ kind: 'patch', taskId: id, patch })
+      await refreshOfflineState()
+      toast('改动已离线保存，联网后同步')
+      return null
+    },
+    [localTasks, boot, toast, refreshOfflineState],
   )
 
   const updateTask = useCallback(
@@ -741,6 +971,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         reconcile()
         return t
       } catch (e) {
+        if (isNetworkError(e)) return updateTaskOffline(id, patch)
         handleError(e, '更新任务失败')
         return null
       }
@@ -748,26 +979,97 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [patchLocalTask, reconcile, handleError],
   )
 
+  /** 从界面各处移除一条任务：列表、索引、详情、多选——五处必须一起清。 */
+  const removeTaskLocally = useCallback((id: number) => {
+    setTasks((prev) => prev.filter((t) => t.id !== id))
+    setTaskIndex((prev) => {
+      if (!(id in prev)) return prev
+      const n = { ...prev }
+      delete n[id]
+      return n
+    })
+    setSelectedIds((prev) => prev.filter((x) => x !== id))
+  }, [])
+
   const deleteTask = useCallback(
     async (id: number) => {
       try {
         await api.deleteTask(id)
-        setTasks((prev) => prev.filter((t) => t.id !== id))
-        setTaskIndex((prev) => {
-          if (!(id in prev)) return prev
-          const n = { ...prev }
-          delete n[id]
-          return n
-        })
+        removeTaskLocally(id)
         if (selectedTaskId === id) setSelectedTaskId(null)
-        setSelectedIds((prev) => prev.filter((x) => x !== id))
         toast('已删除')
         reconcile()
       } catch (e) {
+        if (isNetworkError(e)) {
+          // 离线新建的任务还没落到服务端，删掉本地那份即可，不必排队列。
+          if (isTempTaskId(id)) {
+            await dropLocalTask(id)
+            await refreshOfflineState()
+            removeTaskLocally(id)
+            if (selectedTaskId === id) setSelectedTaskId(null)
+            toast('已删除')
+            return
+          }
+          removeTaskLocally(id)
+          if (selectedTaskId === id) setSelectedTaskId(null)
+          await enqueue({ kind: 'delete', taskId: id })
+          await refreshOfflineState()
+          toast('已离线删除，联网后同步')
+          return
+        }
         handleError(e, '删除失败')
       }
     },
-    [selectedTaskId, toast, reconcile, handleError],
+    [selectedTaskId, toast, reconcile, handleError, removeTaskLocally, refreshOfflineState],
+  )
+
+  /**
+   * 离线完成 / 恢复。
+   *
+   * 排进队列的是「置位」而不是「翻转」：离线这段时间里服务端状态完全可能被别人
+   * 改过，重放时再翻转一次就会得到与用户意图相反的结果。重复任务的顺延由服务端的
+   * 幂等完成接口在重放那一刻补上，所以离线时先不预告「下一次安排在几号」。
+   */
+  const toggleTaskOffline = useCallback(
+    async (id: number): Promise<{ task: Task; nextTask: Task | null } | null> => {
+      const cur = tasks.find((t) => t.id === id)
+      if (!cur) return null
+      const completed = cur.status !== 'done'
+
+      if (isTempTaskId(id)) {
+        // 离线新建的任务：origin 是它的归属依据，改状态时不能丢。
+        const next: LocalTask = {
+          ...(cur as LocalTask),
+          status: completed ? 'done' : 'todo',
+          completedAt: completed ? new Date().toISOString() : null,
+          updatedAt: new Date().toISOString(),
+        }
+        await putLocalTask(next)
+        await refreshOfflineState()
+        setTasks((prev) => prev.map((t) => (t.id === id ? next : t)))
+        toast(completed ? '已完成 · 联网后同步' : '已恢复 · 联网后同步')
+        return { task: next, nextTask: null }
+      }
+
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === id
+            ? {
+                ...t,
+                status: completed ? 'done' : 'todo',
+                completedAt: completed ? new Date().toISOString() : null,
+                updatedAt: new Date().toISOString(),
+              }
+            : t,
+        ),
+      )
+      await enqueue({ kind: 'done', taskId: id, completed })
+      await refreshOfflineState()
+      if (completed && settings.soundOn !== '0') playTick()
+      toast(completed ? '已完成 · 联网后同步' : '已恢复 · 联网后同步')
+      return { task: { ...cur, status: completed ? 'done' : 'todo' }, nextTask: null }
+    },
+    [tasks, settings.soundOn, toast, refreshOfflineState],
   )
 
   const toggleTask = useCallback(
@@ -793,12 +1095,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         reconcile()
         return res
       } catch (e) {
+        if (isNetworkError(e)) return toggleTaskOffline(id)
         handleError(e, '操作失败')
         void refreshTasks()
         return null
       }
     },
-    [tasks, patchLocalTask, settings.soundOn, toast, reconcile, handleError, refreshTasks],
+    [tasks, patchLocalTask, settings.soundOn, toast, reconcile, handleError, refreshTasks, toggleTaskOffline],
   )
 
   const moveTask = useCallback(
@@ -808,10 +1111,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
         patchLocalTask(t)
         reconcile()
       } catch (e) {
+        if (isNetworkError(e)) {
+          setTasks((prev) =>
+            prev.map((t) => {
+              if (t.id !== id) return t
+              const list = (boot?.lists ?? []).find((l) => l.id === (body.listId ?? t.listId))
+              return {
+                ...t,
+                listId: body.listId ?? t.listId,
+                listName: list?.name ?? t.listName,
+                listColor: list?.color ?? t.listColor,
+                folderId: list?.folderId ?? t.folderId,
+                dueDate: body.dueDate === undefined ? t.dueDate : body.dueDate,
+                dueTime: body.dueTime === undefined ? t.dueTime : body.dueTime,
+              }
+            }),
+          )
+          if (isTempTaskId(id)) {
+            await updateTaskOffline(id, {
+              listId: body.listId,
+              dueDate: body.dueDate,
+              dueTime: body.dueTime,
+            })
+          } else {
+            await enqueue({ kind: 'move', taskId: id, move: body })
+            await refreshOfflineState()
+          }
+          toast('已离线改期，联网后同步')
+          return
+        }
         handleError(e, '移动失败')
       }
     },
-    [patchLocalTask, reconcile, handleError],
+    [patchLocalTask, reconcile, handleError, boot, refreshOfflineState, updateTaskOffline, toast],
   )
 
   /** 跳过重复任务的本次发生：不记为完成，只把日期推到下一次。 */
@@ -1508,6 +1840,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       activities,
       activitiesLoaded,
       version,
+      online,
+      pendingSync,
+      syncNow,
+      updateReady,
+      applyUpdate,
+      hardReset,
+      offlineReady: controlled,
 
       select,
       selectSmart,
@@ -1618,6 +1957,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     activities,
     activitiesLoaded,
     version,
+    online,
+    pendingSync,
+    syncNow,
+    updateReady,
+    applyUpdate,
+    hardReset,
+    controlled,
     select,
     selectSmart,
     setView,

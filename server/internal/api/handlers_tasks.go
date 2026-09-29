@@ -212,6 +212,34 @@ func (s *Server) toggleTask(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// setTaskDone 幂等地设置完成状态（幂等的重复任务续期在 CompleteTask 里一并完成）。
+//
+// 前端离线时把「完成 / 恢复」排进本地队列，联网后逐条重放。重放必须可重复执行：
+// 用 /toggle 的话，队列里隔了一段时间、服务端状态又被别的入口改过，结果就会翻转反。
+func (s *Server) setTaskDone(w http.ResponseWriter, r *http.Request) error {
+	id, err := pathID(r, "id")
+	if err != nil {
+		return err
+	}
+	var body struct {
+		Completed bool `json:"completed"`
+	}
+	if err := decode(w, r, &body); err != nil {
+		return err
+	}
+	var res *store.ToggleResult
+	if body.Completed {
+		res, err = s.st.CompleteTask(id)
+	} else {
+		res, err = s.st.ReopenTask(id)
+	}
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, res)
+	return nil
+}
+
 func (s *Server) moveTask(w http.ResponseWriter, r *http.Request) error {
 	id, err := pathID(r, "id")
 	if err != nil {
