@@ -69,10 +69,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # 守的是「Dockerfile 基镜像 tag 是四处工具链声明里唯一可能悄悄分叉的地方」
-      - name: 校验工具链声明一致
-        run: ./scripts/check-toolchain.sh
-
+      # 注：原「校验工具链声明一致」已移除——Dockerfile 改为装配式后不再声明
+      # Node / Go 版本，脚本失去了校验对象。工具链版本现在唯一由
+      # .nvmrc 与 server/go.mod 声明，CI 直接读这两份文件。
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc

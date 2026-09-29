@@ -7,7 +7,9 @@
 .workbuddy
 
 # 构建产物与本地二进制
-bin/
+#
+# bin/ 不再排除：Dockerfile 已改为「装配式」，CI 预编译的二进制通过
+# COPY bin/shenshi 进镜像，必须出现在构建上下文里。
 web/dist/
 server/dist/
 server/shendu
