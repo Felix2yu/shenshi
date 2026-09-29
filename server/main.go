@@ -172,6 +172,12 @@ func spaHandler(fsys fs.FS) http.Handler {
 			_, _ = w.Write(data)
 			return
 		}
+		// 应用外壳同样不能缓存。内嵌模式下 index.html 没有 Last-Modified 也没有 ETag，
+		// 不发 no-cache 的话浏览器会按启发式把它留在磁盘缓存里——重新校验都无从校验，
+		// 发新版后拿到的还是旧 HTML，里面引用的哈希资源又已被删掉，就是一次白屏。
+		if clean == "index.html" || strings.HasSuffix(clean, ".html") {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 		// 带内容哈希的构建产物可以长期缓存。
 		if strings.HasPrefix(clean, "assets/") {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
@@ -181,6 +187,11 @@ func spaHandler(fsys fs.FS) http.Handler {
 		// 具体的离线资源缓存由 sw.js 自己按构建号管理，这里只保证它本身不过期。
 		if clean == "sw.js" || clean == "manifest.webmanifest" {
 			w.Header().Set("Cache-Control", "no-cache")
+		}
+		// Go 的标准库不认识 .webmanifest，会嗅探成 text/plain。
+		// 装应用照样能过，但浏览器会记一条 MIME 不合规的告警。
+		if clean == "manifest.webmanifest" {
+			w.Header().Set("Content-Type", "application/manifest+json")
 		}
 		fileServer.ServeHTTP(w, r)
 	})

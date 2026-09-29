@@ -161,9 +161,12 @@ server {
 
 要点：
 
-- **`sw.js` 与 `manifest.webmanifest` 不要缓存**。后端自己已经对这两个文件发 `Cache-Control: no-cache`，
+- **`sw.js`、`manifest.webmanifest` 与 `index.html` 不要缓存**。后端自己已经对这三个文件发 `Cache-Control: no-cache`，
   但如果 Nginx 另配了 `location` 或全局缓存规则，很容易把它盖掉——Service Worker 一旦被缓存住，
-  「有新版本」的提示就永远等不来。
+  「有新版本」的提示就永远等不来；应用外壳被缓存住，发新版后拿到的还是引用着已删除哈希资源的旧 HTML，
+  那就是一次白屏。内嵌模式下 `index.html` 连 `Last-Modified`/`ETag` 都没有，没有 `no-cache` 浏览器连重新校验都做不了。
+  `assets/` 下的产物带内容哈希，可以放心长期强缓存。
+- `manifest.webmanifest` 由后端以 `application/manifest+json` 发出（Go 标准库不认识这个后缀，不声明会嗅探成 `text/plain`）。
 - 证书链要完整（`fullchain.pem`）。iOS 对缺失中间证书比桌面浏览器严格得多，会直接判定连接不可信。
 - 换了域名或协议后，浏览器会把它当成另一个应用重新安装，旧图标与离线数据留在原处；
   「外观与设置 → 彻底清除缓存并重载」可以清干净重来。

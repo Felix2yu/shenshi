@@ -109,6 +109,29 @@ async function suiteInstallable(page, base) {
   }
   const maskable = manifest.icons.some((i) => (i.purpose || '').includes('maskable'))
   check('提供 maskable 图标', maskable, JSON.stringify(manifest.icons.map((i) => i.purpose)))
+
+  // 应用外壳一旦被浏览器的 HTTP 缓存留住，发新版后拿到的还是旧 HTML，
+  // 它引用的哈希资源又已经在下一次构建里删掉了 —— 那就是一次白屏。
+  const shell = await fetch(`${base}/`, { cache: 'no-store' })
+  const shellCC = shell.headers.get('cache-control') || ''
+  check('index.html 每次都回源校验', /no-cache|no-store/.test(shellCC), `Cache-Control: ${shellCC || '（未设置）'}`)
+
+  // Go 标准库不认识 .webmanifest，不显式声明就会嗅探成 text/plain，
+  // 浏览器据此记一条 MIME 不合规的告警。
+  const manifestResp = await fetch(`${base}/manifest.webmanifest`, { cache: 'no-store' })
+  check(
+    'manifest 不缓存',
+    /no-cache|no-store/.test(manifestResp.headers.get('cache-control') || ''),
+    `Cache-Control: ${manifestResp.headers.get('cache-control') || '（未设置）'}`,
+  )
+  check(
+    'manifest 以 application/manifest+json 提供',
+    (manifestResp.headers.get('content-type') || '').includes('application/manifest+json'),
+    `Content-Type: ${manifestResp.headers.get('content-type')}`,
+  )
+
+  const swCC = (await fetch(`${base}/sw.js`, { cache: 'no-store' })).headers.get('cache-control') || ''
+  check('sw.js 不缓存', /no-cache|no-store/.test(swCC), `Cache-Control: ${swCC || '（未设置）'}`)
 }
 
 /**
