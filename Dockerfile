@@ -1,73 +1,34 @@
-# 「慎始」镜像：三阶段构建 —— 前端产物 → Go 二进制 → 极简运行层。
+# 「慎始」运行时镜像：二进制由 CI 预编译并下载到 bin/ 后拼装。
 #
-# 最终镜像只含一个静态链接的可执行文件与 tzdata，约 20MB。
-# 编译期依赖（node_modules、Go 工具链）全部留在前面的阶段，不进最终镜像。
+# 编译期依赖（node_modules、Go 工具链）全部留在 CI，不进镜像。
+# 前端产物已通过 go:embed 内嵌进二进制，镜像里不再有 web 目录。
 
-# ---------- 1. 前端 ----------
-# 与本地开发同版本：Node 26（`.nvmrc` 是准，`web/package.json` 的 engines 是下限）。
-# 大版本不冻结 —— dependabot 可以提 node:28-alpine；但那时得连 .nvmrc 与 engines 一起改，
-# 否则 scripts/check-toolchain.sh 会在 CI 里把「只改一处」的 PR 拦下来。
-FROM node:26-alpine AS web
-
-WORKDIR /app/web
-
-# 先只拷贝依赖清单，让 npm ci 这层能被缓存住。
-COPY web/package.json web/package-lock.json ./
-RUN npm ci
-
-COPY web/ ./
-RUN npm run build
-
-
-# ---------- 2. 后端 ----------
-# 同样与本地对齐：Go 1.27（`server/go.mod` 的 go 指令是准）。
-FROM golang:1.27-alpine AS server
-
-# SQLite 驱动是纯 Go 实现的（modernc.org/sqlite），因此无需 gcc / CGO。
-WORKDIR /app/server
-
-COPY server/go.mod server/go.sum ./
-RUN go mod download
-
-COPY server/ ./
-# 前端产物必须落在 server/dist：main.go 用 go:embed all:dist 打包它。
-COPY --from=web /app/web/dist ./dist
-
-# CGO_ENABLED=0 + 静态链接，让二进制可以直接跑在 alpine 上。
-# -trimpath 去掉构建机的绝对路径，-s -w 去掉符号表与调试信息。
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/shenshi .
-
-
-# ---------- 3. 运行 ----------
 FROM alpine:3.24
 
 # tzdata 不是可选项：「慎始」的日期口径全部基于本机时区
-# （今天/逾期/习惯打卡都按本地自然日计算），容器里没有时区库就会退化成 UTC，
-# 于是东八区的晚八点会被算成第二天。ca-certificates 供将来对接外部服务时使用。
+# （今天/逾期/习惯打卡都按本地自然日计算），容器里没有时区库就会退化成 UTC。
 RUN apk add --no-cache tzdata ca-certificates su-exec \
     && addgroup -S shenshi \
     && adduser -S -G shenshi -h /data shenshi
 
-# 默认东八区；可用 TZ 覆盖（见 docker-compose.yml）。
+# 默认东八区；可用 TZ 覆盖（见 docker-compose.yml）
 ENV TZ=Asia/Shanghai \
     SHENSHI_DB=/data/shenshi.db
 
-COPY --from=server /out/shenshi /usr/local/bin/shenshi
-# 入口脚本：按 PUID/PGID 调整运行身份并修正 /data 属主（详见 docker-entrypoint.sh）。
+COPY --chmod=755 bin/shenshi /usr/local/bin/shenshi
+# 入口脚本：按 PUID/PGID 调整运行身份并修正 /data 属主
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# 数据落在挂载卷里，容器重建不丢数据。
+# 数据落在挂载卷里，容器重建不丢数据
 RUN mkdir -p /data && chown -R shenshi:shenshi /data
 VOLUME ["/data"]
 
 EXPOSE 8787
 
-# 健康检查走 /api/health：该接口即使启用了访问口令也免鉴权，探活不会被 401 挡住。
+# 健康检查走 /api/health：该接口即使启用了访问口令也免鉴权，探活不会被 401 挡住
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget -q -O- http://127.0.0.1:8787/api/health >/dev/null || exit 1
 
-# 入口脚本先以 root 把 shenshi 用户的 uid/gid 改到 PUID/PGID（默认 1000:100）并 chown /data，
-# 再以 shenshi 身份 exec 实际命令；这样绑定挂载到宿主目录时也无需手动 chown。
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["shenshi", "-addr", ":8787"]

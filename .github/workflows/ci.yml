@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  release:
+    types: [published]
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    uses: Felix2yu/.github/.github/workflows/reusable-test.yml@v1
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+    with:
+      go-dir: server
+      # 只测 ./internal/...：main 包带 //go:embed all:dist，
+      # 这一步不构建前端，跑 ./... 会因「no matching files found」失败。
+      test-packages: ./internal/...
+      web-dir: web
+
+  image:
+    needs: test
+    if: github.event_name != 'release'
+    permissions:
+      contents: read
+      packages: write
+    uses: Felix2yu/.github/.github/workflows/reusable-image.yml@v1
+    with:
+      go-dir: server
+      binary-name: shenshi
+      image-name: ghcr.io/felix2yu/shenshi
+      web-dir: web
+      # 前端产物必须落到 server/dist：main.go 用 go:embed all:dist 打包它
+      frontend-stage-command: |
+        mkdir -p server/dist
+        cp -R web/dist/. server/dist/
+
+  release:
+    if: github.event_name == 'release'
+    permissions:
+      contents: write
+    uses: Felix2yu/.github/.github/workflows/reusable-release.yml@v1
+    with:
+      go-dir: server
+      binary-name: shenshi
+      web-dir: web
+      frontend-stage-command: |
+        mkdir -p server/dist
+        cp -R web/dist/. server/dist/
+
+  # 「慎始」特有的端到端冒烟不进公共 workflow，留在本地：
+  # 真实 Chromium 走一遍主流程，并硬性要求「无控制台错误 / 无未捕获异常」。
+  smoke:
+    runs-on: ubuntu-24.04
+    needs: test
+    steps:
+      - uses: actions/checkout@v7
+
+      # 守的是「Dockerfile 基镜像 tag 是四处工具链声明里唯一可能悄悄分叉的地方」
+      - name: 校验工具链声明一致
+        run: ./scripts/check-toolchain.sh
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: 安装前端依赖
+        run: npm ci
+        working-directory: web
+
+      - name: 前端类型检查
+        run: npx tsc --noEmit
+        working-directory: web
+
+      # NLP 解析器出错不抛异常、只安静算错日期，用固定「今天」的确定性用例钉住
+      - name: 自然语言解析回归
+        run: node scripts/check-nlp.mjs
+        working-directory: web
+
+      # build.sh 产出 bin/shenshi（UI 冒烟的被测对象）与 server/dist（供 go:embed）
+      - name: 构建（前端 + 二进制）
+        run: ./scripts/build.sh
+
+      - name: 缓存 Playwright 浏览器
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
+
+      - name: 安装 Chromium
+        run: npx playwright-core install --with-deps chromium
+        working-directory: web
+
+      - name: 后端冒烟
+        run: python3 scripts/smoke.py
+
+      - name: 浏览器 UI 冒烟
+        run: node scripts/ui-smoke.mjs
+        env:
+          SHOT_DIR: ${{ github.workspace }}/screenshots
+
+      - name: PWA 与离线冒烟
+        run: node scripts/pwa-smoke.mjs
+        env:
+          SHOT_DIR: ${{ github.workspace }}/screenshots
+
+      # 失败时截图是排查的主要线索，所以无论如何都传
+      - name: 上传 UI 截图
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-screenshots
+          path: ${{ github.workspace }}/screenshots
+          if-no-files-found: ignore
+          retention-days: 7
