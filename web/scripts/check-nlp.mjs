@@ -42,8 +42,9 @@ const LISTS = [
 let pass = 0
 const failures = []
 
-function check(name, input, expected) {
-  const got = parseQuickAdd(input, { today: TODAY, lists: LISTS })
+function check(name, input, expected, ctx = {}) {
+  // now 固定成 10:30：不注入的话，「下午两点」会不会算成已过期要看跑测试的钟点。
+  const got = parseQuickAdd(input, { today: TODAY, now: '10:30', lists: LISTS, ...ctx })
   const actual = {}
   for (const k of Object.keys(expected)) actual[k] = got[k]
   const ok = Object.entries(expected).every(([k, v]) => JSON.stringify(actual[k]) === JSON.stringify(v))
@@ -106,6 +107,41 @@ check('每个周末', '每个周末大扫除', { repeatRule: 'weekends', title: 
 check('每隔N天', '每2天浇花', { repeatRule: 'every:2:day', title: '浇花' })
 check('艾宾浩斯', '复习笔记 艾宾浩斯', { repeatRule: 'ebbinghaus:0', title: '复习笔记' })
 
+console.log('\n重复规则决定落点日期（只给时刻时，锚到规则那天而不是今天）')
+check('每周五 + 时刻 → 排到本周五', '每周五下午两点写周报', {
+  repeatRule: 'weekly:5',
+  dueDate: '2026-09-25',
+  dueTime: '14:00',
+  title: '写周报',
+})
+check('某几日 → 最近的那个日子', '每周一、三、五下午两点晨跑', {
+  repeatRule: 'weekly:1,3,5',
+  dueDate: '2026-09-23',
+  title: '晨跑',
+})
+check('锚定日已过时刻 → 下个周五', '每周五下午两点写周报', { dueDate: '2026-10-02' }, { today: '2026-09-25', now: '15:00' })
+check('每月某日已过 → 下个月的该日', '每月15日下午两点交房租', {
+  repeatRule: 'monthly:15',
+  dueDate: '2026-10-15',
+  title: '交房租',
+})
+check('周末 → 本周六', '每个周末上午10点大扫除', { repeatRule: 'weekends', dueDate: '2026-09-26', title: '大扫除' })
+check('工作日当天未过点 → 今天', '每个工作日早上9点站会', {
+  repeatRule: 'weekdays',
+  dueDate: '2026-09-22',
+  dueTime: '09:00',
+  title: '站会',
+}, { now: '08:00' })
+check('每天没有「哪一天」的含义 → 退回今天口径', '每天早上8点读书', { dueDate: '2026-09-23', title: '读书' })
+check('裸每周不受规则锚定', '下午两点读书 每周', { repeatRule: 'weekly', dueDate: '2026-09-22' })
+check('芯片文案跟着锚定日走', '每周五下午两点写周报', {
+  chips: [
+    { kind: 'repeat', label: '每周某几日' },
+    { kind: 'time', label: '14:00' },
+    { kind: 'date', label: '周五' },
+  ],
+})
+
 console.log('\n标签 / 清单 / 优先级 / 四象限')
 check('标签', '写方案 #工作', { tagNames: ['工作'], title: '写方案' })
 check('多标签', '写方案 #工作 #本周', { tagNames: ['工作', '本周'], title: '写方案' })
@@ -160,6 +196,13 @@ check('纯标题不受影响', '看一部电影', {
 })
 check('数字标题不被误吃', '完成 3 个模块', { dueDate: null, dueTime: null, title: '完成 3 个模块' })
 check('标题保留正文标点', '写「慎始」的验收清单', { title: '写「慎始」的验收清单' })
+check(
+  '剥离片段不在中文词中间留空格',
+  '每周五信下午两点息中心周报',
+  { title: '信息中心周报', repeatRule: 'weekly:5', dueDate: '2026-09-25', dueTime: '14:00' },
+)
+check('用户自己敲的空格保留', '读书 每周五 运动', { title: '读书 运动', dueDate: null })
+check('英文两侧的空格保留', 'review 每周五 code', { title: 'review code' })
 
 console.log('\n重复规则描述')
 for (const [rule, expect] of [

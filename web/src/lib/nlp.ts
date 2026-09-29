@@ -11,7 +11,7 @@
  */
 
 import type { Priority } from '../types'
-import { addDays, addMonths, daysInMonth, fromDateStr, todayStr, toDateStr, weekday } from './date'
+import { addDays, addMonths, daysInMonth, dayDiff, fromDateStr, humanDay, nowHM, todayStr, toDateStr, toMinutes, weekday, weekdayName } from './date'
 
 export interface Chip {
   kind: 'date' | 'time' | 'repeat' | 'priority' | 'tag' | 'list' | 'quadrant'
@@ -33,6 +33,8 @@ export interface ParsedInput {
 
 export interface ParseContext {
   today?: string
+  /** 当前时刻 HH:MM，仅用于判断「只写了时间」的任务是否已过期。 */
+  now?: string
   lists?: { id: number; name: string }[]
 }
 
@@ -74,12 +76,21 @@ const WEEKDAY_MAP: Record<string, number> = {
   一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 0, 天: 0,
 }
 
+/**
+ * 剥离片段后的占位符。用不换行空格而非普通空格：它同样被 `\s` 认作词边界，
+ * 后续片段的正则不受影响，又能和「用户真的敲了空格」区分开——标题收尾时，
+ * 夹在两个汉字之间的它会被抹掉，中文词中间不该被我们撕开一道缝。
+ */
+const GAP = '\u00a0'
+
 function removeSpan(src: string, m: RegExpExecArray): string {
-  return `${src.slice(0, m.index)} ${src.slice(m.index + m[0].length)}`
+  return `${src.slice(0, m.index)}${GAP}${src.slice(m.index + m[0].length)}`
 }
 
 function tidyTitle(s: string): string {
   return s
+    .replace(/[\p{Script=Han}]\u00a0(?=[\p{Script=Han}])/gu, (seg) => seg.slice(0, -1))
+    .replace(/\u00a0/g, ' ')
     .replace(/\s+/g, ' ')
     .replace(/\s+([,，、;；:：])/g, '$1')
     .replace(/^[\s,，。.、;；:：\-]+/, '')
@@ -252,17 +263,69 @@ export function parseQuickAdd(input: string, ctx: ParseContext = {}): ParsedInpu
     src = timeInfo.src
   }
 
-  // 只有时间没有日期时，默认落到今天（若已过则顺延到明天）。
+  // 只有时间没有日期时，日期该落在哪一天？先看重复规则：「每周五下午两点」
+  // 说的是周五，今天在周二就不该排今天；规则锚不到具体日子（每天 / 每 N 天 /
+  // 农历 / 节假日）才退回今天，已过时刻顺延到明天。
   if (out.dueTime && !out.dueDate) {
-    const [hh, mm] = out.dueTime.split(':').map(Number)
-    const now = new Date()
-    const past = hh < now.getHours() || (hh === now.getHours() && mm <= now.getMinutes())
-    out.dueDate = past ? addDays(base, 1) : base
-    chips.push({ kind: 'date', label: out.dueDate === base ? '今天' : '明天' })
+    const past = toMinutes(out.dueTime) <= toMinutes(ctx.now || nowHM())
+    const from = past ? addDays(base, 1) : base
+    const anchored = out.repeatRule ? repeatAnchorDate(out.repeatRule, from) : null
+    out.dueDate = anchored ?? from
+    chips.push({ kind: 'date', label: anchorLabel(out.dueDate, base, out.repeatRule) })
   }
 
   out.title = tidyTitle(src)
   return out
+}
+
+/**
+ * 重复规则从 from（含）起的第一次发生日期。
+ * 只覆盖纯日历算法能算出的规则：weekly 指定的某几日、工作日、周末、每月某日。
+ * 其余规则（每天、每 N 天、每周裸写、农历、法定节假日）要么没有「哪一天」的含义，
+ * 要么依赖节假日数据，一律返回 null 交给调用方按今天兜底。
+ */
+function repeatAnchorDate(rule: string, from: string): string | null {
+  const [head, ...rest] = rule.split(':')
+  const arg = rest.join(':')
+
+  let days: Set<number> | null = null
+  let monthDay: number | null = null
+  if (head === 'weekly' && arg) {
+    const picked = arg
+      .split(',')
+      .map((s) => Number(s))
+      .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6)
+    if (!picked.length) return null
+    days = new Set(picked)
+  } else if (head === 'weekdays') {
+    days = new Set([1, 2, 3, 4, 5])
+  } else if (head === 'weekends') {
+    days = new Set([0, 6])
+  } else if (head === 'monthly' && /^\d+$/.test(arg)) {
+    monthDay = Number(arg)
+  } else {
+    return null
+  }
+
+  // 每月某日最远要等到下个月之后，其余规则一周内必有结果。
+  for (let i = 0; i < (days ? 7 : 400); i++) {
+    const d = addDays(from, i)
+    if (days) {
+      if (days.has(weekday(d))) return d
+    } else {
+      const [y, m] = d.split('-').map(Number)
+      if (Number(d.slice(8)) === Math.min(monthDay!, daysInMonth(y, m - 1))) return d
+    }
+  }
+  return null
+}
+
+/** 锚定日期的芯片文案：近三天说相对说法，按星期的规则说「周五」，其余说「10月2日」。 */
+function anchorLabel(date: string, base: string, rule: string | null): string {
+  const diff = dayDiff(date, base)
+  if (diff <= 2) return humanDay(date, base)
+  if (rule && /^(weekly:|weekdays$|weekends$)/.test(rule)) return weekdayName(date)
+  return humanDay(date, base)
 }
 
 interface DateSpan {
