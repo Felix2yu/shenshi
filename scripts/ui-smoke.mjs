@@ -9,7 +9,7 @@
  *
  * 依赖 playwright-core（web 的开发依赖）。浏览器优先复用 Playwright 缓存里的 Chromium，
  * 不会额外下载；找不到缓存时回退到系统安装的 Chromium / Chrome。
- * 缺浏览器可执行：cd web && npx playwright-core install --with-deps chromium
+ * 缺浏览器可执行：cd web && pnpm exec playwright-core install --with-deps chromium
  *
  * 可选环境变量：
  *   SHENSHI_BIN       指定被测二进制（默认 <repo>/bin/shenshi）

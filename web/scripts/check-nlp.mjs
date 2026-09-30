@@ -21,6 +21,8 @@ const outDir = mkdtempSync(path.join(tmpdir(), 'shenshi-nlp-'))
 
 // 用项目自带的打包器把 TS 打成 CJS，再直接 require 进来跑断言。
 // 这样无需引入测试框架，也不依赖 ts-node 之类的额外工具链。
+// rolldown 原本只是 vite 的传递依赖：pnpm 下 .bin 只链直接依赖，
+// 所以它必须显式写在 devDependencies 里，否则这里 ENOENT。
 const ROLldown = path.join(webRoot, 'node_modules', '.bin', 'rolldown')
 const bundleFile = path.join(outDir, 'nlp.cjs')
 execFileSync(

@@ -11,7 +11,7 @@
  *   node scripts/gen-icons.mjs
  *
  * 需要 Chromium（复用与 scripts/ui-smoke.mjs 相同的查找口径）：
- *   cd web && npx playwright-core install --with-deps chromium
+ *   cd web && pnpm exec playwright-core install --with-deps chromium
  */
 
 import { createRequire } from 'node:module'
@@ -80,7 +80,7 @@ function findChromium() {
   if (system) return system
 
   throw new Error(
-    '找不到 Chromium。可执行 `cd web && npx playwright-core install --with-deps chromium` 安装，' +
+    '找不到 Chromium。可执行 `cd web && pnpm exec playwright-core install --with-deps chromium` 安装，' +
       '或用 CHROMIUM_PATH 指定可执行文件。',
   )
 }

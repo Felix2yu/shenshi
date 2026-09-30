@@ -27,7 +27,7 @@ export function loadPlaywright() {
       /* 换下一个候选 */
     }
   }
-  throw new Error('未找到 playwright-core，请先执行：cd web && npm install')
+  throw new Error('未找到 playwright-core，请先执行：cd web && pnpm install --frozen-lockfile')
 }
 
 /** 要一个空闲端口：并行跑测试时写死端口会撞车。 */
@@ -99,7 +99,7 @@ export function findChromium() {
   if (system) return system
 
   throw new Error(
-    '找不到 Chromium。可执行 `cd web && npx playwright-core install --with-deps chromium` 安装，' +
+    '找不到 Chromium。可执行 `cd web && pnpm exec playwright-core install --with-deps chromium` 安装，' +
       '或用 CHROMIUM_PATH 指定可执行文件。',
   )
 }

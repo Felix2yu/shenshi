@@ -69,7 +69,7 @@ if [ "$ACTUAL_MAJOR" -lt "$REQ_MAJOR" ]; then
   exit 1
 fi
 
-# 让 npm / npx 与 NODE_BIN 同源，避免「node 来自一处、npm 却来自另一处」。
+# 让 npm / pnpm 与 NODE_BIN 同源，避免「node 来自一处、包管理器却来自另一处」。
 export PATH="$(dirname "$NODE_BIN"):$PATH"
 
 # ---------- Go（版本要求见 server/go.mod 的 go 指令）----------
@@ -102,12 +102,18 @@ fi
 
 # 1) 前端
 cd "$ROOT/web"
+# pnpm 版本由 web/package.json 的 packageManager 决定：本机装的 pnpm 若比声明新，
+# 它会自动切到声明的那一个（CI 里则由 pnpm/action-setup 装）。
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "找不到 pnpm。安装：npm i -g pnpm（装好后它会按 packageManager 自行选版本）" >&2
+  exit 1
+fi
 if [ ! -d node_modules ]; then
   say "安装前端依赖"
-  npm install
+  pnpm install --frozen-lockfile
 fi
 say "构建前端（vite）"
-npm run build
+pnpm run build
 
 # 2) 产物落到 server/dist，供 go:embed 使用
 say "同步前端产物到 server/dist"
