@@ -5,6 +5,12 @@
 
 # 依赖
 /web/node_modules/
+# 统一 pnpm：其他包管理器的锁文件不入库。双锁并存会让「按 lockfile 猜包管理器」猜错，
+# 现在 CI 只读 packageManager 声明，但残留的锁文件仍然误导本地操作。
+package-lock.json
+yarn.lock
+bun.lock
+bun.lockb
 
 # 运行时数据（本地数据库，不应入库）
 /data/

@@ -1,5 +1,6 @@
 {
   "name": "shenshi-web",
+  "packageManager": "pnpm@11.22.0",
   "private": true,
   "version": "1.0.0",
   "description": "慎始 · 专注规划与善始善终的任务管理应用前端",
@@ -26,6 +27,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
     "playwright-core": "^1.63.0",
+    "rolldown": "~1.2.9",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.3.0"
