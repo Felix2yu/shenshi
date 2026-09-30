@@ -71,11 +71,15 @@ jobs:
       # 注：原「校验工具链声明一致」已移除——Dockerfile 改为装配式后不再声明
       # Node / Go 版本，脚本失去了校验对象。工具链版本现在唯一由
       # .nvmrc 与 server/go.mod 声明，CI 直接读这两份文件。
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: web/package.json
+
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
 
       - uses: actions/setup-go@v7
         with:
@@ -83,11 +87,11 @@ jobs:
           cache-dependency-path: server/go.sum
 
       - name: 安装前端依赖
-        run: npm ci
+        run: pnpm install --frozen-lockfile
         working-directory: web
 
       - name: 前端类型检查
-        run: npx tsc --noEmit
+        run: pnpm exec tsc --noEmit
         working-directory: web
 
       # NLP 解析器出错不抛异常、只安静算错日期，用固定「今天」的确定性用例钉住
@@ -103,10 +107,10 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
-          key: pw-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
+          key: pw-${{ runner.os }}-${{ hashFiles('web/pnpm-lock.yaml') }}
 
       - name: 安装 Chromium
-        run: npx playwright-core install --with-deps chromium
+        run: pnpm exec playwright-core install --with-deps chromium
         working-directory: web
 
       - name: 后端冒烟
