@@ -144,7 +144,7 @@ func staticHandler(devDir string) (http.Handler, error) {
 		log.Printf("前端资源: web/dist（回退）")
 		return spaHandler(os.DirFS(filepath.Join("web", "dist"))), nil
 	}
-	return nil, errors.New("未找到前端资源，请先执行 `npm run build`（或使用 -web 指定目录）")
+	return nil, errors.New("未找到前端资源，请先执行 `pnpm run build`（或使用 -web 指定目录）")
 }
 
 // spaHandler 托管静态文件，并对未知路径回退到 index.html，以支持前端路由。

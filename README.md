@@ -69,7 +69,7 @@ Go 侧不用额外校验：`go build` 自己会按 `go.mod` 的 go 指令拒绝�
 
 ```bash
 cd server && go run . -web ../web/dist   # 后端 + 磁盘上的前端产物
-cd web && npm run dev                    # 前端热更新，/api 自动代理到 :8787
+cd web && pnpm run dev                   # 前端热更新，/api 自动代理到 :8787
 ```
 
 ---
@@ -492,11 +492,11 @@ cd server && go test ./... && cd ..
 # 后端端到端（自建临时实例与数据库，逐条验证核心接口）
 python3 scripts/smoke.py
 
-# 自然语言解析回归（固定「今天」的确定性用例，需先 npm ci）
+# 自然语言解析回归（固定「今天」的确定性用例，需先 pnpm install --frozen-lockfile）
 cd web && node scripts/check-nlp.mjs && cd ..
 
 # 前端 UI（真实 Chromium，验证渲染、交互与运行时零报错；脚本在仓库根目录）
-cd web && npm ci && cd ..
+cd web && pnpm install --frozen-lockfile && cd ..
 node scripts/ui-smoke.mjs
 
 # PWA 与离线（同一套 Chromium，验证装得下来、断网能读写、联网能补账）
@@ -508,7 +508,7 @@ UI 冒烟脚本需要 Chromium，按以下顺序查找：`CHROMIUM_PATH` → `PL
 本机若已有 Playwright 的浏览器缓存会直接复用；没有就装一份：
 
 ```bash
-cd web && npx playwright-core install --with-deps chromium
+cd web && pnpm exec playwright-core install --with-deps chromium
 ```
 
 两个脚本都不需要事先手动准备数据 —— 各自起临时实例与临时数据库，跑完即清理。
