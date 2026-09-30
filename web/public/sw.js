@@ -21,7 +21,7 @@ const API_CACHE = `shenshi-api-${BUILD}`
 const KEEP = new Set([SHELL_CACHE, API_CACHE])
 
 /** 应用外壳：装好之后断网也能把界面拉起来。 */
-const SHELL_URLS = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png']
+const SHELL_URLS = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/fonts/shenshi-lishu.woff2']
 
 /**
  * 这些接口不能进缓存：

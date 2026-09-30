@@ -503,30 +503,19 @@ export const IconCopy = (p: IconProps) => (
   </Base>
 )
 
-/** 品牌印章：朱砂方印里一个「慎」字。 */
+/** 品牌印章：朱砂方印里一个大「慎」字，隶变隶书体（@font-face 单子集，见 index.css）。
+    不画内框线——32px 上那条 1px 的边只会让字显得更小。 */
 export const SealLogo = ({ size = 34 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true" focusable="false">
     <rect x="1.5" y="1.5" width="37" height="37" rx="9" fill="var(--seal)" />
-    <rect
-      x="5"
-      y="5"
-      width="30"
-      height="30"
-      rx="6"
-      fill="none"
-      stroke="var(--seal-contrast)"
-      strokeOpacity="0.42"
-      strokeWidth="1"
-    />
-    {/* 基线放在 y=26（几何中心 20 + 0.316em）而非 20：CJK 字形的墨迹只占 em 方框的约
-        0.93，按实测这是让「慎」视觉居中于方印的位置；写 28 会明显偏低。 */}
     <text
       x="20"
-      y="26"
+      y="20"
       textAnchor="middle"
-      fontSize="19"
+      dominantBaseline="central"
+      fontSize="27"
       fill="var(--seal-contrast)"
-      fontFamily="Songti SC, Noto Serif SC, serif"
+      fontFamily="ShenshiLishu, Libian SC, Baoli SC, Songti SC, serif"
     >
       慎
     </text>

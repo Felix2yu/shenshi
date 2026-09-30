@@ -610,7 +610,7 @@ export function EmptyState({
   return (
     <div className={cx('flex flex-col items-center justify-center text-center', compact ? 'py-10' : 'py-20')}>
       <div className="mb-3 grid h-11 w-11 place-items-center rounded-full border border-line bg-surface-2">
-        <span className="brand-serif text-[0.9375rem] text-ink-3">慎</span>
+        <span className="brand-lishu text-[0.9375rem] text-ink-3">慎</span>
       </div>
       <p className="brand-serif max-w-[19rem] text-[0.875rem] leading-relaxed text-ink-2">{text}</p>
       {source ? <p className="mt-1 text-[0.71875rem] tracking-wide text-ink-3">{source}</p> : null}

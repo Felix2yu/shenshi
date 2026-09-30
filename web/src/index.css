@@ -100,6 +100,7 @@
   --color-holiday: var(--holiday);
 
   --font-serif: 'Songti SC', 'Noto Serif SC', 'Source Han Serif SC', 'STSong', serif;
+  --font-lishu: 'ShenshiLishu', 'Libian SC', 'Baoli SC', 'Songti SC', serif;
   --font-sans: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB',
     'Microsoft YaHei', 'Segoe UI', Roboto, system-ui, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
@@ -244,10 +245,24 @@ textarea {
   display: none;
 }
 
+/* 品牌隶书：隶变隶书体的「慎」单子集（1.4KB，fonttools 从
+   scripts/fonts/LiBianLiShuTi-2.otf 提取，改了字形重跑一次即可）。
+   font-display: block——宁可晚一帧，也别先用宋体度量闪一下再跳形。 */
+@font-face {
+  font-family: 'ShenshiLishu';
+  src: url('/fonts/shenshi-lishu.woff2') format('woff2');
+  font-display: block;
+}
+
 /* 品牌字：宋体，带一点字距 */
 .brand-serif {
   font-family: var(--font-serif);
   letter-spacing: 0.04em;
+}
+
+/* 品牌字：隶书（徽标同款），只用于「慎」单字 */
+.brand-lishu {
+  font-family: var(--font-lishu);
 }
 
 /* 印章：朱砂底、米白字，内描一圈细边 */
