@@ -132,6 +132,15 @@ const TARGETS = [
   { file: 'icon-192.png', size: 192, rounded: true, fontFrac: 0.76, frame: true },
   { file: 'icon-512.png', size: 512, rounded: true, fontFrac: 0.76, frame: true },
   // Android 自适应图标：满幅 + 字形缩进圆形安全区，不加内框（会被遮罩切掉）。
+  //
+  // ⚠️ 这个文件**故意没有**写进 manifest 的 icons 里（且不能再写回去）。
+  // macOS Safari「添加到程序坞」在 manifest 里**优先取 purpose:"maskable" 的图标**，
+  // 没有才回退到 purpose:"any"（2026-10-01 实测：icon.svg 排在数组第一、maskable 排最后，
+  // 程序坞却显示的是 maskable，因为它带这个 purpose）。一旦声明它，程序坞就会吃这个
+  // 字形只占 47%、且没有内框的缩小版，而不是带内框、字形 76% 的正版徽标。
+  // 撤掉这条声明后 Safari 会回退到 any（icon.svg / icon-512.png），两者都渲染同一枚徽标。
+  // 代价：Android 从此拿不到圆形安全区版本，自适应图标会把 0.76 的字形边缘裁掉。
+  // 若要保住 Android（且接受程序坞变小），把下面这行加回 manifest 即可。
   { file: 'icon-maskable-512.png', size: 512, rounded: false, fontFrac: 0.47, frame: false },
   // iOS 主屏幕图标：满幅不透明（系统自己裁 squircle），180×180 是 Apple 认的尺寸。
   { file: 'apple-touch-icon.png', size: 180, rounded: false, fontFrac: 0.76, frame: true },
