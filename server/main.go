@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/yufei/shendu/server/internal/api"
+	"github.com/yufei/shendu/server/internal/push"
 	"github.com/yufei/shendu/server/internal/store"
 )
 
@@ -76,6 +77,12 @@ func run(addr, dbPath, devDir, token string) error {
 	backup := srv.AutoBackup()
 	backup.Start()
 	defer backup.Stop()
+
+	// 服务端推送：提醒到期与每日概览经 Apprise 推到手机等外部渠道，
+	// 弥补浏览器通知只在页面打开时可用的缺口。
+	pusher := push.New(st, log.Printf)
+	pusher.Start()
+	defer pusher.Stop()
 
 	httpSrv := &http.Server{
 		Addr:              addr,

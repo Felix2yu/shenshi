@@ -236,6 +236,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/reminders/ack", h(s.ackReminder))
 	s.mux.HandleFunc("POST /api/reminders/snooze", h(s.snoozeReminder))
 	s.mux.HandleFunc("POST /api/reminders/reset", h(s.resetReminders))
+
+	// 服务端推送（Apprise）：提醒到期与每日概览推到手机等外部渠道
+	s.mux.HandleFunc("POST /api/push/test", h(s.pushTest))
 	s.mux.HandleFunc("GET /api/meta/repeat", h(s.repeatMeta))
 	s.mux.HandleFunc("GET /api/meta/calendar", h(s.calendarMeta))
 

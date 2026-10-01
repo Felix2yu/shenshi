@@ -283,6 +283,17 @@ CREATE TABLE IF NOT EXISTS reminder_log (
   PRIMARY KEY (task_id, fire_at)
 );
 
+-- 推送台账：服务端经 Apprise 推到外部渠道（手机等）的记录。
+-- 与 reminder_log 分开记：页面内的提醒中心走「用户处理才回执」，
+-- 推送这边只关心「这条有没有已经推出去过」，两条账本互不干扰。
+CREATE TABLE IF NOT EXISTS push_log (
+  key      TEXT PRIMARY KEY,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  ok       INTEGER NOT NULL DEFAULT 0,
+  error    TEXT    NOT NULL DEFAULT '',
+  sent_at  TEXT    NOT NULL
+);
+
 -- 附件：元数据在库里，内容落在数据目录下的 attachments/。
 -- 只存相对文件名，换机器时整个数据目录拷走即可。
 CREATE TABLE IF NOT EXISTS attachments (

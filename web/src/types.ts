@@ -576,6 +576,13 @@ export interface Settings {
   [key: string]: string | undefined
 }
 
+/** 服务端推送（Apprise）单条地址的测试结果。 */
+export interface PushTestResult {
+  url: string
+  ok: boolean
+  error?: string
+}
+
 export interface DailyFocus {
   date: string
   ids: number[]

@@ -17,6 +17,7 @@ import type {
   ReminderHit,
   Review,
   RepeatMeta,
+  PushTestResult,
   SavedFilter,
   Stats,
   Tag,
@@ -345,6 +346,10 @@ export const api = {
     request<{ ok: boolean; until: string }>('POST', '/api/reminders/snooze', { taskId, fireAt, minutes }),
   resetReminders: (taskId?: number) =>
     request<{ ok: boolean }>('POST', '/api/reminders/reset', taskId ? { taskId } : {}),
+
+  /** 服务端推送（Apprise）：向推送渠道发一条测试消息。urls 省略时用已保存的配置。 */
+  pushTest: (urls?: string[]) =>
+    request<{ results: PushTestResult[] }>('POST', '/api/push/test', urls ? { urls } : {}),
 
   repeatMeta: () => request<RepeatMeta>('GET', '/api/meta/repeat'),
   calendarMeta: (from: string, to: string) =>

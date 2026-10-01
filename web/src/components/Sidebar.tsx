@@ -23,6 +23,7 @@ import {
   fontScaleOf,
   type Folder,
   type List,
+  type PushTestResult,
   type SmartKey,
   type Tag,
   type Task,
@@ -1499,6 +1500,118 @@ function ListRow({
   )
 }
 
+/* ---------------- 推送通知 ---------------- */
+
+/** 把多行文本拆成地址列表：去空行与 # 注释行。与服务端 LoadConfig 同口径。 */
+function splitPushUrls(raw: string): string[] {
+  return raw
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l !== '' && !l.startsWith('#'))
+}
+
+/**
+ * 服务端推送（Apprise）设置区块。
+ * 地址走本地草稿、失焦才落库；测试按钮直接测输入框里的当前内容——
+ * 「填完就测、满意再存」比「先存再测」顺手。
+ */
+function PushNotifyField() {
+  const { settings, saveSettings, toast } = useStore()
+  const [urlsDraft, setUrlsDraft] = useState<string | null>(null)
+  const [results, setResults] = useState<PushTestResult[] | null>(null)
+  const [testing, setTesting] = useState(false)
+  const saved = settings['push.appriseUrls'] ?? ''
+  const value = urlsDraft ?? saved
+
+  const runTest = async () => {
+    const urls = splitPushUrls(value)
+    if (urls.length === 0) {
+      toast('请先填写至少一条推送地址', 'info')
+      return
+    }
+    setTesting(true)
+    setResults(null)
+    try {
+      const res = await api.pushTest(urls)
+      setResults(res.results)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '测试发送失败', 'error')
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  return (
+    <Field
+      label="推送通知"
+      hint="提醒到期与每日概览经 Apprise 推到手机等渠道，页面没开也能收到。地址每行一条，# 开头为注释。"
+    >
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+          <label className="flex items-center gap-2 whitespace-nowrap text-[0.78125rem] text-ink-2">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 accent-[var(--seal)]"
+              aria-label="开启服务端推送"
+              checked={settings['push.enabled'] === '1'}
+              onChange={(e) => void saveSettings({ 'push.enabled': e.target.checked ? '1' : '0' })}
+            />
+            开启服务端推送
+          </label>
+          <label className="flex items-center gap-2 whitespace-nowrap text-[0.78125rem] text-ink-2">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 accent-[var(--seal)]"
+              aria-label="开启每日概览推送"
+              checked={settings['push.dailyEnabled'] === '1'}
+              onChange={(e) => void saveSettings({ 'push.dailyEnabled': e.target.checked ? '1' : '0' })}
+            />
+            每日概览
+          </label>
+          <input
+            type="time"
+            className="w-[7.5rem] shrink-0 rounded-lg border border-control-line bg-surface px-2 py-1 text-[0.78125rem] text-ink outline-none transition-colors focus:border-seal"
+            aria-label="每日概览推送时间"
+            title="每日概览的推送时间"
+            value={settings['push.dailyTime'] || '09:00'}
+            onChange={(e) => void saveSettings({ 'push.dailyTime': e.target.value })}
+          />
+        </div>
+        <textarea
+          className={cx(inputClass, 'min-h-[4.5rem] font-mono text-[0.75rem] leading-relaxed')}
+          placeholder={'ntfy://服务器地址/主题\nbark://密钥@api.day.app'}
+          aria-label="Apprise 推送地址，每行一条"
+          value={value}
+          onChange={(e) => setUrlsDraft(e.target.value)}
+          onBlur={() => {
+            if (urlsDraft !== null && urlsDraft !== saved) {
+              setUrlsDraft(null)
+              void saveSettings({ 'push.appriseUrls': urlsDraft })
+            }
+          }}
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" className="shrink-0" disabled={testing} onClick={() => void runTest()}>
+            {testing ? '发送中…' : '发送测试推送'}
+          </Button>
+          {results ? (
+            <span className="min-w-0 flex-1 space-y-0.5 text-[0.6875rem] leading-relaxed">
+              {results.map((r) => (
+                <span key={r.url} className={cx('block truncate', r.ok ? 'text-jade' : 'text-p-high')}>
+                  {r.ok ? '✓' : '✗'} {r.url}
+                  {r.error ? ` · ${r.error}` : ''}
+                </span>
+              ))}
+            </span>
+          ) : (
+            <span className="text-[0.6875rem] text-ink-3">测试用的是输入框当前内容，不必先保存。</span>
+          )}
+        </div>
+      </div>
+    </Field>
+  )
+}
+
 /* ---------------- 外观 ---------------- */
 
 const THEME_CHOICES: { value: ThemeMode; label: string }[] = [
@@ -1736,6 +1849,9 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
             </Field>
           </div>
         </div>
+
+        {/* 服务端推送：手机等外部渠道的兜底通知，页面没开也能收到。 */}
+        <PushNotifyField />
 
         {/* 底部四块两栏排布：数据｜集成 / 快捷键｜重置提醒，压缩整体高度。 */}
         <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
