@@ -173,8 +173,6 @@ export function Toolbar({
     online,
     pendingSync,
     syncNow,
-    updateReady,
-    applyUpdate,
   } = useStore()
   // 与 App 的抽屉语义同一口径：<1024px 都算移动档
   const isMobile = useMediaQuery('(max-width: 1023px)')
@@ -248,7 +246,11 @@ export function Toolbar({
   )
 
   return (
-    <header className="relative z-30 shrink-0 border-b border-line bg-paper/85 backdrop-blur">
+    // data-app-header：右上角更新提示卡片的定位基准（量它的下沿，别压住视图页签）
+    <header
+      data-app-header
+      className="relative z-30 shrink-0 border-b border-line bg-paper/85 backdrop-blur"
+    >
       {isMobile ? (
         <div className="px-3">
           {/* 单行头部：汉堡 + 标题/计数 + 搜索·筛选·排序·多选，一行承载全部高频操作 */}
@@ -339,23 +341,9 @@ export function Toolbar({
 
       <div className="px-3 lg:px-5">
         {/* 状态条。都不常驻：条件不满足时一行高度都不占。
-            顺序按「要用户动手的排前面」——更新要用户点，同步不用。 */}
-        {updateReady ? (
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pb-2 pt-2 text-[0.71875rem]">
-            <span className="inline-flex items-center gap-1.5 text-seal">
-              <IconRefresh size={12} />
-              慎始有新版了
-            </span>
-            <button
-              type="button"
-              onClick={() => void applyUpdate()}
-              className="rounded-md border border-seal/40 px-2 py-0.5 text-seal transition-colors hover:bg-seal/10"
-            >
-              更新并重新加载
-            </button>
-            <span className="text-ink-3">当前页面会保留，重载后生效</span>
-          </div>
-        ) : null}
+            顺序按「要用户动手的排前面」——同步待办要用户点（离线时）或只是告知。
+            「有新版本」不占这里：它走右上角浮卡片（见 Overlays 的 UpdateToast），
+            一年碰不上几次的事，塞在状态条里等于没提示。 */}
 
         {!online || pendingSync > 0 ? (
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pb-2 pt-2 text-[0.71875rem]">

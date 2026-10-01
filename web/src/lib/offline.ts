@@ -505,6 +505,14 @@ export async function replayOutbox(): Promise<ReplayReport> {
 export interface UpdateState {
   /** 已经有新版本装好了，正等着用户点「更新」。 */
   updateReady: boolean
+  /**
+   * 这一版等待中 SW 的标识（脚本 URL）。
+   *
+   * 提示框「关掉就不再打扰」的可行靠它：UI 记下被关掉的是哪一批，
+   * 下一次装好的是另一个文件（也就是又发了一版），就得重新提示一次。
+   * 没有它，用户关掉提示后只能等他自己发现界面还是旧的。
+   */
+  updateKey: string | null
   /** 点更新：让等待中的新 SW 立刻接管，然后重载。 */
   applyUpdate: () => Promise<void>
   /** 设置里的「彻底清除」：删光所有缓存与本地离线数据，注销 SW 后重载。 */
@@ -529,6 +537,7 @@ function postToSW(message: unknown): Promise<void> {
  */
 export function useServiceWorker(): UpdateState {
   const [updateReady, setUpdateReady] = useState(false)
+  const [updateKey, setUpdateKey] = useState<string | null>(null)
   const [controlled, setControlled] = useState(() => !!navigator.serviceWorker?.controller)
   const regRef = useRef<ServiceWorkerRegistration | null>(null)
 
@@ -545,7 +554,10 @@ export function useServiceWorker(): UpdateState {
       regRef.current = reg
       if (disposed) return
       // 已经有人在等更新了（上次没点「更新」就关了页面）。
-      if (reg.waiting && navigator.serviceWorker.controller) setUpdateReady(true)
+      if (reg.waiting && navigator.serviceWorker.controller) {
+        setUpdateReady(true)
+        setUpdateKey(reg.waiting.scriptURL)
+      }
 
       reg.addEventListener('updatefound', () => {
         const installing = reg.installing
@@ -554,6 +566,7 @@ export function useServiceWorker(): UpdateState {
           // controller 有值说明不是首次安装，而是「新版本替换旧版本」。
           if (installing.state === 'installed' && navigator.serviceWorker.controller) {
             setUpdateReady(true)
+            setUpdateKey(installing.scriptURL)
           }
         })
       })
@@ -587,7 +600,13 @@ export function useServiceWorker(): UpdateState {
           if (navigator.serviceWorker.controller) resolve()
         }
         navigator.serviceWorker.addEventListener('controllerchange', onChange, { once: true })
-        reg.waiting?.postMessage({ type: 'SKIP_WAITING' })
+        // 发不出去也要照常收尾：等的是一枚可能刚被浏览器回收的 worker，
+        // 抛错绝不能把下面那个 2 秒兜底和 reload 一起吞掉。
+        try {
+          reg.waiting?.postMessage({ type: 'SKIP_WAITING' })
+        } catch {
+          /* 消息没送成，靠兜底定时器收场 */
+        }
         // 兜底：万一消息没送达，2 秒后照样重载，别把用户卡在旧版本上。
         setTimeout(() => resolve(), 2000)
       })
@@ -613,5 +632,5 @@ export function useServiceWorker(): UpdateState {
     window.location.reload()
   }, [])
 
-  return { updateReady, applyUpdate, hardReset, controlled }
+  return { updateReady, updateKey, applyUpdate, hardReset, controlled }
 }

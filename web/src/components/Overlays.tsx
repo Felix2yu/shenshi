@@ -14,6 +14,7 @@ import {
   IconCheck,
   IconClock,
   IconInfo,
+  IconRefresh,
   IconSunrise,
   IconTimer,
   IconX,
@@ -52,6 +53,7 @@ export function AppOverlays() {
       <FocusIndicator />
       <ReminderCenter />
       <ConfirmHost />
+      <UpdateToast />
       <ToastHost />
       <AutoRituals onMorning={() => setMorningOpen(true)} onReview={() => setReviewOpen(true)} />
     </>
@@ -984,6 +986,82 @@ function ToastHost() {
           {t.message}
         </button>
       ))}
+    </div>
+  )
+}
+
+/* ---------------- 新版本提示（右上角浮卡片） ---------------- */
+
+/**
+ * 新版本已经装好、等用户点一下就换过去时的提示卡片。
+ *
+ * 放在右上角浮着，而不是塞进工具栏的某一行：更新一年碰不上几次，
+ * 却必须让人一眼看见 —— 塞进状态条等于没提示（2026-10-01 用户反馈）。
+ *
+ * 两个容易翻车的点：
+ *
+ *   1. 纵向位置量顶栏的实际下沿来定，不写死 rem。顶栏移动档是单行 52px、
+ *      桌面档是两行，fontScale 一调还会再变；写死必然要么压住视图页签、
+ *      要么离顶栏老远。顶栏带 `data-app-header`，这里跟着它量。
+ *   2. 关掉时记下的是「被关掉的那一批」（updateKey 是等待中 SW 的脚本 URL）。
+ *      下次装好的是另一个文件，说明又发了一版，那时必须重新提示；
+ *      否则用户手贱点过一次 ×，就再也不会知道界面是旧的了。
+ */
+function UpdateToast() {
+  const { updateReady, updateKey, applyUpdate } = useStore()
+  const [dismissedKey, setDismissedKey] = useState<string | null>(null)
+  const [top, setTop] = useState(16)
+
+  useEffect(() => {
+    if (!updateReady) return
+    const header = document.querySelector<HTMLElement>('[data-app-header]')
+    // 顶栏不存在（锁屏 / 首屏）时退回视口顶端的常规留白。
+    const measure = () => {
+      const bottom = header?.getBoundingClientRect().bottom ?? 0
+      setTop(bottom > 0 ? bottom + 8 : 16)
+    }
+    measure()
+    if (!header || typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure)
+      return () => window.removeEventListener('resize', measure)
+    }
+    const ro = new ResizeObserver(measure)
+    ro.observe(header)
+    return () => ro.disconnect()
+  }, [updateReady])
+
+  // 这一版已经关掉过，且没等到下一版 —— 不再打扰。
+  if (!updateReady || (updateKey !== null && updateKey === dismissedKey)) return null
+
+  return (
+    <div
+      role="status"
+      data-update-toast
+      className="animate-rise fixed right-3 top-0 z-[60] w-[calc(100vw-1.5rem)] max-w-[19rem] sm:right-5"
+      style={{ top }}
+    >
+      <div className="rounded-xl border border-seal/30 bg-surface/95 p-3 shadow-[var(--shadow-lg)] backdrop-blur">
+        <div className="flex items-start gap-2">
+          <IconRefresh size={15} className="mt-0.5 shrink-0 text-seal" />
+          <div className="min-w-0 flex-1">
+            <p className="whitespace-nowrap text-[0.8125rem] font-medium text-ink">慎始有新版了</p>
+            <p className="mt-0.5 text-[0.6875rem] leading-relaxed text-ink-3">换用新版本并重载页面</p>
+          </div>
+          <button
+            type="button"
+            aria-label="以后再说"
+            onClick={() => setDismissedKey(updateKey)}
+            className="-mt-0.5 shrink-0 rounded-md p-1 text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
+          >
+            <IconX size={13} />
+          </button>
+        </div>
+        <div className="mt-2.5 flex justify-end">
+          <Button variant="primary" size="sm" onClick={() => void applyUpdate()}>
+            更新并重新加载
+          </Button>
+        </div>
+      </div>
     </div>
   )
 }

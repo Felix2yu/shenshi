@@ -123,6 +123,8 @@ interface StoreShape {
   syncNow: () => Promise<boolean>
   /** 已经有装好的新版本，等用户点「更新」。 */
   updateReady: boolean
+  /** 等待中这一版的标识；UI 用它记住「这一版已经关掉过了」。 */
+  updateKey: string | null
   /** 切到新版本：让等待中的 SW 立刻接管，然后整页重载。 */
   applyUpdate: () => Promise<void>
   /** 设置里的「彻底清除」：删光缓存与离线数据、注销 SW 后重载。 */
@@ -460,7 +462,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const online = useOnline()
   const [pendingSync, setPendingSync] = useState(0)
   const [localTasks, setLocalTasks] = useState<LocalTask[]>([])
-  const { updateReady, applyUpdate, hardReset: reloadWithoutSW, controlled } = useServiceWorker()
+  const { updateReady, updateKey, applyUpdate, hardReset: reloadWithoutSW, controlled } = useServiceWorker()
   // 彻底清除：SW、缓存、离线队列之外，桌面通知「弹过了」的记账也要抹掉，
   // 否则清完之后 overdue 的旧提醒再也提示不了。
   const hardReset = useCallback(async () => {
@@ -1919,6 +1921,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       pendingSync,
       syncNow,
       updateReady,
+      updateKey,
       applyUpdate,
       hardReset,
       offlineReady: controlled,
@@ -2036,6 +2039,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     pendingSync,
     syncNow,
     updateReady,
+    updateKey,
     applyUpdate,
     hardReset,
     controlled,
