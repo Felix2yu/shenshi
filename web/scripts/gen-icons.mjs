@@ -158,6 +158,11 @@ const TARGETS = [
   { file: 'apple-touch-icon.png', size: 180, rounded: false, fontFrac: 0.76, frame: true },
   // 浏览器标签页书签：太小，内框线会糊成一团，关掉。
   { file: 'favicon-32.png', size: 32, rounded: true, fontFrac: 0.80, frame: false },
+  // macOS 程序坞专用素材：满幅 1024 方章（圆角、内框、字 0.76，与 any 同构图）。
+  // 用途见 scripts/make-dock-icon.py —— Safari「添加到程序坞」生成的 icns 会把内容
+  // 先缩进 80% 模板再压字（实测 2026-10-01），Dock 里字小；直接替换 web app bundle 里的
+  // ApplicationIcon.icns 才能拿到与 any 一致的观感。这张不进 manifest，只喂脚本。
+  { file: 'icon-dock-1024.png', size: 1024, rounded: true, fontFrac: 0.76, frame: true },
 ]
 
 async function main() {
