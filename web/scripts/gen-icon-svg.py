@@ -21,9 +21,13 @@ RX = round(SIZE * 0.205)
 INSET = round(SIZE * 0.075)
 FRAME_RX = round(SIZE * 0.12)
 STROKE = round(SIZE * 0.024)
-# 与 icon-512.png 同一换算：font-size = 0.66*SIZE（此字形墨迹 1006x732 upem，
-# 扁宽是隶书特征，不能按 0.9em 见方去凑，否则横向顶出内框）。
-FONT_PX = round(SIZE * 0.66)
+# 与 icon-512.png 同一换算：font-size = 0.76*SIZE。
+# 此字形墨迹 1006x732 upem（1006/1000 em 宽、732/1000 em 高），
+# 扁宽是隶书特征：0.76 系数下墨迹落在 78.3%x54.9% 画布，占内框内宽约 92%，
+# 再大就顶到内框线上。竖向之所以还是留白，是因为画布是正方形而字形是扁的，
+# 横向已经到顶，纵向补不满——这是印章章面的固有比例，不是参数没调好。
+# 早期 0.66 系数（墨迹 66.4%x48.0%）在 macOS 程序坞缩略尺寸下字细如发丝。
+FONT_PX = round(SIZE * 0.76)
 
 font = TTFont(FONT)
 upem = font['head'].unitsPerEm

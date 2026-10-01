@@ -97,7 +97,11 @@ function findChromium() {
  *
  * fontFrac 是字号相对画布边长的比例。maskable 受 Android 自适应图标的
  * 内切安全区约束（保证可见的是 61% 边长的圆），字形对角线不能超出它，
- * 取 0.47 顶格；其余形态没有这层约束，字放到 0.66~0.72 撑满章面。
+ * 取 0.47 顶格；其余形态没有这层约束，字放到 0.76~0.80 撑满章面。
+ * 换算口径：本字形墨迹 1006x732 upem，即 0.76 系数下墨迹占画布
+ * 78.3%（宽）x 54.9%（高）——宽扁是隶书特征，横向到顶后纵向就补不满，
+ * 这是正方形章面的固有比例，不要再往上调否则顶到内框线上。
+ * 早期取 0.66~0.72（墨迹高仅 48~53%），macOS 程序坞缩略尺寸下字看不清。
  *
  * frame 是印章式内框线，只在大尺寸上有意义；favicon-32 上 2% 的线宽会糊成一团，
  * maskable 上会被圆形遮罩切掉，都要关掉。
@@ -128,14 +132,14 @@ function svg({ size, rounded, fontFrac, frame = false }) {
 
 const TARGETS = [
   // 浏览器 / 桌面启动器用的常规图标：圆角 + 透明四角 + 印章内框。
-  { file: 'icon-192.png', size: 192, rounded: true, fontFrac: 0.66, frame: true },
-  { file: 'icon-512.png', size: 512, rounded: true, fontFrac: 0.66, frame: true },
+  { file: 'icon-192.png', size: 192, rounded: true, fontFrac: 0.76, frame: true },
+  { file: 'icon-512.png', size: 512, rounded: true, fontFrac: 0.76, frame: true },
   // Android 自适应图标：满幅 + 字形顶进圆形安全区，不加内框（会被遮罩切掉）。
   { file: 'icon-maskable-512.png', size: 512, rounded: false, fontFrac: 0.47, frame: false },
   // iOS 主屏幕图标：满幅不透明（系统自己裁 squircle），180×180 是 Apple 认的尺寸。
-  { file: 'apple-touch-icon.png', size: 180, rounded: false, fontFrac: 0.68, frame: true },
+  { file: 'apple-touch-icon.png', size: 180, rounded: false, fontFrac: 0.76, frame: true },
   // 浏览器标签页书签：太小，不放内框。
-  { file: 'favicon-32.png', size: 32, rounded: true, fontFrac: 0.72, frame: false },
+  { file: 'favicon-32.png', size: 32, rounded: true, fontFrac: 0.80, frame: false },
 ]
 
 async function main() {
