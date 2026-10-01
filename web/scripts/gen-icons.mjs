@@ -38,10 +38,6 @@ const CREAM = '#fdf6ef'
 /** 参考图的画布边长，SVG 里的坐标一律以它为分母写成比例，再换算到目标尺寸。 */
 const REF = 512
 
-/** 圆印（maskable）的印面圆环：半径 / 线宽，都是边长比例。见 TARGETS 里的说明。 */
-const RING_R = 0.287
-const RING_SW = 0.0293
-
 function playwrightCacheDirs() {
   const dirs = [process.env.PLAYWRIGHT_BROWSERS_PATH].filter(Boolean)
   dirs.push(path.join(process.env.HOME ?? '', '.cache', 'ms-playwright'))
@@ -116,18 +112,15 @@ function glyphTransform(size, fontFrac) {
   return `translate(${c} ${c}) scale(${scale.toFixed(6)} -${scale.toFixed(6)}) translate(-500 -328)`
 }
 
-function svgFor({ size, rounded, fontFrac, frame, ring }) {
+function svgFor({ size, rounded, fontFrac, frame }) {
   const { d, frame: fr } = reference()
   const bg = rounded
     ? `<rect width="${size}" height="${size}" rx="${Math.round(size * 0.205)}" fill="${SEAL}"/>`
     : `<rect width="${size}" height="${size}" fill="${SEAL}"/>`
-  // 两种「印面」：any 图标是方牌 + 方内框（圆角收边），maskable 是圆形印面。
+  // 两种「印面」：any 图标是方牌 + 方内框（圆角收边），maskable 不画框（见下）。
   // 满幅底板一律铺印章红、不透明 —— 遮罩切掉的那圈跟可见区域同色，
   // 换任何系统形状（圆 / 水滴 / 圆角方）出来的都是同一枚红底徽标，不会露白。
-  const mark = ring
-    ? `<circle cx="${(size / 2).toFixed(2)}" cy="${(size / 2).toFixed(2)}" r="${(size * RING_R).toFixed(2)}"`
-      + ` fill="none" stroke="${CREAM}" stroke-width="${Math.max(1, (size * RING_SW).toFixed(2))}"/>`
-    : frame
+  const mark = frame
       ? `<rect x="${(fr.x / REF * size).toFixed(2)}" y="${(fr.x / REF * size).toFixed(2)}"`
         + ` width="${((REF - fr.x * 2) / REF * size).toFixed(2)}" height="${((REF - fr.x * 2) / REF * size).toFixed(2)}"`
         + ` rx="${(61 / REF * size).toFixed(2)}" fill="none" stroke="${CREAM}"`
@@ -142,25 +135,25 @@ const TARGETS = [
   // 浏览器 / 桌面启动器用的常规图标：圆角 + 透明四角 + 印章内框。
   { file: 'icon-192.png', size: 192, rounded: true, fontFrac: 0.76, frame: true },
   { file: 'icon-512.png', size: 512, rounded: true, fontFrac: 0.76, frame: true },
-  // Android 自适应图标：满幅不透明（自适应遮罩自己会裁形状），**圆印构图**。
+  // Android 自适应图标：满幅不透明（自适应遮罩自己会裁形状），**圆底 + 大字、无框**。
   //
-  // 为什么 maskable 不能照抄上面那枚方印（2026-10-01 改）：
-  //   adaptive icon 会把这枚图套上系统形状，默认圆形，可见区是 66/108 ≈ 61.1% 边长，
-  //   也就是半径 0.3056 以外的一切都注定看不见。而方印的内框边中点距中心 0.43×边长，
-  //   切完只剩四条孤立线段挂在红圆边缘 —— 一枚方印章被圆切了角，比没有框还难看。
-  //   所以 maskable 重新构图：整块铺满印章红，中心画一枚**真的是圆形的印面**。
+  // 背景（2026-10-01 两轮实测后的定案）：Safari「添加到程序坞」对 purpose 含 maskable 的
+  // 条目**无条件抢选**（纯 "maskable" 也抢；WebKit 挑选逻辑在 Safari 私有部分，开源树只有
+  // ApplicationManifestParser，无开关），呈现方式是取图标中心 80% 直径圆放大充满图标、垫白
+  // squircle —— 即这枚图在 Dock 里的有效画布是 0.80 圆，在 Android 上是 61~67% 圆。
+  // 字形外接圆 ≈ 0.6209×fontFrac（墨迹 1006×732 宽扁，bbox 对角/半宽 = 1.234）。
   //
-  // 圆印几何（全部按边长比例，512 下验算）：
-  //   圆环外沿 = 0.287 + 0.0293/2 = 0.302      < 0.3056（66/108 圆遮罩半径）—— 不切边；
-  //   字形外接圆 = 半宽 = 0.503×0.46 = 0.2314（墨迹宽 1.006 em，半宽即外接圆），
-  //   距环内沿 0.287-0.0147-0.2314 ≈ 0.04 留白 —— 字不压环。
-  //   字宽相对可见圆（0.611 直径）占 0.46/0.611 ≈ 75%，和 any 版在方牌里占 76% 同一观感。
+  // 单张 maskable 两端不可能都好（Dock 观感 76% 需 f≈0.60，Android 只容忍 ≤0.48），
+  // 用户拍板取「圆章加大字」折中：**去环，fontFrac 0.58**。
+  //   - Dock：字宽 1.006×0.58/0.80 ≈ 73%（此前带环版 58%，any 方章 76%）；
+  //   - Android：「慎」bbox 四角无墨，f=0.52 时实测最大墨迹半径 0.2643×边长（远小于
+  //     bbox 对角 0.3229 的理论值），线性外推 f=0.58 ≈ 0.2949，safe zone（0.3056）内
+  //     余 ~5px，典型圆遮罩（0.3335）内余 ~20px —— 生成后必须实测复核 < 0.3056×边长。
   //
-  // manifest 里它必须**只**声明 purpose:"maskable"：一旦掺了 any，macOS Safari「添加到
-  // 程序坞」就会把这枚圆印当方印用（2026-10-01 实测：purpose 含 any 时 WebKit 优先取它），
-  // 程序坞里就变成一枚小圆印贴白底；写纯 maskable，Safari 会按 AnyOrMaskable 回退到
-  // icon.svg / 192 / 512 那几枚方印，Android 拿到的才是这枚圆印。
-  { file: 'icon-maskable-512.png', size: 512, rounded: false, fontFrac: 0.46, ring: true },
+  // manifest 里它必须**只**声明 purpose:"maskable"：掺 any 没有意义（Safari 反正会抢），
+  // 纯 maskable 至少让 Chrome/Android 明确拿这枚。Dock 想要方章只能在 Add to Dock 弹窗或
+  // web app 设置里手动换图标（选 icon-512.png，Safari stretch + 垫白 squircle，方章保形）。
+  { file: 'icon-maskable-512.png', size: 512, rounded: false, fontFrac: 0.58 },
   // iOS 主屏幕图标：满幅不透明（系统自己裁 squircle），180×180 是 Apple 认的尺寸。
   { file: 'apple-touch-icon.png', size: 180, rounded: false, fontFrac: 0.76, frame: true },
   // 浏览器标签页书签：太小，内框线会糊成一团，关掉。
