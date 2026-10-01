@@ -131,17 +131,19 @@ const TARGETS = [
   // 浏览器 / 桌面启动器用的常规图标：圆角 + 透明四角 + 印章内框。
   { file: 'icon-192.png', size: 192, rounded: true, fontFrac: 0.76, frame: true },
   { file: 'icon-512.png', size: 512, rounded: true, fontFrac: 0.76, frame: true },
-  // Android 自适应图标：满幅 + 字形缩进圆形安全区，不加内框（会被遮罩切掉）。
+  // Android 自适应图标：满幅不透明（自适应遮罩自己会把方角裁成圆），构图与 any
+  // 版本完全一致（内框 + 76% 字形）。
   //
-  // ⚠️ 这个文件**故意没有**写进 manifest 的 icons 里（且不能再写回去）。
-  // macOS Safari「添加到程序坞」在 manifest 里**优先取 purpose:"maskable" 的图标**，
-  // 没有才回退到 purpose:"any"（2026-10-01 实测：icon.svg 排在数组第一、maskable 排最后，
-  // 程序坞却显示的是 maskable，因为它带这个 purpose）。一旦声明它，程序坞就会吃这个
-  // 字形只占 47%、且没有内框的缩小版，而不是带内框、字形 76% 的正版徽标。
-  // 撤掉这条声明后 Safari 会回退到 any（icon.svg / icon-512.png），两者都渲染同一枚徽标。
-  // 代价：Android 从此拿不到圆形安全区版本，自适应图标会把 0.76 的字形边缘裁掉。
-  // 若要保住 Android（且接受程序坞变小），把下面这行加回 manifest 即可。
-  { file: 'icon-maskable-512.png', size: 512, rounded: false, fontFrac: 0.47, frame: false },
+  // 为什么 maskable 也能用 0.76：字形墨迹 76%宽 x 55%高，外接圆半径 = max(半宽,半高)
+  // = 0.38×边长，仍在 W3C appmanifest 写明的 80% 直径安全区（半径 0.40）内，Android
+  // 裁圆不会切到字。早期这里取 0.47 是错的——当时按「方形内框的对角线（0.60）要缩进
+  // 安全区」来算，结果程序坞拿到的是一枚又小又没框的图标。内框本来就注定要在 Android
+  // 上被切掉（四条边中点距中心 0.43 > 0.40），被切掉的只是框、切不到字，那就让它照常画。
+  //
+  // 这枚**必须在 manifest 里声明为 purpose:"any maskable"**：macOS Safari「添加到程序坞」
+  // 在 manifest 中优先取带 maskable 的图标，没有才回退 any（2026-10-01 实测）。好在 any
+  // 与 maskable 现在同构图，无论 WebKit 走哪条路，程序坞拿到的都是带内框、字形 76% 的徽标。
+  { file: 'icon-maskable-512.png', size: 512, rounded: false, fontFrac: 0.76, frame: true },
   // iOS 主屏幕图标：满幅不透明（系统自己裁 squircle），180×180 是 Apple 认的尺寸。
   { file: 'apple-touch-icon.png', size: 180, rounded: false, fontFrac: 0.76, frame: true },
   // 浏览器标签页书签：太小，内框线会糊成一团，关掉。
