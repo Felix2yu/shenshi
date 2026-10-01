@@ -164,7 +164,7 @@ const SMARTS: { key: SmartKey; label: string; icon: IconCmp; countKey: string; e
   { key: 'today', label: '今天', icon: IconSun, countKey: 'today' },
   { key: 'tomorrow', label: '明天', icon: IconSunrise, countKey: 'tomorrow' },
   { key: 'week', label: '本周', icon: IconCalendarRange, countKey: 'week' },
-  { key: 'next7', label: '最近 7 天', icon: IconCalendar, countKey: 'next7' },
+  { key: 'next7', label: '未来 7 天', icon: IconCalendar, countKey: 'next7' },
   { key: 'overdue', label: '逾期', icon: IconBell, countKey: 'overdue', ember: true },
   { key: 'high', label: '高优先级', icon: IconFlag, countKey: 'high' },
   { key: 'nodate', label: '无日期', icon: IconCircle, countKey: 'nodate' },

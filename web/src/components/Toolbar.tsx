@@ -95,7 +95,7 @@ const SMART_TITLE: Record<SmartKey, string> = {
   today: '今天',
   tomorrow: '明天',
   week: '本周',
-  next7: '最近 7 天',
+  next7: '未来 7 天',
   overdue: '逾期',
   nodate: '无日期',
   high: '高优先级',

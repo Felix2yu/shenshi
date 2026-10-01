@@ -112,7 +112,7 @@ async function main() {
     check('已完成的当日仪式不再自动弹出', (await page.locator('[role="dialog"]').count()) === 0)
 
     section('② 首屏结构')
-    check('侧边栏智能清单齐全', (await page.getByText('最近 7 天').count()) > 0)
+    check('侧边栏智能清单齐全', (await page.getByText('未来 7 天').count()) > 0)
     check('分组「工作」已呈现', (await page.getByText('工作', { exact: true }).count()) > 0)
     check('工具栏标题为「今天」', (await page.locator('h1').first().innerText()).includes('今天'))
     check('空状态给出典籍文案', (await page.getByText(/凡事豫则立|今日事/).count()) > 0)

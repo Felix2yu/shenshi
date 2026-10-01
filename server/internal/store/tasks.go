@@ -101,7 +101,9 @@ func (f TaskFilter) build(countOnly bool) (string, []any) {
 			status = statusOpenWithTodayDone
 		}
 	case model.SmartNext7:
-		where = append(where, "t.due_date IS NOT NULL AND t.due_date > ? AND t.due_date <= ?")
+		// 「未来 7 天」含今天（today..today+7），与「本周」的 >= today 口径一致；
+		// 逾期事项归「逾期」清单，不在此重复出现。
+		where = append(where, "t.due_date IS NOT NULL AND t.due_date >= ? AND t.due_date <= ?")
 		args = append(args, today, in7)
 		if status == "" {
 			status = statusOpenWithTodayDone

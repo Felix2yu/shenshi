@@ -36,7 +36,7 @@ const (
 	SmartToday      = "today"
 	SmartTomorrow   = "tomorrow"   // 明天到期
 	SmartWeek       = "week"       // 本周内（至本周日）
-	SmartNext7      = "next7"
+	SmartNext7      = "next7"      // 未来 7 天（含今天，至 today+7）
 	SmartOverdue    = "overdue"
 	SmartAll        = "all"
 	SmartDone       = "done"
