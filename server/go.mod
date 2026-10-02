@@ -5,7 +5,8 @@ go 1.27.1
 require (
 	github.com/emersion/go-ical v0.0.0-20240127095438-fc1c9d8fb2b6
 	github.com/emersion/go-webdav v0.7.0
-	modernc.org/sqlite v1.59.0
+	github.com/unraid/apprise-go v0.3.3
+	modernc.org/sqlite v1.60.0
 )
 
 require (
@@ -16,7 +17,6 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/teambition/rrule-go v1.8.2 // indirect
-	github.com/unraid/apprise-go v0.3.3 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.59.0 // indirect
