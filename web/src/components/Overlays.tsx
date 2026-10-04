@@ -5,6 +5,7 @@ import { addDays, fullDate, todayStr } from '../lib/date'
 import { useEscapeLayer } from '../lib/escStack'
 import { QUOTES, morningLine, reviewLine } from '../lib/quotes'
 import { useNotifyDiagnosis } from '../lib/notify'
+import { isIOS } from '../lib/pwa'
 import { useStore } from '../store/AppStore'
 import type { Task } from '../types'
 import {
@@ -73,7 +74,7 @@ function FocusIndicator() {
       type="button"
       onClick={() => window.dispatchEvent(new CustomEvent('shenshi:focus'))}
       title="打开专注面板"
-      className="fixed bottom-[calc(3.5rem+env(safe-area-inset-bottom))] left-4 z-40 flex items-center gap-2 rounded-full border border-seal/40 bg-surface px-3 py-1.5 text-[0.75rem] text-ink shadow-[var(--shadow-sm)] transition-colors hover:bg-surface-2 lg:bottom-4"
+      className="kb-lift fixed bottom-[calc(3.5rem+env(safe-area-inset-bottom))] left-4 z-40 flex items-center gap-2 rounded-full border border-seal/40 bg-surface px-3 py-1.5 text-[0.75rem] text-ink shadow-[var(--shadow-sm)] transition-colors hover:bg-surface-2 lg:bottom-4"
     >
       <IconTimer size={13} className="text-seal" />
       <span className="tabular-nums font-medium">{mm}:{ss}</span>
@@ -136,12 +137,14 @@ function AutoRituals({ onMorning, onReview }: { onMorning: () => void; onReview:
 /* ---------------- 晨省 ---------------- */
 
 function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { lists, todayFocusIds, setTodayFocus, registerTasks, moveTask, updateTask, toggleTask, saveSettings, toast } = useStore()
+  const { lists, todayFocusIds, setTodayFocus, registerTasks, moveTask, updateTask, toggleTask, saveSettings, toast, confirm } = useStore()
   const [overdue, setOverdue] = useState<Task[]>([])
   const [today, setToday] = useState<Task[]>([])
   const [inbox, setInbox] = useState<Task[]>([])
   const [picked, setPicked] = useState<number[]>(todayFocusIds)
   const [busy, setBusy] = useState(false)
+  /** 批量顺延进行中：进行中禁用按钮，避免重复提交同一批改期。 */
+  const [rolling, setRolling] = useState(false)
   /** 在途写操作的行 id：防止请求未归档时再点一次把刚完成的任务翻回未完成。 */
   const acting = useRef(new Set<number>())
 
@@ -226,6 +229,31 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
     return l?.name ?? '收集箱'
   }
 
+  /**
+   * 把所有逾期未完成的任务改到今天。
+   * 一次改很多条日期，不算可撤销的小操作——先确认，再动手。
+   */
+  const rollAllOverdue = async () => {
+    const n = overdueOpen.length
+    if (!n || rolling) return
+    const ok = await confirm({
+      title: `把 ${n} 件逾期的事移到今天`,
+      message: '它们的到期日都会改成今天。已完成和已归档的事不动。',
+      confirmText: '全部移到今天',
+    })
+    if (!ok) return
+    setRolling(true)
+    try {
+      const res = await api.rollOverdue()
+      await reload()
+      toast(`已把 ${res.rolled} 件事移到今天`)
+    } catch {
+      toast('顺延失败，请稍后再试', 'error')
+    } finally {
+      setRolling(false)
+    }
+  }
+
   return (
     <Modal
       open={open}
@@ -267,6 +295,15 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
             count={overdueOpen.length}
             tone="danger"
             note="逐条安排：移回今天，或承认它需要更晚。"
+            action={
+              <MiniButton
+                onClick={() => void rollAllOverdue()}
+                disabled={rolling}
+                title={`把这 ${overdueOpen.length} 件未完成的事改到今天`}
+              >
+                {rolling ? '顺延中…' : `全部移到今天`}
+              </MiniButton>
+            }
           >
             {overdueOpen.map((t) => (
               <PlanRow
@@ -379,12 +416,16 @@ function Section({
   count,
   note,
   tone,
+  action,
   children,
 }: {
   title: string
   count?: number
   note?: string
   tone?: 'danger' | 'accent'
+  /** 标题行右侧的操作（如批量顺延）。放在标题旁而不是 note 行，
+      是因为它是个可点的动作，混在说明文字里既不像按钮也不像文字。 */
+  action?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
@@ -401,6 +442,7 @@ function Section({
         {count !== undefined ? (
           <span className="rounded-full bg-surface-2 px-1.5 text-[0.6875rem] text-ink-3 tabular-nums">{count}</span>
         ) : null}
+        {action ? <span className="ml-auto">{action}</span> : null}
       </div>
       {note ? <p className="mb-1.5 text-[0.71875rem] text-ink-3">{note}</p> : null}
       <div className="space-y-1">{children}</div>
@@ -450,12 +492,28 @@ function PlanRow({
   )
 }
 
-function MiniButton({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
+function MiniButton({
+  children,
+  onClick,
+  disabled,
+  title,
+}: {
+  children: React.ReactNode
+  onClick: () => void
+  /** 进行中的操作要能被看见地挡住，否则连点两下就是两批重复改期。 */
+  disabled?: boolean
+  title?: string
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="rounded-md border border-line px-1.5 py-0.5 text-[0.71875rem] text-ink-2 transition-colors hover:border-seal/40 hover:text-seal"
+      disabled={disabled}
+      title={title}
+      className={cx(
+        'whitespace-nowrap rounded-md border border-line px-1.5 py-0.5 text-[0.71875rem] text-ink-2 transition-colors hover:border-seal/40 hover:text-seal',
+        disabled && 'cursor-default opacity-50 hover:border-line hover:text-ink-2',
+      )}
     >
       {children}
     </button>
@@ -813,7 +871,7 @@ function ReminderCenter() {
     <div
       aria-live="polite"
       aria-atomic="false"
-      className="fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] right-3 z-40 w-[330px] max-w-[calc(100vw-1.5rem)] animate-rise lg:bottom-4 lg:right-4"
+      className="kb-lift fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] right-3 z-40 w-[330px] max-w-[calc(100vw-1.5rem)] animate-rise lg:bottom-4 lg:right-4"
     >
       <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-lg)]">
         <header className="flex items-center gap-2 border-b border-line bg-seal/8 px-3 py-2">
@@ -946,7 +1004,17 @@ function ConfirmHost() {
         </>
       }
     >
-      <p className="text-[0.8125rem] leading-relaxed text-ink-2">{confirmState.message}</p>
+      {/* 消息里的 \n 真的换行：多处确认（导入预览、顺延影响面）要分条说明，
+          全塞进一个段落会挤成一坨，用户反而读不下去。 */}
+      {confirmState.message.includes('\n') ? (
+        confirmState.message.split('\n').map((line, i) => (
+          <p key={i} className="text-[0.8125rem] leading-relaxed text-ink-2">
+            {line}
+          </p>
+        ))
+      ) : (
+        <p className="text-[0.8125rem] leading-relaxed text-ink-2">{confirmState.message}</p>
+      )}
     </Modal>
   )
 }
@@ -1045,7 +1113,12 @@ function UpdateToast() {
           <IconRefresh size={15} className="mt-0.5 shrink-0 text-seal" />
           <div className="min-w-0 flex-1">
             <p className="whitespace-nowrap text-[0.8125rem] font-medium text-ink">慎始有新版了</p>
-            <p className="mt-0.5 text-[0.6875rem] leading-relaxed text-ink-3">换用新版本并重载页面</p>
+            <p className="mt-0.5 text-[0.6875rem] leading-relaxed text-ink-3">
+              换用新版本并重载页面
+              {isIOS()
+                ? '。iPhone 上若切不过来，把应用从后台划掉再打开一次即可'
+                : ''}
+            </p>
           </div>
           <button
             type="button"

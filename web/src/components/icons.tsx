@@ -521,3 +521,30 @@ export const SealLogo = ({ size = 34 }: { size?: number }) => (
     </text>
   </svg>
 )
+
+/** iOS 分享面板：方框带上箭头。 */
+export const IconShare = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M12 3v11" />
+    <path d="M8 7l4-4 4 4" />
+    <path d="M6 13v6a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-6" />
+  </Base>
+)
+
+/** 添加到主屏幕：方框中间一个加号。 */
+export const IconPlusSquare = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="4" y="4" width="16" height="16" rx="3.5" />
+    <path d="M12 9v6" />
+    <path d="M9 12h6" />
+  </Base>
+)
+
+/** 下载 / 安装到本机：向下箭头落进托盘。 */
+export const IconInstall = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M12 4v10" />
+    <path d="M8 10l4 4 4-4" />
+    <path d="M5 19h14" />
+  </Base>
+)

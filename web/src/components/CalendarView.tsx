@@ -902,7 +902,14 @@ function DayView(props: DayProps) {
 
             {/* 当前时刻 */}
             {day === today ? (
-              <div className="absolute right-0 left-0 z-20 flex items-center" style={{ top: yOf(nowMin) }}>
+              // pointer-events-none：这是一条纯装饰线，但它 z-20 压在任务块之上，
+              // 不关掉指针事件的话，拖到它所在那一小时的任务会怎么拖都拖不动 ——
+              // 而「现在几点」这个时间每分钟都在变，用户说不清自己为什么有时能拖有时不能。
+              // 同文件上方的空态提示就是关了的（见 pointer-events-none）。
+              <div
+                className="pointer-events-none absolute right-0 left-0 z-20 flex items-center"
+                style={{ top: yOf(nowMin) }}
+              >
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-seal" />
                 <div className="h-px flex-1 bg-seal/70" />
                 <span className="shrink-0 px-1 text-[0.625rem] tabular-nums text-seal">{minutesToHM(nowMin)}</span>

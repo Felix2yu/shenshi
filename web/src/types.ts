@@ -12,7 +12,7 @@ export const PRIORITY_LABEL: Record<Priority, string> = {
 export interface Subtask {
   id: number
   taskId: number
-  /** 父级子任务：null 表示顶层，非空表示挂在另一条子任务之下（两级） */
+  /** 父级子任务：null 表示顶层，非空表示挂在另一条子任务之下（可多层嵌套） */
   parentId: number | null
   title: string
   /** 子任务自己的日期（YYYY-MM-DD），独立于父任务 */
@@ -58,6 +58,8 @@ export interface Task {
   /** 关联链接（会议、文档、单号），与附件分开存放 */
   url: string
   reminders: number[]
+  /** 绝对时刻提醒（RFC3339，本机时区）。与 reminders 的「提前 N 分钟」互不干涉。 */
+  remindAt: string | null
   repeatRule: string | null
   /** 重复任务的续期基准：due=从原到期日推，done=从实际完成日推 */
   repeatFrom: 'due' | 'done'
@@ -74,6 +76,8 @@ export interface Task {
   /** 手工进度百分比 0-100；有子任务时可与其完成度互为印证 */
   progress: number
   completedAt: string | null
+  /** 单调自增版本号，每次写入 +1；并发控制（If-Match）比对的就是它。 */
+  version: number
   sortOrder: number
   createdAt: string
   updatedAt: string
@@ -260,7 +264,17 @@ export interface Activity {
   taskId: number | null
   title: string
   detail: string
+  /** 这条改动来自哪里：web / caldav / import / api。老记录读作 web。 */
+  source: string
   createdAt: string
+}
+
+/** 活动来源的中文名。与后端 store.ActivitySourceLabel 对齐。 */
+export const ACTIVITY_SOURCE_LABEL: Record<string, string> = {
+  web: '网页',
+  caldav: '日历同步',
+  import: '导入',
+  api: '接口',
 }
 
 export const ACTIVITY_LABEL: Record<string, string> = {
@@ -509,6 +523,7 @@ export interface TaskPatch {
   endTime?: string | null
   url?: string
   reminders?: number[]
+  remindAt?: string | null
   repeatRule?: string | null
   repeatFrom?: 'due' | 'done'
   important?: boolean
@@ -581,6 +596,49 @@ export interface PushTestResult {
   url: string
   ok: boolean
   error?: string
+}
+
+/**
+ * 浏览器推送订阅（只取用得到的字段）。
+ * 刻意不叫 PushSubscription：那是 DOM 的全局类型，重名会让两种含义在同一个文件里打架。
+ */
+export interface WebPushSubscription {
+  endpoint: string
+  keys: { p256dh: string; auth: string }
+}
+
+/** Web Push 通道状态。三种未就绪的情形必须分得清，否则用户没法判断该不该去弄。 */
+export interface WebPushStatus {
+  /** 服务端配好了 VAPID 密钥对。 */
+  configured: boolean
+  /** 公钥，前端 subscribe 时用。 */
+  publicKey: string
+  subject: string
+  /** 当前有几台设备订阅了。 */
+  subs: number
+  lastEndpoint?: string
+  /** 最近一次成功投递的时间（ISO）。 */
+  lastOkAt?: string
+}
+
+/**
+ * 推送自检：服务端视角的推送状态与最近的投递台账。
+ */
+export interface PushStatus {
+  enabled: boolean
+  channels: number
+  daily: boolean
+  dailyTime: string
+  baseUrl: string
+  recent: {
+    key: string
+    /** reminder（提醒）/ daily（每日概览） */
+    kind: string
+    ok: boolean
+    error: string
+    sentAt: string
+    attempts: number
+  }[]
 }
 
 export interface DailyFocus {

@@ -11,7 +11,7 @@ import {
 
 import { ApiError, api, isNetworkError, setUnauthorizedHandler, type TaskQuery, type TaskSort } from '../api/client'
 import { addDays, todayStr } from '../lib/date'
-import { EMPTY_FILTER, filterFromQuery, filterToQuery, isFilterActive, type TaskFilter } from '../lib/filter'
+import { EMPTY_FILTER, bundleToQuery, isFilterActive, parseSavedQuery, type TaskFilter } from '../lib/filter'
 import {
   buildLocalTask,
   dropLocalTask,
@@ -43,6 +43,7 @@ import {
   type Settings,
   type SmartKey,
   type Stats,
+  type Subtask,
   type Tag,
   type Task,
   type TaskPatch,
@@ -119,6 +120,8 @@ interface StoreShape {
   online: boolean
   /** 离线队列里待同步的条数。 */
   pendingSync: number
+  /** 重新统计队列长度。往队列入队之后调它，界面上「N 条待同步」才跟着变。 */
+  refreshOfflineState: () => Promise<void>
   /** 联网后把队列重放一遍。返回是否真的送出去了（true 时界面已对账）。 */
   syncNow: () => Promise<boolean>
   /** 已经有装好的新版本，等用户点「更新」。 */
@@ -139,6 +142,9 @@ interface StoreShape {
   setFilters: (f: TaskFilter) => void
   resetFilters: () => void
   setSelectedTask: (id: number | null) => void
+  /** 外部塞给快速添加框的一句话（?add= 深链），被取走后即清空。 */
+  quickAddSeed: string | null
+  consumeQuickAddSeed: () => void
   setMultiSelect: (on: boolean) => void
   toggleSelected: (id: number) => void
   clearSelected: () => void
@@ -254,6 +260,56 @@ export function useStore(): StoreShape {
 }
 
 const DEFAULT_SELECTION: Selection = { kind: 'smart', key: 'today' }
+
+/**
+ * 在子任务树里找 id 对应的那条（逐层下探）。
+ * 树已放开到任意层级，只扫顶层必然漏。
+ */
+function findSubtask(subs: Subtask[], id: number): Subtask | undefined {
+  for (const s of subs) {
+    if (s.id === id) return s
+    const hit = findSubtask(s.children, id)
+    if (hit) return hit
+  }
+  return undefined
+}
+
+/**
+ * 把局部更新应用到一棵子任务树，返回新树与新的完成度计数。
+ *
+ * 离线勾选子任务时用：勾选得立刻看见，进度条也得跟着动。
+ * 只改 done 不重算计数的话，「3/7」会停在那儿不动 —— 用户会以为勾没生效，
+ * 于是再点一次，结果把没做完的又标成做完了。
+ *
+ * 顺序刻意是「先改树、再整体重算」而不是边改边累加：递归里同时做两件事，
+ * 计数与树迟早会对不上，而那种偏差只在特定嵌套深度下才显形，极难排查。
+ */
+function applySubtaskPatch(
+  subs: Subtask[],
+  id: number,
+  patch: { title?: string; done?: boolean; dueDate?: string | null; reminders?: number[] },
+): { subs: Subtask[]; done: number; open: number } {
+  const next = subs.map((s) => {
+    if (s.id === id) return { ...s, ...patch }
+    return { ...s, children: applySubtaskPatch(s.children, id, patch).subs }
+  })
+  const counts = countSubs(next)
+  return { subs: next, done: counts.done, open: counts.open }
+}
+
+/** 数一棵子任务树里的完成/未完成总数（口径同服务端：各层都算）。 */
+function countSubs(subs: Subtask[]): { done: number; open: number } {
+  let done = 0
+  let open = 0
+  for (const s of subs) {
+    if (s.done) done += 1
+    else open += 1
+    const inner = countSubs(s.children)
+    done += inner.done
+    open += inner.open
+  }
+  return { done, open }
+}
 
 /** 两条本地任务表是否等价（按 id + 内容判重）。用于避免无谓的状态更新。 */
 function sameLocalTasks(a: LocalTask[], b: LocalTask[]): boolean {
@@ -453,6 +509,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const sortBy: TaskSort = (settings.sortBy as TaskSort) || 'smart'
   const [toasts, setToasts] = useState<Toast[]>([])
   const [reminders, setReminders] = useState<ReminderHit[]>([])
+  // 外部塞给快速添加框的一句话（?add= 深链），被 QuickAdd 取走即清空。
+  const [quickAddSeed, setQuickAddSeed] = useState<string | null>(null)
+  const consumeQuickAddSeed = useCallback(() => setQuickAddSeed(null), [])
   const [stats, setStats] = useState<Stats | null>(null)
   const [statsError, setStatsError] = useState(false)
   const [repeatMeta, setRepeatMeta] = useState<RepeatMeta | null>(null)
@@ -682,10 +741,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [handleError])
 
+  // 首屏与列表并行：弱网（地铁、电梯）下一个往返就是几百毫秒，
+  // 能省一个就省一个。用 ref 取最新实现，免得把它写进依赖导致首屏重复执行。
+  const refreshTasksRef = useRef(refreshTasks)
+  refreshTasksRef.current = refreshTasks
+  const firstTasksFetched = useRef(false)
+
   // 首次加载
   useEffect(() => {
     let alive = true
     ;(async () => {
+      // 任务列表与首屏数据同时发出。这次拉的是「默认筛选口径」，
+      // boot 到达后若设置不同（例如关闭了「显示已完成」），
+      // refreshTasks 的引用随之变化，下面的 effect 会自动再拉一次补正。
+      void refreshTasksRef.current()
       try {
         const [b, meta] = await Promise.all([api.bootstrap(), api.repeatMeta()])
         if (!alive) return
@@ -714,8 +783,83 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // 视图 / 选择变化时拉取任务
   useEffect(() => {
     if (loading) return
+    // 首屏那次已经在加载阶段并行发过了，这里不要再打第二次。
+    if (!firstTasksFetched.current) {
+      firstTasksFetched.current = true
+      return
+    }
     void refreshTasks()
   }, [loading, refreshTasks])
+
+  // 推送里的深链：服务端推出的消息带 /?remind=<任务 id>，
+  // 点开就直达那一条，而不是让人自己在列表里找。参数随即从地址栏抹掉，
+  // 免得刷新或转发时又把这条旧参数带出去。
+  useEffect(() => {
+    if (loading) return
+    const params = new URLSearchParams(window.location.search)
+    const raw = params.get('remind')
+    if (!raw) return
+    const id = Number(raw)
+    if (Number.isFinite(id) && id > 0) setSelectedTaskId(id)
+    params.delete('remind')
+    const q = params.toString()
+    window.history.replaceState(null, '', window.location.pathname + (q ? '?' + q : ''))
+  }, [loading, setSelectedTaskId])
+
+  // 快捷入口：/?add=明天下午3点交材料 —— 把这句话填进快速添加框并聚焦。
+  // iOS 的「快捷指令」与小组件只能打开一个 URL，这条深链就是它们与慎始的接口。
+  useEffect(() => {
+    if (loading) return
+    const params = new URLSearchParams(window.location.search)
+    const raw = params.get('add') ?? params.get('text')
+    if (!raw) return
+    setQuickAddSeed(raw)
+    params.delete('add')
+    params.delete('text')
+    const q = params.toString()
+    window.history.replaceState(null, '', window.location.pathname + (q ? '?' + q : ''))
+  }, [loading])
+
+  // SSE 回调里要用最新的 reconcile，又不能把它写进 effect 依赖（会反复重连）。
+  const reconcileRef = useRef(reconcile)
+  reconcileRef.current = reconcile
+
+  // 跨设备实时通道：服务端一有变更就推一条，本机立刻对账。
+  // 此前只能等轮询（角标 5 分钟、提醒 30 秒），手机上等同于「另一个设备上做的事看不见」。
+  useEffect(() => {
+    if (loading) return
+    if (typeof EventSource === 'undefined') return
+    let es: EventSource | null = null
+    let retry = 0
+    let timer = 0
+    const connect = () => {
+      es = new EventSource('/api/stream')
+      es.onopen = () => {
+        retry = 0
+      }
+      es.onmessage = () => reconcileRef.current()
+      es.onerror = () => {
+        // 断线自己退避重连；离线时不重试，等 online 事件再来接上。
+        es?.close()
+        es = null
+        if (!navigator.onLine) return
+        retry = Math.min(retry + 1, 5)
+        timer = window.setTimeout(connect, 1000 * 2 ** (retry - 1))
+      }
+    }
+    connect()
+    const onOnline = () => {
+      if (es) return
+      retry = 0
+      connect()
+    }
+    window.addEventListener('online', onOnline)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('online', onOnline)
+      es?.close()
+    }
+  }, [loading])
 
   // 系统外观变化时实时同步（macOS 的「自动」切换日落模式、定时切换都走这里）。
   useEffect(() => {
@@ -732,8 +876,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     root.dataset.theme = resolvedTheme
     root.dataset.accent = settings.accent || 'seal'
     root.style.colorScheme = resolvedTheme
-    const meta = document.querySelector('meta[name="theme-color"]')
-    if (meta) meta.setAttribute('content', resolvedTheme === 'dark' ? '#171513' : '#faf7f2')
+    // theme-color 有深浅两条（带 media），这里一律写成当前生效的那一色：
+    // 只改第一条的话，系统处于深色时浏览器读的是第二条，改了等于没改。
+    const color = resolvedTheme === 'dark' ? '#171513' : '#faf7f2'
+    document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', color))
   }, [resolvedTheme, settings.accent])
 
   // 界面字号：改根元素 font-size，正文与间距一起缩放。
@@ -1042,18 +1188,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const updateTask = useCallback(
     async (id: number, patch: TaskPatch) => {
+      // 并发保护：把本机看到的版本带上去。若另一台设备在这期间改过同一条，
+      // 服务端回 409，我们据此提示「已被改过」而不是默默覆盖。
+      const current = tasks.find((t) => t.id === id)
       try {
-        const t = await api.updateTask(id, patch)
+        const t = await api.updateTask(id, patch, current ? String(current.version) : undefined)
         patchLocalTask(t)
         reconcile()
         return t
       } catch (e) {
         if (isNetworkError(e)) return updateTaskOffline(id, patch)
+        if (e instanceof ApiError && e.status === 409) {
+          toast('这条已在别处被修改，正在取回最新内容', 'info')
+          void refreshTasks()
+          return null
+        }
         handleError(e, '更新任务失败')
         return null
       }
     },
-    [patchLocalTask, reconcile, handleError],
+    [tasks, patchLocalTask, reconcile, handleError, refreshTasks, toast],
   )
 
   /** 从界面各处移除一条任务：列表、索引、详情、多选——五处必须一起清。 */
@@ -1364,7 +1518,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return null
       }
       try {
-        const f = await api.createSavedFilter({ name: trimmed, query: filterToQuery(filters) })
+        // 连同「在哪儿看、怎么看、怎么排」一起存：只存筛选条件的话，
+        // 套用时清单和排序还是当前这一份，用户会以为没生效。
+        const f = await api.createSavedFilter({
+          name: trimmed,
+          query: bundleToQuery(filters, { selection, view, sortBy }),
+        })
         setSavedFilters((prev) => [...prev, f])
         toast(`已保存筛选「${f.name}」`)
         return f
@@ -1373,15 +1532,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return null
       }
     },
-    [filters, toast, handleError],
+    [filters, selection, view, sortBy, toast, handleError],
   )
 
   const applySavedFilter = useCallback(
     (f: SavedFilter) => {
-      setFiltersState(filterFromQuery(f.query))
+      const { filter, scope } = parseSavedQuery(f.query)
+      setFiltersState(filter)
+      if (scope) {
+        // 作用域缺失的旧记录只改筛选，不动当前的清单与视图——
+        // 凭空跳走比不跳更糟，用户会丢掉正在看的东西。
+        setSelection(scope.selection)
+        setView(scope.view)
+        if (scope.sortBy && scope.sortBy !== sortBy) setSortBy(scope.sortBy as TaskSort)
+      }
       toast(`已套用筛选「${f.name}」`)
     },
-    [toast],
+    [toast, sortBy, setSortBy],
   )
 
   const renameSavedFilter = useCallback(
@@ -1436,6 +1603,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const updateSubtask = useCallback(
     async (id: number, patch: { title?: string; done?: boolean; dueDate?: string | null; reminders?: number[] }) => {
+      if (!online) {
+        // 离线：本地先生效（勾选必须零延迟），再入队。
+        // 子任务树可能有多层，逐层找、找到就改，并把完成度按新状态重算——
+        // 进度条与勾选状态对不上是这类乐观更新最容易露的破绽。
+        setTasks((prev) =>
+          prev.map((t) =>
+            findSubtask(t.subtasks, id)
+              ? (() => {
+                  const r = applySubtaskPatch(t.subtasks, id, patch)
+                  return { ...t, subtasks: r.subs, subtaskDone: r.done, subtaskOpen: r.open }
+                })()
+              : t,
+          ),
+        )
+        await enqueue({ kind: 'subtask', taskId: 0, subtask: { id, patch } })
+        await refreshOfflineState()
+        toast('已记录 · 联网后同步')
+        return
+      }
       try {
         await api.updateSubtask(id, patch)
         // 子任务归属父任务，重新取一次父任务即可拿到最新进度。
@@ -1445,7 +1631,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         handleError(e, '更新子任务失败')
       }
     },
-    [tasks, patchLocalTask, handleError],
+    [tasks, online, toast, refreshOfflineState, patchLocalTask, handleError],
   )
 
   const deleteSubtask = useCallback(
@@ -1902,6 +2088,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       statsError,
       repeatMeta,
       selectedTaskId,
+      quickAddSeed,
+      consumeQuickAddSeed,
       selectedIds,
       multiSelect,
       focus,
@@ -1919,6 +2107,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       version,
       online,
       pendingSync,
+      refreshOfflineState,
       syncNow,
       updateReady,
       updateKey,
@@ -2037,6 +2226,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     version,
     online,
     pendingSync,
+    refreshOfflineState,
     syncNow,
     updateReady,
     updateKey,
@@ -2050,6 +2240,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setFilters,
     resetFilters,
     setSelectedTaskId,
+    quickAddSeed,
+    consumeQuickAddSeed,
     setMultiSelect,
     toggleSelected,
     clearSelected,
@@ -2107,7 +2299,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     stopFocus,
     tickFocus,
     confirm,
-    resolveConfirm
+    resolveConfirm,
+    refreshOfflineState,
     ],
   )
 

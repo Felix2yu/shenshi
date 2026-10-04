@@ -18,6 +18,7 @@ import type {
   Review,
   RepeatMeta,
   PushTestResult,
+  PushStatus,
   SavedFilter,
   Stats,
   Tag,
@@ -30,7 +31,10 @@ import type {
   UndoState,
   Webhook,
   WebhookDelivery,
+  WebPushStatus,
+  WebPushSubscription,
 } from '../types'
+import { newClientId } from '../lib/offline'
 
 export class ApiError extends Error {
   status: number
@@ -60,10 +64,17 @@ export function setUnauthorizedHandler(fn: (() => void) | null): void {
   onUnauthorized = fn
 }
 
-async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  signal?: AbortSignal,
+  /** 额外的请求头。并发保护用它带 If-Match（见 api.updateTask）。 */
+  headers?: Record<string, string>,
+): Promise<T> {
   const init: RequestInit = {
     method,
-    headers: { Accept: 'application/json' },
+    headers: { Accept: 'application/json', ...(headers ?? {}) },
     signal,
   }
   if (body !== undefined) {
@@ -78,6 +89,29 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
     if (signal?.aborted) throw e
     throw new ApiError('无法连接到服务，请确认「慎始」服务正在运行', 0)
   }
+  const text = await resp.text()
+  let data: unknown = null
+  if (text) {
+    try {
+      data = JSON.parse(text)
+    } catch {
+      data = { error: text }
+    }
+  }
+  if (!resp.ok) {
+    if (resp.status === 401) onUnauthorized?.()
+    const msg = (data as { error?: string } | null)?.error || `请求失败（${resp.status}）`
+    throw new ApiError(msg, resp.status)
+  }
+  return data as T
+}
+
+/**
+ * readJSON 解析一个**已经拿到 Response** 的 JSON 响应。
+ * multipart 上传（备份导入、第三方导入）不能走 request —— 它只发 JSON，
+ * 所以这几处各自 fetch 之后需要同一套解析与错误处理，重复三遍必然漏改一处。
+ */
+async function readJSON<T>(resp: Response): Promise<T> {
   const text = await resp.text()
   let data: unknown = null
   if (text) {
@@ -159,6 +193,26 @@ export interface ImportResult {
   attachmentsMissed?: number
 }
 
+/**
+ * 第三方格式导入的预览。
+ * 用户在按确定之前必须看清会进来多少、以及哪些东西不会跟过来 ——
+ * 循环规则与提醒不迁移，不提前说清，用户事后才发现就会以为慎始弄丢了数据。
+ */
+export interface ThirdPartyPreview {
+  /** todoist-csv / ics */
+  format: string
+  tasks: number
+  completed: number
+  /** 会新建的清单名。 */
+  lists: string[]
+  /** 会新建的标签名。 */
+  tags: string[]
+  /** 不会迁移的内容说明。 */
+  notes?: string[]
+  /** 前几条任务标题，用来确认解析对了而不是解析出一堆乱码。 */
+  firstTitles?: string[]
+}
+
 /** 导出接口的下载地址，直接交给浏览器以附件形式下载。 */
 export const EXPORT_URLS = {
   zip: '/api/export/zip',
@@ -181,8 +235,12 @@ export const api = {
   /** 依赖阻塞状态：blocked_by 且对端未完成时给出阻塞者清单。 */
   taskBlocked: (id: number) =>
     request<{ blocked: boolean; blockers: Task[] }>('GET', `/api/tasks/${id}/blocked`),
-  createTask: (patch: TaskPatch) => request<Task>('POST', '/api/tasks', patch),
-  updateTask: (id: number, patch: TaskPatch) => request<Task>('PATCH', `/api/tasks/${id}`, patch),
+  /** 新建。clientId 是幂等键：网络抖动导致的重复提交会被服务端判重挡下。 */
+  createTask: (patch: TaskPatch) =>
+    request<Task>('POST', '/api/tasks', { ...patch, clientId: newClientId() }),
+  /** 局部更新。ifMatch 传本机看到的 updatedAt，服务端对不上会回 409（并发保护）。 */
+  updateTask: (id: number, patch: TaskPatch, ifMatch?: string) =>
+    request<Task>('PATCH', `/api/tasks/${id}`, patch, undefined, ifMatch ? { 'If-Match': ifMatch } : undefined),
   deleteTask: (id: number) => request<{ ok: boolean }>('DELETE', `/api/tasks/${id}`),
   toggleTask: (id: number) => request<ToggleResult>('POST', `/api/tasks/${id}/toggle`),
   /**
@@ -310,21 +368,27 @@ export const api = {
     const fd = new FormData()
     fd.append('file', file)
     const resp = await fetch(`/api/import/file?mode=${mode}`, { method: 'POST', body: fd })
-    const text = await resp.text()
-    let data: unknown = null
-    if (text) {
-      try {
-        data = JSON.parse(text)
-      } catch {
-        data = { error: text }
-      }
-    }
-    if (!resp.ok) {
-      if (resp.status === 401) onUnauthorized?.()
-      const msg = (data as { error?: string } | null)?.error || `请求失败（${resp.status}）`
-      throw new ApiError(msg, resp.status)
-    }
-    return data as ImportResult
+    return readJSON<ImportResult>(resp)
+  },
+
+  /**
+   * 第三方格式导入：先预览再执行。
+   *
+   * 分两步不是为了多一次请求，而是导入是唯一「会凭空多出很多条数据」的操作——
+   * 用户在按确定之前必须看清会进来多少、丢些什么（循环规则、提醒都不迁移）。
+   */
+  previewThirdParty: async (file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    const resp = await fetch('/api/import/third-party/preview', { method: 'POST', body: fd })
+    return readJSON<ThirdPartyPreview>(resp)
+  },
+
+  importThirdParty: async (file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    const resp = await fetch('/api/import/third-party', { method: 'POST', body: fd })
+    return readJSON<{ result: ImportResult; preview: ThirdPartyPreview }>(resp)
   },
 
   stats: (days = 30) => request<Stats>('GET', `/api/stats?days=${days}`),
@@ -350,6 +414,34 @@ export const api = {
   /** 服务端推送（Apprise）：向推送渠道发一条测试消息。urls 省略时用已保存的配置。 */
   pushTest: (urls?: string[]) =>
     request<{ results: PushTestResult[] }>('POST', '/api/push/test', urls ? { urls } : {}),
+
+  /** 推送自检：开关、渠道条数与最近几条投递结果，用于排查「为什么没收到」。 */
+  pushStatus: () => request<PushStatus>('GET', '/api/push/status'),
+
+  // ---- Web Push（iOS 16.4+，需先添加到主屏幕）----
+
+  /** 保存订阅。必须由用户手势触发后调用：iOS 不允许在启动流程里申请权限。 */
+  subscribePush: (sub: WebPushSubscription) => request<{ ok: boolean }>('POST', '/api/push/subscribe', sub),
+
+  /** 取消订阅（用户关掉本站通知权限时调用）。 */
+  unsubscribePush: (endpoint: string) =>
+    request<{ ok: boolean }>('POST', '/api/push/unsubscribe', { endpoint }),
+
+  /** Web Push 通道状态：配没配、有几台设备、上次送到没有。 */
+  webPushStatus: () => request<WebPushStatus>('GET', '/api/push/webpush/status'),
+
+  /** 生成 VAPID 密钥对。只回给页面，不落库——由设置面板决定写不写。 */
+  webPushKeys: () => request<{ privateKey: string; publicKey: string }>('POST', '/api/push/webpush/keys'),
+
+  /** 立刻往全部订阅发一条测试通知，用来确认「到底能不能收到」。 */
+  webPushTest: () => request<{ ok: number; failed: number; error?: string }>('POST', '/api/push/webpush/test'),
+
+  /** 今天有几件事逾期。按钮上要说明「这会动多少条」，不能让人盲按。 */
+  overdueCount: () => request<{ overdue: number }>('GET', '/api/overdue/count'),
+
+  /** 把逾期未完成的任务改到今天（to 省略即今天）。破坏性操作，由用户显式触发。 */
+  rollOverdue: (to?: string) =>
+    request<{ rolled: number }>('POST', '/api/overdue/roll-over', to ? { to } : {}),
 
   repeatMeta: () => request<RepeatMeta>('GET', '/api/meta/repeat'),
   calendarMeta: (from: string, to: string) =>

@@ -55,6 +55,45 @@ func (s *Store) PrunePushLog(cutoff time.Time) error {
 	return err
 }
 
+// PushEntry 是台账里的一条记录，供「推送自检」查看最近发生了什么。
+type PushEntry struct {
+	Key     string `json:"key"`
+	Kind    string `json:"kind"` // reminder（提醒）/ daily（每日概览）
+	OK      bool   `json:"ok"`
+	Error   string `json:"error"`
+	SentAt  string `json:"sentAt"`
+	Attempts int   `json:"attempts"`
+}
+
+// RecentPushes 返回最近若干条推送记录，新的在前。
+// 排障用：推送「没收到」时，先要看的是服务端到底有没有发出去、发出去是什么结果。
+func (s *Store) RecentPushes(limit int) ([]PushEntry, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	rows, err := s.db.Query(`SELECT key, attempts, ok, error, sent_at FROM push_log ORDER BY sent_at DESC, rowid DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []PushEntry{}
+	for rows.Next() {
+		var e PushEntry
+		var ok, attempts int
+		if err := rows.Scan(&e.Key, &attempts, &ok, &e.Error, &e.SentAt); err != nil {
+			return nil, err
+		}
+		e.OK = ok == 1
+		e.Attempts = attempts
+		e.Kind = "reminder"
+		if len(e.Key) > 1 && e.Key[0] == 'D' {
+			e.Kind = "daily"
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // DailySummary 汇总「今天要做多少、已经逾期多少」，供每日概览推送使用。
 // 口径与提醒/欠账一致：待办与进行中都算；归档（任务级/清单级）按收起语义不计。
 type DailySummary struct {
