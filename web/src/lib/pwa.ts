@@ -149,7 +149,13 @@ export function resetInstallPrompt(): void {
 export function shouldShowInstallPrompt(): boolean {
   if (isStandalone()) return false
   if (installPromptDismissed()) return false
-  return platform() !== 'other' || canInstallDirectly()
+  const p = platform()
+  // 桌面浏览器不显示：那里地址栏就有安装图标，再叠一张常驻卡片纯属添乱
+  // （而且它会一直压在右下角，挡住底下真正要点的东西）。
+  if (p === 'desktop-chrome') return false
+  // 其余情况：要么是移动端（值得一步步教），要么拿到了 beforeinstallprompt
+  // （说明这个浏览器支持一键装，给个按钮比教步骤有用）。
+  return p !== 'other' || canInstallDirectly()
 }
 
 /** 当前平台，引导文案据此分支。 */

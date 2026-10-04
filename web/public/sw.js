@@ -241,3 +241,66 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(cacheFirst(req, SHELL_CACHE))
   }
 })
+
+// ---------------------------------------------------------------------------
+// Web Push：页面完全关掉也能把提醒送到（iOS 16.4+，且必须已添加到主屏幕）。
+//
+// 这里只做「展示」：推送服务已经把消息端到端加密好递过来了，SW 只负责解密后的
+// 弹出通知与点击跳转。真正的投递由服务端 internal/push 完成（见 webpush.go）。
+//
+// 载荷字段与 Go 侧的 WebPushPayload 一一对应，改一处必须改另一处。
+// ---------------------------------------------------------------------------
+
+self.addEventListener('push', (event) => {
+  let payload = {}
+  try {
+    payload = event.data ? event.data.json() : {}
+  } catch {
+    // 载荷不是 JSON：仍然把通知显示出来，只是没有标题与深链。
+    // 静默失败的话，用户连「到点了」这个信息都收不到。
+    payload = { body: event.data ? event.data.text() : '' }
+  }
+  const title = payload.title || '慎始'
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: payload.body || '',
+      // tag 用服务端给的台账键：同一条提醒在设备上互相覆盖，不堆成一串。
+      tag: payload.tag || undefined,
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      // 持续提醒：iOS 会按「提醒」而非「横幅」处理，用户能留到点开为止。
+      requireInteraction: false,
+      data: { url: payload.url || '/', ackId: payload.ackId || 0 },
+    }),
+  )
+})
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  const target = (event.notification.data && event.notification.data.url) || '/'
+  event.waitUntil(openNotificationTarget(target))
+})
+
+/**
+ * 点通知后聚焦已打开的窗口，没有就新开一个。
+ *
+ * 必须用 openWindow 而不是 clients.openWindow：iOS 上从主屏幕图标启动的窗口
+ * 常常不在 clients.matchAll 的结果里（尚未被页面接管），直接开新窗口会多出一个
+ * 空白应用，用户看到的是「点一下变成两个图标在眼前」。
+ */
+async function openNotificationTarget(target) {
+  const url = new URL(target, self.location.origin).href
+  const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+  for (const c of list) {
+    // 同源且已经有导航能力 → 聚焦它并把地址交给页面处理（深链需要）。
+    if ('focus' in c && new URL(c.url).origin === self.location.origin) {
+      c.postMessage({ type: 'NOTIFICATION_CLICK', url })
+      return c.focus()
+    }
+  }
+  return self.clients.openWindow(url)
+}
+
+self.addEventListener('notificationclose', () => {
+  // 刻意不做事：通知被划掉不等于任务完成，把「关掉」当成任何一种状态都会错。
+})

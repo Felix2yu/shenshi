@@ -98,8 +98,15 @@ async function readAll<T>(store: string): Promise<T[]> {
 
 // ---------- 队列模型 ----------
 
-/** 离线时允许排队并重放的动作。 */
-export type OutboxKind = 'create' | 'patch' | 'done' | 'delete' | 'move'
+/**
+ * 离线时允许排队并重放的动作。
+ *
+ * subtask 与 checkin 是后加的：这两类是移动端最高频的操作（勾子步骤、打卡），
+ * 而它们恰恰最常发生在没信号的地方——地铁口、山里、电梯里。
+ * 之前它们直连服务端，离线即失败，用户只好先记在脑子里，事后凭记忆补一遍；
+ * 而「事后凭记忆补」基本等于不补。
+ */
+export type OutboxKind = 'create' | 'patch' | 'done' | 'delete' | 'move' | 'subtask' | 'checkin'
 
 export interface OutboxItem {
   /** 自增主键，同时充当重放顺序。 */
@@ -112,6 +119,10 @@ export interface OutboxItem {
   move?: { listId?: number; dueDate?: string | null; dueTime?: string | null }
   /** done 的目标状态；其他 kind 忽略。 */
   completed?: boolean
+  /** subtask：子任务 id 与它的局部更新。 */
+  subtask?: { id: number; patch: SubtaskPatch }
+  /** checkin：习惯 id、打卡日期（YYYY-MM-DD）与是否取消。 */
+  checkin?: { habitId: number; day: string; undo: boolean }
   /** create 专用：localTasks 里那条临时任务的 id。 */
   tempId?: number
   /** create 专用：新建幂等键。同一条新建的每次重放都用它，服务端据此判重。 */
@@ -120,6 +131,15 @@ export interface OutboxItem {
   /** 重试次数。超过 MAX_TRIES 视为这条再也送不出去，直接丢弃。 */
   tries: number
   lastError?: string
+}
+
+/** 子任务的局部更新载荷（与 api.updateSubtask 一致）。 */
+export type SubtaskPatch = {
+  title?: string
+  done?: boolean
+  sortOrder?: number
+  dueDate?: string | null
+  reminders?: number[]
 }
 
 /** 离线新建的任务用负数 id：与服务端的正数 id 天然不撞。 */
@@ -412,6 +432,24 @@ async function send(item: OutboxItem, realId: number): Promise<
       url = `/api/tasks/${realId}/move`
       options = json(item.move ?? {})
       break
+    case 'subtask':
+      url = `/api/subtasks/${item.subtask?.id}`
+      options = init('PATCH', item.subtask?.patch ?? {})
+      break
+    case 'checkin': {
+      // 取消打卡走 DELETE，正向打卡走 POST：与在线时的语义完全一致，
+      // 重放不改变服务端的行为，只是把时机推后。
+      const c = item.checkin
+      if (!c) return { ok: false, retry: false, error: '打卡队列项缺少内容' }
+      if (c.undo) {
+        url = `/api/habits/${c.habitId}/check?day=${encodeURIComponent(c.day)}`
+        options = init('DELETE')
+      } else {
+        url = `/api/habits/${c.habitId}/check`
+        options = json({ day: c.day })
+      }
+      break
+    }
   }
 
   try {

@@ -27,6 +27,11 @@ type Store struct {
 
 	hookMu sync.RWMutex
 	hooks  []EventHook
+
+	// srcCur 是当前生效的活动来源，由 SetActivitySource 在入口处设置。
+	// 自带锁：HTTP 请求、日历同步、后台任务会并发写同一列。
+	srcMu  sync.RWMutex
+	srcCur string
 }
 
 // EventHook 是数据变更的观察者。kind 形如 task.created，payload 依 kind 而定
@@ -295,6 +300,18 @@ CREATE TABLE IF NOT EXISTS push_log (
   sent_at  TEXT    NOT NULL
 );
 
+-- Web Push 订阅（iOS 16.4+ 需先添加到主屏幕）。
+-- 一个设备一条：endpoint 由浏览器生成且唯一，重复订阅按 endpoint 覆盖。
+-- 订阅失效（410 Gone）时删掉整行——留着只会让每次推送都白等一次超时。
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  endpoint  TEXT PRIMARY KEY,
+  p256dh    TEXT NOT NULL,
+  auth      TEXT NOT NULL,
+  ua        TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  last_ok_at TEXT NOT NULL DEFAULT ''
+);
+
 -- 附件：元数据在库里，内容落在数据目录下的 attachments/。
 -- 只存相对文件名，换机器时整个数据目录拷走即可。
 CREATE TABLE IF NOT EXISTS attachments (
@@ -381,6 +398,7 @@ CREATE TABLE IF NOT EXISTS activities (
   task_id    INTEGER,
   title      TEXT    NOT NULL DEFAULT '',
   detail     TEXT    NOT NULL DEFAULT '',
+  source     TEXT    NOT NULL DEFAULT 'web',
   created_at TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_activities_id ON activities(id DESC);
@@ -422,6 +440,9 @@ var addColumns = []struct{ table, column, ddl string }{
 	// 单调版本号：updated_at 只到秒，同一秒内的两次改动作不出差别，
 	// 拿它当并发控制的版本号等于没控。version 每次写入自增，不受时钟影响。
 	{"tasks", "version", `ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 1`},
+	// 活动来源：这条改动是谁做的（网页 / 日历同步 / 导入 / 接口）。
+	// 老记录留空，读取时按 web 兜底——升级不该让用户看到一片空白。
+	{"activities", "source", `ALTER TABLE activities ADD COLUMN source TEXT NOT NULL DEFAULT 'web'`},
 }
 
 func (s *Store) migrate() error {

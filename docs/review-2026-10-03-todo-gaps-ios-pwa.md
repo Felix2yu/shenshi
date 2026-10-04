@@ -311,3 +311,132 @@ iOS 专项的适配类改动（V1 / V2 / V3 / I3）无法在桌面 Chromium 上�
 - **N3 Web Push**：iOS 16.4+ 可用但需自实现 VAPID + aesgcm（当前靠 Apprise 单通道）。
 - **S3 查询语法**（`#标签 @清单 p:高 due:today`）：搜索已能多词与跨字段命中，语法糖未做。
 - **O1 子任务无限层级**、**O5 保存筛选带作用域**、**R5 逾期自动顺延**、**F1 离线扩展到打卡/子任务**、**Y6 第三方格式导入**、**C3 活动来源标注**。
+
+---
+
+## 七、实施记录（2026-10-04，第二轮）
+
+上一轮的 8 项「未做」全部补齐。以下逐项说明**做了什么**与**为什么这么做**——
+有几处与最初的设想不同，记在这里免得下次翻旧账。
+
+### S3 查询语法
+
+`server/internal/store/query.go` 新增解析器，识别 `#标签` `@清单` `-#标签` `-@清单` `p:高`（也认 `p3`/`高`/`high`）、`due:today|tomorrow|yesterday|overdue|week|next7|nodate` 与 `due:2026-10-01..2026-10-10`。
+
+一条硬原则：**识别不出的算子一律退回普通文本**。搜「C#」不该因为出现半个符号就丢掉半截词，搜「due:下周三」也不该静默变成空结果。
+
+引号是「这一段是字面量」的信号：`"#重要 项目"` 整体当文本搜。实现上必须**单独记引号边界**（`splitQueryTokens`）——复用切词的 `splitSearchTerms` 会丢掉这个信息，收尾引号在 flush 前就把状态翻了回去，整块被误判成裸文本。
+
+前端 `web/src/lib/query.ts` 是同一套规则的镜像，只用于在搜索框里把算子显示成可点的标签。**两侧规则必须同步**：不一致时用户看到的提示会和实际结果对不上，比没有提示更糟。
+
+标签与清单按**名字**匹配而非 id：查询语法是给人手打的，让人先去别处查 id 再回来拼 `#12` 毫无意义。
+
+### O1 子任务无限层级
+
+后端本来就能递归装配（`attachSubtasks` 的 `attach` 是递归的），真正卡着的是三处：
+
+1. `AddSubtask` 显式拒绝三级（`父级已是子子任务`）——删掉；
+2. `DeleteSubtask` 只删自己 —— 换成 `WITH RECURSIVE` 级联删整棵子树（放开层级后不级联会留下一串孤儿，前端渲染不到、统计算不到，用户眼里就是「凭空少了几条」）；
+3. 前端 `SubtaskItem` 只渲染一层 —— 改为递归，缩进上限 `SUBTASK_MAX_DEPTH = 8`（后端不限深度，界面要限：手机上十层链会把标题挤没）。
+
+顺带给 `attach` 加了**环检测**：递归结构下父子成环会让栈爆掉，数据来自 DB 理论上不该出现，但一次错误导入或手工改库就能造出来。遇到环按「当根」处理——宁可少显示几个子项，也不要整个列表接口 500。
+
+### O5 保存筛选带作用域
+
+`saved_filters.query` 的 JSON 从「裸 TaskFilter」扩成 `{filter, scope}`，`scope` 含 `selection` / `view` / `sortBy`。纯前端改动，后端不动（`query` 本就是前端自解释的 JSON 原文）。
+
+`parseSavedQuery` 同时认新旧两种形状，**老记录没有 scope 时只改筛选、不动当前的清单与视图**——凭空跳走比不跳更糟，用户会丢掉正在看的东西。
+
+侧栏副标题改为「作用域 · 筛选条件」，让用户一眼看出这个视图属于哪里。
+
+### R5 逾期自动顺延
+
+**做成显式接口而不是后台定时自动跑**。逾期清单越积越厚、厚了就没人看，但「昨天没做完」的真实意图可能是改期、删除，也可能就是今天继续做——悄悄替他改期等于替他撒谎。
+
+- `POST /api/overdue/roll-over`（可选 `{to}`，默认今天）
+- `GET /api/overdue/count`（按钮上要写明「这会动多少条」，不能让人盲按）
+- 入口在晨省面板的「逾期未了」区，**二次确认**后才动手
+- 逐条 UPDATE + 逐条 emit：日历与其他设备靠事件对账，静默批量改的话手机上会一直停在旧日期
+- 计数与顺延**口径必须一致**（都已完成、已归档、无到期日一律不动），否则按钮上写的数字会骗人——Go 测试里有一条断言专门盯这个
+
+### C3 活动来源标注
+
+`activities` 增 `source` 列（web / caldav / import / api）。**单用户场景下「谁改的」看着多余，但排查「我明明没动它，怎么变了」时它就是答案。**
+
+来源在 `api.go` 的 `h()` 包装器里统一设定（而非逐个 handler 标注）：写入口有二十几处，逐个标注迟早会漏，而漏掉的那处会以「网页」记下，把排查引向错误方向。`SetActivitySource` 返回恢复函数，`defer` 调用保证嵌套与 panic 都不污染后续请求。
+
+前端**只在来源不是 web 时显示标签**——网页操作占绝大多数，每条都标一遍只会把真正显眼的（同步、导入）淹掉。
+
+### F1 离线扩展到子任务与打卡
+
+outbox 增 `subtask` / `checkin` 两种 kind。这两类是移动端最高频的操作（勾子步骤、打卡），也最常发生在没信号的地方；之前直连服务端，离线即失败，用户只好先记在脑子里——而「事后凭记忆补」基本等于不补。
+
+- 子任务：本地递归改树 + **重算完成度**（只改 done 不重算的话「3/7」会停住，用户以为勾没生效又点一次，结果把没做完的标成做完了）
+- 打卡：本地改 `logs` 与 `stats`（热力格与达标率都从 stats 读，只改 logs 格子亮了数字不动）
+
+`applySubtaskPatch` 刻意是「先改树、再整体重算」而不是边改边累加：递归里同时做两件事，计数与树迟早对不上，且那种偏差只在特定嵌套深度下显形，极难排查。
+
+### Y6 第三方格式导入
+
+`server/internal/store/import3p.go`。支持 **Todoist CSV** 与 **iCalendar .ics**（VTODO 与 VEVENT 都收——很多人把日历上的会议也当待办管理，丢掉会让导入结果空一大半）。
+
+三个设计要点：
+
+1. **靠内容嗅探格式，不看扩展名**——从邮件存下来的文件常常没有正确后缀。CSV 列名各版本有出入（`content`/`title`、`due date`/`due`），全部按小写取值并允许多个别名；写死列序的解析器会在用户换一版导出设置后静默产出空白任务。
+2. **只走 merge，绝不 replace**——第三方文件不是慎始的备份，结构和语义都不同，拿它去「替换」等于替用户做删除决定。
+3. **预览先行**（`POST /api/import/third-party/preview`）：循环规则与提醒都不迁移，不提前说清，用户事后才发现就会以为慎始弄丢了数据。
+
+解析结果拼成与自家备份同构的 `ExportBundle`，**复用现有 `Import`**——只写一套入库逻辑，将来改字段不会漏掉导入这条路。
+
+一个容易漏的坑：第三方文件里**没有归属清单的任务必须有去处**。`importMerge` 里 `listID` 查不到就整条跳过，那等于「导入成功但少了一半任务」，是最难被察觉的失败。统一挂到 bundle 的收件箱占位条目上。
+
+导入本身逐条不记活动（一次三百条会把历史冲干净），只留一条汇总（`ActImported`），否则用户事后想不起来上周那批东西是哪来的。
+
+### N3 Web Push
+
+依赖 `github.com/daaku/webpush v0.5.0`（纯标准库 crypto + `golang.org/x/crypto/jwt`，项目已有）。
+
+**与 Apprise 并存而非取代**：Apprise 覆盖上百种服务且已在用，Web Push 的独有价值只有一个——页面完全关掉也能到、且不依赖任何第三方。两者成本极不对称（订阅表就一张）。
+
+投递时**共用同一套台账键**（`R|ackId|fireAt` / `D|日期`），任一条送达就不再投另一条，否则用户会在手机和邮件上各收一遍。顺序上 Apprise 在先：它已验证过，新通道不该抢在前面影响既有行为。
+
+订阅作废（HTTP 410/404，库会给出 `Permanent` 标志）当场删除并记日志——留着只会让每一轮推送都白等一次超时。这是唯一**不该重试**的失败。
+
+iOS 的两条硬前提写进了设置面板：必须 16.4+，且**必须先添加到主屏幕**（Safari 标签页里 `subscribe()` 直接失败且不报错）。多数「点了没反应」都是后者，所以 `webPushBlockedReason()` 会在按钮上方直接给出这句提示。
+
+`applicationServerKey` 必须自己把 base64url 解成字节：传字符串 Chrome 报类型错误、Safari 则完全没反应。取订阅的 keys 用 `sub.toJSON().keys` 而非 `sub.keys`——后者已从 lib.dom 移除。
+
+设置面板 `WebPushField`：生成密钥 → 开启本设备推送 → 发送测试通知 → 状态自检（配没配 / 几台设备 / 上次送到没有）。**「配完了但从没验证过能不能收到」是最难自证的状态**，所以测试按钮是必须的。
+
+### 新增接口与设置（本轮）
+
+- `POST /api/overdue/roll-over`、`GET /api/overdue/count`
+- `POST /api/import/third-party`、`POST /api/import/third-party/preview`
+- `POST /api/push/subscribe`、`POST /api/push/unsubscribe`
+- `POST /api/push/webpush/keys`、`POST /api/push/webpush/test`、`GET /api/push/webpush/status`
+- 新表 `push_subscriptions`
+- 设置键：`push.vapidPrivate` / `push.vapidPublic` / `push.vapidSubject`
+- 前端类型：`WebPushStatus` / `WebPushSubscription`
+
+### 仍未做
+
+- **S5 搜索结果高亮与相关度排序**、**S6 拼音搜索**、**S4 搜索历史**
+- **O2 任务多归属**、**O3 清单内分区**、**O4 看板自定义分组**、**O6 清单模板**
+- **R3 子任务独立提醒时间**、**R4 自定义贪睡档位**
+- **Y2 增量同步**（前端无 cache 层，收益有限）
+- **C2 清单只读分享链接**
+- **F2 附件离线补传**、**F4 iOS 站点数据清理的用户提示**
+- **X5 静态 .ics 订阅输出**（已有 CalDAV，收益重叠）
+
+### 验证
+
+```
+cd server && go vet ./... && go test ./internal/...     # 全绿
+cd web && pnpm typecheck                                  # 通过
+./scripts/build.sh                                         # 主包 516KB / gzip 155KB
+python3 scripts/smoke.py                                  # 431/431
+node scripts/ui-smoke.mjs                                 # 见当日日志
+node scripts/pwa-smoke.mjs
+```
+
+新增 Go 测试：查询语法解析与端到端（`query_test.go`）、多层子任务与级联删除（`tasks_test.go`）、逾期顺延口径一致性（`rollover_test.go`）、活动来源与嵌套恢复（`activity_source_test.go`）、第三方格式解析与端到端导入（`import3p_test.go`）、Web Push 订阅与状态（`webpush_test.go` ×2）。

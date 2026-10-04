@@ -1,5 +1,6 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useMemo,
   useRef,
@@ -10,26 +11,30 @@ import {
   type ReactNode,
 } from 'react'
 
-import { EXPORT_URLS, api, type ImportMode } from '../api/client'
+import { EXPORT_URLS, api, type ImportMode, type ThirdPartyPreview } from '../api/client'
 import { humanDay, relativeTime, todayStr } from '../lib/date'
-import { describeFilter, filterFromQuery, isFilterActive } from '../lib/filter'
+import { describeFilter, isFilterActive, parseSavedQuery } from '../lib/filter'
 import { diagnoseNotifications, pushNotification, useNotifyDiagnosis, type NotifyState } from '../lib/notify'
 import { useIMEGuard } from '../lib/ime'
 import { ACCENTS, colorName, PALETTE } from '../lib/palette'
 import { isStandalone, resetInstallPrompt, subscribeInstallPrompt } from '../lib/pwa'
+import { currentWebPushSubscription, disableWebPush, enableWebPush, webPushBlockedReason } from '../lib/webpush'
 import { useStore } from '../store/AppStore'
 import {
   ACTIVITY_LABEL,
+  ACTIVITY_SOURCE_LABEL,
   FONT_SCALES,
   fontScaleOf,
   type Folder,
   type List,
   type PushStatus,
   type PushTestResult,
+  type SavedFilter,
   type SmartKey,
   type Tag,
   type Task,
   type ThemeMode,
+  type WebPushStatus,
 } from '../types'
 import { SORT_MIME } from './TaskViews'
 import {
@@ -581,6 +586,21 @@ export function Sidebar({ onCloseRequest }: { onCloseRequest?: () => void }) {
     return '搜索结果'
   }, [view, selection, lists, folders, tags])
 
+  /**
+   * 保存筛选的作用域标签：这个视图「在哪儿看」。
+   * 没有 scope 的旧记录返回空串——那时候只存了筛选条件，没有归属可显示。
+   */
+  const scopeLabelOf = (f: SavedFilter): string => {
+    const scope = parseSavedQuery(f.query).scope
+    if (!scope) return ''
+    const s = scope.selection
+    if (s.kind === 'smart') return SMARTS.find((x) => x.key === s.key)?.label ?? ''
+    if (s.kind === 'list') return lists.find((l) => l.id === s.id)?.name ?? ''
+    if (s.kind === 'folder') return folders.find((x) => x.id === s.id)?.name ?? ''
+    if (s.kind === 'tag') return `#${tags.find((t) => t.id === s.id)?.name ?? ''}`
+    return '搜索结果'
+  }
+
   const confirmTagDelete = async (t: Tag) => {
     const ok = await confirm({
       title: `删除标签「${t.name}」`,
@@ -743,7 +763,9 @@ export function Sidebar({ onCloseRequest }: { onCloseRequest?: () => void }) {
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[0.8125rem] text-ink-2">{f.name}</span>
                         <span className="block truncate text-[0.65625rem] text-ink-3">
-                          {describeFilter(filterFromQuery(f.query), tags) || '无条件'}
+                          {[scopeLabelOf(f), describeFilter(parseSavedQuery(f.query).filter, tags) || '无条件']
+                            .filter(Boolean)
+                            .join(' · ')}
                         </span>
                       </span>
                     </button>
@@ -1675,6 +1697,141 @@ function PushNotifyField() {
   )
 }
 
+/**
+ * Web Push 区块。
+ *
+ * 与上面的 Apprise 是两条独立的通道：Apprise 要另装一个 App、配一个地址；
+ * Web Push 只要这个应用装在主屏幕上，不依赖任何第三方。两者并存，由服务端
+ * 按台账去重（任一条送达就不再投另一条），所以用户不会收到两遍。
+ */
+function WebPushField() {
+  const { saveSettings, toast } = useStore()
+  const [status, setStatus] = useState<WebPushStatus | null>(null)
+  const [subbed, setSubbed] = useState<boolean | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      const s = await api.webPushStatus()
+      setStatus(s)
+      setSubbed((await currentWebPushSubscription()) !== null)
+    } catch {
+      // 读不到就当作「未知」：设置页不该因为一次读取失败就整块报错。
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const generate = async () => {
+    setBusy(true)
+    try {
+      const keys = await api.webPushKeys()
+      await saveSettings({ 'push.vapidPrivate': keys.privateKey, 'push.vapidPublic': keys.publicKey })
+      toast('已生成推送密钥')
+      await load()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '生成密钥失败', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const toggle = async () => {
+    if (!status?.publicKey) return
+    setBusy(true)
+    try {
+      const res = subbed ? await disableWebPush() : await enableWebPush(status.publicKey)
+      toast(res.message, res.ok ? 'ok' : 'error')
+      await load()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const sendTest = async () => {
+    setBusy(true)
+    try {
+      const res = await api.webPushTest()
+      toast(
+        res.ok > 0 ? `已发到 ${res.ok} 台设备${res.failed ? `，${res.failed} 台失败` : ''}` : `投递失败：${res.error ?? '未知原因'}`,
+        res.ok > 0 ? 'ok' : 'error',
+      )
+      await load()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '发送失败', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const blocked = webPushBlockedReason()
+  const ready = !!status?.publicKey
+
+  return (
+    <Field
+      label="主屏幕推送（Web Push）"
+      hint="不需要另装 App：应用装在主屏幕上，到点提醒直接推到这里。与上面的渠道同时可用，不会收到两遍。"
+    >
+      <div className="space-y-2">
+        {/* iOS 的前提要显眼地说明：多数「点了没反应」都是因为没添加到主屏幕。 */}
+        {blocked ? (
+          <p className="rounded-lg border border-line bg-surface-2/50 px-2 py-1.5 text-[0.6875rem] leading-relaxed text-ink-2">
+            {blocked}
+          </p>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" className="shrink-0" disabled={busy} onClick={() => void generate()}>
+            {status?.configured ? '重新生成密钥' : '生成推送密钥'}
+          </Button>
+          <Button
+            variant={subbed ? 'outline' : 'primary'}
+            size="sm"
+            className="shrink-0"
+            disabled={busy || !ready || !!blocked}
+            onClick={() => void toggle()}
+          >
+            {subbed ? '关闭本设备推送' : '开启本设备推送'}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            disabled={busy || !ready || (status?.subs ?? 0) === 0}
+            onClick={() => void sendTest()}
+          >
+            发送测试通知
+          </Button>
+        </div>
+
+        {status ? (
+          <div className="rounded-lg border border-line bg-surface-2/50 p-2 text-[0.6875rem] leading-relaxed">
+            <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-ink-2">
+              <span className={status.configured ? 'text-jade' : 'text-p-high'}>
+                密钥：{status.configured ? '已配置' : '未配置'}
+              </span>
+              <span>已订阅 {status.subs} 台设备</span>
+              <span className={subbed ? 'text-jade' : 'text-ink-3'}>
+                本设备：{subbed === null ? '检测中' : subbed ? '已订阅' : '未订阅'}
+              </span>
+            </div>
+            {status.lastOkAt ? (
+              <p className="mt-1 text-ink-3">最近一次成功送达：{status.lastOkAt.slice(0, 16).replace('T', ' ')}</p>
+            ) : status.subs > 0 ? (
+              <p className="mt-1 text-ink-3">还没成功送达过。可先点「发送测试通知」确认通道是否通畅。</p>
+            ) : null}
+            {status.configured && status.subs === 0 ? (
+              <p className="mt-1 text-ink-3">配好密钥后还需要在这台设备上点一次「开启本设备推送」。</p>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </Field>
+  )
+}
+
 /* ---------------- 外观 ---------------- */
 
 const THEME_CHOICES: { value: ThemeMode; label: string }[] = [
@@ -1751,7 +1908,18 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
 
   const handleFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
+    // 先清空 value：同一个文件再选一次要能重新触发 change，否则用户导完一个
+    // 想换另一个会发现「没反应」——这是 file input 最常见的一个坑。
+    e.target.value = ''
     if (!file) return
+
+    // 第三方格式（Todoist CSV / .ics）走另一条路：只增不改，且先预览。
+    // 它们不是慎始的备份，结构与语义都不同，套用备份那套「追加/覆盖」是错的。
+    if (/\.(csv|ics)$/i.test(file.name)) {
+      await handleThirdPartyFile(file)
+      return
+    }
+
     const mode = pendingMode.current
     const isZip = /\.zip$/i.test(file.name)
 
@@ -1789,6 +1957,44 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
       )
       onClose()
       // 备份可能替换了清单与设置，整页重载最稳妥。
+      window.setTimeout(() => window.location.reload(), 500)
+    } catch (err) {
+      toast(err instanceof Error ? err.message : '导入失败', 'error')
+    }
+  }
+
+  /**
+   * 第三方格式导入：先预览，再确认，最后才落库。
+   *
+   * 预览不是多余的客套：这是唯一一个会凭空多出成百上千条数据的入口，
+   * 而循环规则与提醒都不会跟过来。用户不先看清就按确定，事后只会觉得「慎始弄丢了我的数据」。
+   */
+  const handleThirdPartyFile = async (file: File) => {
+    let prev: ThirdPartyPreview
+    try {
+      prev = await api.previewThirdParty(file)
+    } catch (err) {
+      toast(err instanceof Error ? err.message : '读取文件失败', 'error')
+      return
+    }
+    const lines = [
+      `将导入 ${prev.tasks} 件任务${prev.completed ? `（其中 ${prev.completed} 件已完成）` : ''}。`,
+      prev.lists.length ? `新建清单：${prev.lists.join('、')}。` : '',
+      prev.tags.length ? `新建标签：${prev.tags.join('、')}。` : '',
+      ...(prev.notes ?? []),
+      '只增不改：现有数据不会被覆盖。',
+    ].filter(Boolean)
+    const ok = await confirm({
+      title: '导入第三方数据',
+      message: lines.join('\n'),
+      confirmText: '开始导入',
+    })
+    if (!ok) return
+    try {
+      const res = await api.importThirdParty(file)
+      toast(`导入完成：${res.result.tasks} 件任务、${res.result.lists} 个清单`)
+      onClose()
+      // 新建的清单与标签要出现在侧栏，整页重载最稳妥。
       window.setTimeout(() => window.location.reload(), 500)
     } catch (err) {
       toast(err instanceof Error ? err.message : '导入失败', 'error')
@@ -1927,6 +2133,7 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
 
         {/* 服务端推送：手机等外部渠道的兜底通知，页面没开也能收到。 */}
         <PushNotifyField />
+        <WebPushField />
 
         {/* 底部四块两栏排布：数据｜集成 / 快捷键｜重置提醒，压缩整体高度。 */}
         <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
@@ -1962,13 +2169,14 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
             <p className="text-[0.6875rem] leading-relaxed text-ink-3">
               ZIP 是完整备份：JSON 加上任务附件，一份就能还原全部。CSV 只含任务表，便于在表格软件里查阅。
               「追加」保留现有数据，「覆盖」会先清空再重建。
+              选 .csv / .ics 文件则按第三方格式导入（Todoist 等），只增不改，导入前会先给预览。
             </p>
           </div>
           <input
             ref={fileRef}
             type="file"
             data-import-input
-            accept=".zip,.json,application/zip,application/json"
+            accept=".zip,.json,.csv,.ics,application/zip,application/json,text/csv,text/calendar"
             className="hidden"
             onChange={(e) => void handleFile(e)}
           />
@@ -2153,8 +2361,17 @@ function HistoryDialog({ open, onClose }: { open: boolean; onClose: () => void }
                   <span className="block truncate text-ink">{a.title}</span>
                   {a.detail ? <span className="block truncate text-[0.6875rem] text-ink-3">{a.detail}</span> : null}
                 </span>
-                <span className="shrink-0 whitespace-nowrap text-[0.65625rem] text-ink-3 tabular-nums">
-                  {relativeTime(a.createdAt)}
+                <span className="flex shrink-0 items-center gap-1.5">
+                  {/* 来源只在「不是自己点的」时候显示。网页操作占绝大多数，
+                      每条都标一遍只会把真正显眼的（同步、导入）淹掉。 */}
+                  {a.source && a.source !== 'web' ? (
+                    <span className="whitespace-nowrap rounded bg-surface-2 px-1.5 py-px text-[0.625rem] text-ink-3">
+                      {ACTIVITY_SOURCE_LABEL[a.source] ?? a.source}
+                    </span>
+                  ) : null}
+                  <span className="whitespace-nowrap text-[0.65625rem] text-ink-3 tabular-nums">
+                    {relativeTime(a.createdAt)}
+                  </span>
                 </span>
               </li>
             ))}

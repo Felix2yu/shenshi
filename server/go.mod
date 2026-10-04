@@ -9,7 +9,9 @@ require (
 )
 
 require (
+	github.com/daaku/webpush v0.5.0 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/gomarkdown/markdown v0.0.0-20260417124207-7d523f7318df // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

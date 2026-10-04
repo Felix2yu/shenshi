@@ -9,6 +9,7 @@
 package push
 
 import (
+	"errors"
 	"log"
 	"strconv"
 	"strings"
@@ -51,15 +52,18 @@ func defaultSend(urls []string, title, body string) error {
 	)
 }
 
-// Pusher 周期巡检提醒与每日概览，经 Apprise 推送。
+// Pusher 周期巡检提醒与每日概览，经 Apprise 与 Web Push 推送。
 // 与 AutoBackup 同一套进程内定时器的思路：整个应用就一个二进制，
 // 再让用户去配系统定时器就把开箱即用弄丢了。
 type Pusher struct {
 	st   *store.Store
 	logf func(format string, v ...any)
 	send Sender
-	stop chan struct{}
-	done chan struct{}
+	// webSend 为 nil 表示 Web Push 通道不可用（没配密钥或没订阅）。
+	// 刻意做成字段而不是每次现构造：密钥解析要验 ECDSA，每轮重做一次纯属浪费。
+	webSend WebSender
+	stop    chan struct{}
+	done    chan struct{}
 }
 
 // New 构造推送器。logf 为空时使用标准日志。
@@ -161,24 +165,37 @@ func (p *Pusher) tick(now time.Time) {
 		p.logf("push: 读取设置失败: %v", err)
 		return
 	}
-	cfg := LoadConfig(kv)
-	if !cfg.Enabled || len(cfg.URLs) == 0 {
-		return
+	// 两条通道各投一遍，共用同一套台账去重：任一条送达就不再投另一条，
+	// 否则用户会在手机和邮件上各收一遍同一件事。
+	// 顺序上先 Apprise 后 Web Push：Apprise 是已经验证过的主通道，
+	// 新加的 Web Push 排后面，不该抢在前面影响既有行为。
+	appriseOK := false
+	if kv[SetEnabled] == "1" {
+		cfg := LoadConfig(kv)
+		if len(cfg.URLs) > 0 {
+			appriseOK = p.pushReminders(cfg, now)
+			if cfg.DailyEnabled {
+				p.pushDaily(cfg, now)
+			}
+		}
 	}
-	p.pushReminders(cfg, now)
-	if cfg.DailyEnabled {
-		p.pushDaily(cfg, now)
+	if !appriseOK {
+		p.pushRemindersWeb(kv, now)
+		p.pushDailyWeb(kv, now)
 	}
 }
 
 // pushReminders 把补推窗口内该推的提醒逐条送出。
 // 逐条而非合并：每条有独立台账键，某一条失败不影响其余，重试也只重试失败的。
-func (p *Pusher) pushReminders(cfg Config, now time.Time) {
+// 返回值表示「这次是否真的送出去了」——已成功过的提醒不算，
+// 否则一条到点提醒会把整轮判成已投递，Web Push 就再没机会补投。
+func (p *Pusher) pushReminders(cfg Config, now time.Time) bool {
 	hits, err := p.st.DueReminders(now, lookahead, lookback)
 	if err != nil {
 		p.logf("push: 读取到期提醒失败: %v", err)
-		return
+		return false
 	}
+	sent := false
 	for _, h := range hits {
 		key := ReminderKey(h.AckID, h.FireAt)
 		state, err := p.st.PushState(key)
@@ -205,38 +222,160 @@ func (p *Pusher) pushReminders(cfg Config, now time.Time) {
 		if err := p.st.RecordPush(key, true, ""); err != nil {
 			p.logf("push: 记录推送台账失败: %v", err)
 		}
+		sent = true
+	}
+	return sent
+}
+
+// pushRemindersWeb 走 Web Push 通道投提醒。与 Apprise 共用台账键，
+// 所以同一条提醒不会被两条通道各投一遍。
+func (p *Pusher) pushRemindersWeb(kv map[string]string, now time.Time) {
+	send, subs := p.webChannel(kv)
+	if send == nil {
+		return
+	}
+	hits, err := p.st.DueReminders(now, lookahead, lookback)
+	if err != nil {
+		p.logf("push: 读取到期提醒失败: %v", err)
+		return
+	}
+	cfg := Config{BaseURL: strings.TrimRight(strings.TrimSpace(kv[SetBaseURL]), "/")}
+	for _, h := range hits {
+		key := ReminderKey(h.AckID, h.FireAt)
+		state, err := p.st.PushState(key)
+		if err != nil || state.Done {
+			continue
+		}
+		name := h.Task.Title
+		if h.Subtask != nil {
+			name = h.Task.Title + " · " + h.Subtask.Title
+		}
+		payload := WebPushPayload{
+			Title: "慎始 · " + name,
+			Body:  h.DueLabel + "（已到时间）",
+			Tag:   key,
+			URL:   cfg.remindLink(h.AckID),
+			AckID: h.AckID,
+		}
+		if p.broadcast(send, subs, key, payload) {
+			_ = p.st.RecordPush(key, true, "")
+		}
+	}
+}
+
+// broadcast 把一条消息投给全部订阅，返回是否至少成功一个。
+// 订阅作废（410）就删掉：留着每一轮都要白等一次超时。
+func (p *Pusher) broadcast(send WebSender, subs []store.PushSubscription, key string, payload WebPushPayload) bool {
+	anyOK := false
+	for _, sub := range subs {
+		err := send(sub, payload)
+		switch {
+		case err == nil:
+			anyOK = true
+			_ = p.st.MarkSubscriptionSent(sub.Endpoint)
+		case errors.Is(err, store.ErrSubscriptionGone):
+			p.logf("push: 订阅已失效，已移除：%s", sub.Endpoint)
+			_ = p.st.DeleteSubscription(sub.Endpoint)
+			// 成功台账落在这里而不是调用方：全挂了才是真失败，
+			// 落账与否取决于「用户有没有收到」，与哪条订阅成功无关。
+			anyOK = false
+		default:
+			p.logf("push: Web Push 投递失败：%v", err)
+		}
+	}
+	return anyOK
+}
+
+// webChannel 取出 Web Push 投递器与订阅列表。不可用时返回 (nil, nil)。
+func (p *Pusher) webChannel(kv map[string]string) (WebSender, []store.PushSubscription) {
+	subs, err := p.st.Subscriptions()
+	if err != nil {
+		p.logf("push: 读取订阅失败: %v", err)
+		return nil, nil
+	}
+	if len(subs) == 0 {
+		return nil, nil
+	}
+	if p.webSend == nil {
+		send, err := NewWebSender(kv)
+		if err != nil {
+			return nil, nil
+		}
+		p.webSend = send
+	}
+	return p.webSend, subs
+}
+
+// pushDailyWeb 走 Web Push 通道投每日概览。
+func (p *Pusher) pushDailyWeb(kv map[string]string, now time.Time) {
+	if kv[SetDailyEnabled] != "1" {
+		return
+	}
+	send, subs := p.webChannel(kv)
+	if send == nil {
+		return
+	}
+	fire, err := time.ParseInLocation("15:04", LoadConfig(kv).DailyTime, time.Local)
+	if err != nil || now.Before(time.Date(now.Year(), now.Month(), now.Day(), fire.Hour(), fire.Minute(), 0, 0, time.Local)) {
+		return
+	}
+	key := DailyKey(now.Format("2006-01-02"))
+	state, err := p.st.PushState(key)
+	if err != nil || state.Done {
+		return
+	}
+	sum, err := p.st.DailySummary(now)
+	if err != nil || (sum.Today == 0 && sum.Overdue == 0) {
+		_ = p.st.RecordPush(key, true, "")
+		return
+	}
+	var b strings.Builder
+	b.WriteString("今日待办 " + strconv.Itoa(sum.Today) + " 项")
+	if sum.Overdue > 0 {
+		b.WriteString("，已逾期 " + strconv.Itoa(sum.Overdue) + " 项")
+	}
+	if len(sum.Sample) > 0 {
+		b.WriteString("：" + strings.Join(sum.Sample, "、"))
+	}
+	base := strings.TrimRight(strings.TrimSpace(kv[SetBaseURL]), "/")
+	payload := WebPushPayload{Title: "慎始 · 今日概览", Body: b.String(), Tag: key}
+	if base != "" {
+		payload.URL = base + "/?view=today"
+	}
+	if p.broadcast(send, subs, key, payload) {
+		_ = p.st.RecordPush(key, true, "")
 	}
 }
 
 // pushDaily 在配置的时点之后把当日概览推出去，一天至多一条。
-func (p *Pusher) pushDaily(cfg Config, now time.Time) {
+func (p *Pusher) pushDaily(cfg Config, now time.Time) bool {
 	fire, err := time.ParseInLocation("15:04", cfg.DailyTime, time.Local)
 	if err != nil {
 		p.logf("push: 每日推送时间不合法: %q", cfg.DailyTime)
-		return
+		return false
 	}
 	fireAt := time.Date(now.Year(), now.Month(), now.Day(), fire.Hour(), fire.Minute(), 0, 0, time.Local)
 	if now.Before(fireAt) {
-		return
+		return false
 	}
 	key := DailyKey(now.Format("2006-01-02"))
 	state, err := p.st.PushState(key)
 	if err != nil {
 		p.logf("push: 查询推送台账失败: %v", err)
-		return
+		return false
 	}
 	if state.Done {
-		return
+		return false
 	}
 	sum, err := p.st.DailySummary(now)
 	if err != nil {
 		p.logf("push: 统计每日概览失败: %v", err)
-		return
+		return false
 	}
 	if sum.Today == 0 && sum.Overdue == 0 {
 		// 无事一身轻：空概览不推，但照常落账，免得每个周期都白算一遍。
 		_ = p.st.RecordPush(key, true, "")
-		return
+		return false
 	}
 	var b strings.Builder
 	b.WriteString("今日待办 ")
@@ -258,9 +397,10 @@ func (p *Pusher) pushDaily(cfg Config, now time.Time) {
 	if err := p.send(cfg.URLs, "慎始 · 今日概览", b.String()); err != nil {
 		_ = p.st.RecordPush(key, false, truncate(err.Error(), 300))
 		p.logf("push: 推送每日概览失败（第 %d 次）：%s", state.Attempts+1, err)
-		return
+		return false
 	}
 	_ = p.st.RecordPush(key, true, "")
+	return true
 }
 
 // ReminderKey 拼提醒推送的台账键。ackId 与页面提醒共用约定：任务为正 id，子任务为负。

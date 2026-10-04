@@ -11,7 +11,7 @@ import {
 
 import { ApiError, api, isNetworkError, setUnauthorizedHandler, type TaskQuery, type TaskSort } from '../api/client'
 import { addDays, todayStr } from '../lib/date'
-import { EMPTY_FILTER, filterFromQuery, filterToQuery, isFilterActive, type TaskFilter } from '../lib/filter'
+import { EMPTY_FILTER, bundleToQuery, isFilterActive, parseSavedQuery, type TaskFilter } from '../lib/filter'
 import {
   buildLocalTask,
   dropLocalTask,
@@ -43,6 +43,7 @@ import {
   type Settings,
   type SmartKey,
   type Stats,
+  type Subtask,
   type Tag,
   type Task,
   type TaskPatch,
@@ -119,6 +120,8 @@ interface StoreShape {
   online: boolean
   /** 离线队列里待同步的条数。 */
   pendingSync: number
+  /** 重新统计队列长度。往队列入队之后调它，界面上「N 条待同步」才跟着变。 */
+  refreshOfflineState: () => Promise<void>
   /** 联网后把队列重放一遍。返回是否真的送出去了（true 时界面已对账）。 */
   syncNow: () => Promise<boolean>
   /** 已经有装好的新版本，等用户点「更新」。 */
@@ -257,6 +260,56 @@ export function useStore(): StoreShape {
 }
 
 const DEFAULT_SELECTION: Selection = { kind: 'smart', key: 'today' }
+
+/**
+ * 在子任务树里找 id 对应的那条（逐层下探）。
+ * 树已放开到任意层级，只扫顶层必然漏。
+ */
+function findSubtask(subs: Subtask[], id: number): Subtask | undefined {
+  for (const s of subs) {
+    if (s.id === id) return s
+    const hit = findSubtask(s.children, id)
+    if (hit) return hit
+  }
+  return undefined
+}
+
+/**
+ * 把局部更新应用到一棵子任务树，返回新树与新的完成度计数。
+ *
+ * 离线勾选子任务时用：勾选得立刻看见，进度条也得跟着动。
+ * 只改 done 不重算计数的话，「3/7」会停在那儿不动 —— 用户会以为勾没生效，
+ * 于是再点一次，结果把没做完的又标成做完了。
+ *
+ * 顺序刻意是「先改树、再整体重算」而不是边改边累加：递归里同时做两件事，
+ * 计数与树迟早会对不上，而那种偏差只在特定嵌套深度下才显形，极难排查。
+ */
+function applySubtaskPatch(
+  subs: Subtask[],
+  id: number,
+  patch: { title?: string; done?: boolean; dueDate?: string | null; reminders?: number[] },
+): { subs: Subtask[]; done: number; open: number } {
+  const next = subs.map((s) => {
+    if (s.id === id) return { ...s, ...patch }
+    return { ...s, children: applySubtaskPatch(s.children, id, patch).subs }
+  })
+  const counts = countSubs(next)
+  return { subs: next, done: counts.done, open: counts.open }
+}
+
+/** 数一棵子任务树里的完成/未完成总数（口径同服务端：各层都算）。 */
+function countSubs(subs: Subtask[]): { done: number; open: number } {
+  let done = 0
+  let open = 0
+  for (const s of subs) {
+    if (s.done) done += 1
+    else open += 1
+    const inner = countSubs(s.children)
+    done += inner.done
+    open += inner.open
+  }
+  return { done, open }
+}
 
 /** 两条本地任务表是否等价（按 id + 内容判重）。用于避免无谓的状态更新。 */
 function sameLocalTasks(a: LocalTask[], b: LocalTask[]): boolean {
@@ -1465,7 +1518,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return null
       }
       try {
-        const f = await api.createSavedFilter({ name: trimmed, query: filterToQuery(filters) })
+        // 连同「在哪儿看、怎么看、怎么排」一起存：只存筛选条件的话，
+        // 套用时清单和排序还是当前这一份，用户会以为没生效。
+        const f = await api.createSavedFilter({
+          name: trimmed,
+          query: bundleToQuery(filters, { selection, view, sortBy }),
+        })
         setSavedFilters((prev) => [...prev, f])
         toast(`已保存筛选「${f.name}」`)
         return f
@@ -1474,15 +1532,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return null
       }
     },
-    [filters, toast, handleError],
+    [filters, selection, view, sortBy, toast, handleError],
   )
 
   const applySavedFilter = useCallback(
     (f: SavedFilter) => {
-      setFiltersState(filterFromQuery(f.query))
+      const { filter, scope } = parseSavedQuery(f.query)
+      setFiltersState(filter)
+      if (scope) {
+        // 作用域缺失的旧记录只改筛选，不动当前的清单与视图——
+        // 凭空跳走比不跳更糟，用户会丢掉正在看的东西。
+        setSelection(scope.selection)
+        setView(scope.view)
+        if (scope.sortBy && scope.sortBy !== sortBy) setSortBy(scope.sortBy as TaskSort)
+      }
       toast(`已套用筛选「${f.name}」`)
     },
-    [toast],
+    [toast, sortBy, setSortBy],
   )
 
   const renameSavedFilter = useCallback(
@@ -1537,6 +1603,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const updateSubtask = useCallback(
     async (id: number, patch: { title?: string; done?: boolean; dueDate?: string | null; reminders?: number[] }) => {
+      if (!online) {
+        // 离线：本地先生效（勾选必须零延迟），再入队。
+        // 子任务树可能有多层，逐层找、找到就改，并把完成度按新状态重算——
+        // 进度条与勾选状态对不上是这类乐观更新最容易露的破绽。
+        setTasks((prev) =>
+          prev.map((t) =>
+            findSubtask(t.subtasks, id)
+              ? (() => {
+                  const r = applySubtaskPatch(t.subtasks, id, patch)
+                  return { ...t, subtasks: r.subs, subtaskDone: r.done, subtaskOpen: r.open }
+                })()
+              : t,
+          ),
+        )
+        await enqueue({ kind: 'subtask', taskId: 0, subtask: { id, patch } })
+        await refreshOfflineState()
+        toast('已记录 · 联网后同步')
+        return
+      }
       try {
         await api.updateSubtask(id, patch)
         // 子任务归属父任务，重新取一次父任务即可拿到最新进度。
@@ -1546,7 +1631,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         handleError(e, '更新子任务失败')
       }
     },
-    [tasks, patchLocalTask, handleError],
+    [tasks, online, toast, refreshOfflineState, patchLocalTask, handleError],
   )
 
   const deleteSubtask = useCallback(
@@ -2022,6 +2107,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       version,
       online,
       pendingSync,
+      refreshOfflineState,
       syncNow,
       updateReady,
       updateKey,
@@ -2140,6 +2226,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     version,
     online,
     pendingSync,
+    refreshOfflineState,
     syncNow,
     updateReady,
     updateKey,
@@ -2212,7 +2299,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     stopFocus,
     tickFocus,
     confirm,
-    resolveConfirm
+    resolveConfirm,
+    refreshOfflineState,
     ],
   )
 

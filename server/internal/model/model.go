@@ -391,15 +391,21 @@ const (
 	ActUndone     = "undone"
 	ActArchived   = "archived"
 	ActUnarchived = "unarchived"
+	// ActImported 第三方格式导入的汇总记录。逐条不记（一次三百条会把历史冲干净），
+	// 只留一条「导了 N 件」，否则用户事后想不起来上周那批东西是哪来的。
+	ActImported = "imported"
 )
 
 // Activity 一条操作历史。
 type Activity struct {
-	ID        int64  `json:"id"`
-	Kind      string `json:"kind"`
-	TaskID    *int64 `json:"taskId"`
-	Title     string `json:"title"`
-	Detail    string `json:"detail"`
+	ID     int64  `json:"id"`
+	Kind   string `json:"kind"`
+	TaskID *int64 `json:"taskId"`
+	Title  string `json:"title"`
+	Detail string `json:"detail"`
+	// Source 标明这条改动来自哪里：web / caldav / import / api。
+	// 单用户场景下「谁改的」看着多余，但排查「我明明没动它」时它就是答案。
+	Source    string `json:"source"`
 	CreatedAt string `json:"createdAt"`
 }
 

@@ -1306,10 +1306,24 @@ def run_new_features(base: str) -> None:
     top = tb["subtasks"][0] if tb["subtasks"] else {}
     check("子任务树形回传", top.get("title") == "查会议室空闲时段" and len(top.get("children", [])) == 1, str(tb["subtasks"]))
     check("完成度按全树计数", tb["subtaskOpen"] == 2 and tb["subtaskDone"] == 0, str((tb["subtaskDone"], tb["subtaskOpen"])))
-    status, _ = call(base, "POST", f"/api/tasks/{b['id']}/subtasks", {"title": "越级挂父", "parentId": sub2["id"]})
-    check("三级子任务被拒绝（400）", status == 400, str(status))
+    # 第三级现在允许了（分解树不再限层级），且要真的装进树里。
+    status, sub3 = call(base, "POST", f"/api/tasks/{b['id']}/subtasks", {"title": "订会议室", "parentId": sub2["id"]})
+    check("三级子任务被接受", status == 201, str(status))
+    status, tb = call(base, "GET", f"/api/tasks/{b['id']}")
+
+    def _depth(items):
+        return max((1 + _depth(s.get("children", [])) for s in items), default=0)
+
+    check("三级装进子树", _depth(tb.get("subtasks", [])) >= 3, str(_depth(tb.get("subtasks", []))))
+    check("完成度按全树计数（三层）", tb["subtaskOpen"] == 3, str((tb["subtaskDone"], tb["subtaskOpen"])))
+    # 日期清空要在删除之前测：删掉父级后子任务就没了，再 PATCH 当然是 404。
     status, _ = call(base, "PATCH", f"/api/subtasks/{sub['id']}", {"dueDate": ""})
     check("子任务日期可清空", status == 200, str(status))
+    # 删中间层要带走整棵子树。
+    call(base, "DELETE", f"/api/subtasks/{sub['id']}")
+    status, tb = call(base, "GET", f"/api/tasks/{b['id']}")
+    check("删除父级后子树不残留", len(tb.get("subtasks", [])) == 0, str(tb.get("subtasks", [])))
+    check("计数随删除归零", tb["subtaskOpen"] == 0, str(tb["subtaskOpen"]))
 
     # 关联与依赖
     status, link = call(base, "POST", f"/api/tasks/{a['id']}/links", {"linkedTaskId": b["id"], "kind": "blocked_by"})
@@ -1532,6 +1546,196 @@ def run_offline_sync(base: str) -> None:
             call(base, "DELETE", f"/api/tasks/{x['id']}")
 
 
+def run_gap_fixes(base: str) -> None:
+    """2026-10-04 补齐的 8 项：查询语法、子任务多层、逾期顺延、第三方导入、Web Push 订阅。"""
+    section("㉚ 查询语法 / 多层子任务 / 逾期顺延 / 第三方导入 / Web Push")
+
+    # ---- 查询语法：结构化算子与自由文本共存 ----
+    status, taglist = call(base, "GET", "/api/tags")
+    check("标签列表可读", status == 200, str(status))
+    probe = "查询语法探针"
+    status, task = call(base, "POST", "/api/tasks", {"title": probe, "priority": 3})
+    check("建探针任务", status in (200, 201), str(status))
+    tid = task["id"]
+
+    # 无算子时就是普通搜索。
+    status, res = call(base, "GET", f"/api/tasks?q={probe}&status=all")
+    titles = [t["title"] for t in res.get("tasks", [])] if status == 200 else []
+    check("纯文本搜索命中", probe in titles, str(titles[:3]))
+
+    # p:3 只命中高优先级。
+    status, res = call(base, "GET", "/api/tasks?q=p:3&status=all")
+    p3 = [t["title"] for t in res.get("tasks", [])] if status == 200 else []
+    check("p:3 命中高优先级探针", probe in p3, str(p3[:3]))
+
+    # 识别不出的算子退回普通文本，不吞输入。
+    status, res = call(base, "GET", "/api/tasks?q=due:下周三&status=all")
+    check("无法识别的算子不报错", status == 200, str(status))
+
+    # #不存在的标签 → 条件确实生效（探针不在结果里），且不报错。
+    # 不能断言结果为空：库里本来就有种子任务，全库搜索当然非空。
+    # @清单 不存在 → 条件确实生效（探针被过滤掉），且不报错。
+    # 不能断言结果为空：库里本来就有种子任务，只是它们也不带这个清单条件。
+    status, res = call(base, "GET", "/api/tasks?q=@压根不存在的清单&status=all")
+    titles = [t["title"] for t in res.get("tasks", [])] if status == 200 else []
+    check("不存在的清单不会报错且条件生效", status == 200 and probe not in titles, f"status={status} {titles[:3]}")
+
+    # 反面：搜一个真能匹配上的词，结果里必须有它 —— 确认 q 真的传到了服务端。
+    status, res = call(base, "GET", f"/api/tasks?q={probe}&status=all")
+    hit = [t["title"] for t in res.get("tasks", [])] if status == 200 else []
+    check("q 参数确实生效", probe in hit, str(hit[:3]))
+
+    call(base, "DELETE", f"/api/tasks/{tid}")
+
+    # ---- 子任务多层：三级链要能建、也要能整棵删掉 ----
+    status, task = call(base, "POST", "/api/tasks", {"title": "多层子任务探针"})
+    tid = task["id"]
+    status, l1 = call(base, "POST", f"/api/tasks/{tid}/subtasks", {"title": "一级"})
+    check("建一级子任务", status in (200, 201), str(status))
+    status, l2 = call(base, "POST", f"/api/tasks/{tid}/subtasks", {"title": "二级", "parentId": l1["id"]})
+    check("建二级子任务", status in (200, 201), str(status))
+    status, l3 = call(base, "POST", f"/api/tasks/{tid}/subtasks", {"title": "三级", "parentId": l2["id"]})
+    check("建三级子任务（旧版会拒绝）", status in (200, 201), str(status))
+
+    if status in (200, 201):
+        status, got = call(base, "GET", f"/api/tasks/{tid}")
+        subs = got.get("subtasks", [])
+
+        def depth(items):
+            return max((1 + depth(s.get("children", [])) for s in items), default=0)
+
+        check("子任务树装到了第三层", depth(subs) >= 3, f"深度 {depth(subs)}")
+        # 删中间层，下面整棵子树都得跟着走。
+        call(base, "DELETE", f"/api/subtasks/{l1['id']}")
+        status, got = call(base, "GET", f"/api/tasks/{tid}")
+        check("删除后子树不残留", len(got.get("subtasks", [])) == 0, str(got.get("subtasks", [])))
+    call(base, "DELETE", f"/api/tasks/{tid}")
+
+    # ---- 逾期顺延：口径与计数必须一致 ----
+    status, cnt = call(base, "GET", "/api/overdue/count")
+    check("逾期计数可读", status == 200 and "overdue" in cnt, str(cnt))
+    before = cnt.get("overdue", 0)
+
+    past = (datetime.now() - timedelta(days=3)).date().isoformat()
+    status, t1 = call(base, "POST", "/api/tasks", {"title": "逾期顺延探针", "dueDate": past})
+    status, cnt2 = call(base, "GET", "/api/overdue/count")
+    check("新增逾期后计数 +1", cnt2.get("overdue") == before + 1, f"{before} → {cnt2.get('overdue')}")
+
+    status, rolled = call(base, "POST", "/api/overdue/roll-over", {})
+    check("顺延接口可用", status == 200, str(status))
+    status, cnt3 = call(base, "GET", "/api/overdue/count")
+    check("顺延后计数归零（口径一致）", cnt3.get("overdue") == 0, str(cnt3.get("overdue")))
+
+    status, got = call(base, "GET", f"/api/tasks/{t1['id']}")
+    check("逾期任务被改到今天", got.get("dueDate") == datetime.now().date().isoformat(), str(got.get("dueDate")))
+    call(base, "DELETE", f"/api/tasks/{t1['id']}")
+
+    # ---- 第三方导入：先预览、再导入，且只增不改 ----
+    todoist_csv = (
+        "content,project,labels,due date,priority,checked\n"
+        "第三方导入探针,冒烟清单,探针标签,2026-12-31,p4,0\n"
+        "另一条,,,2026-12-30,,1\n"
+    )
+    boundary = "----shenshi-smoke-boundary"
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="file"; filename="todoist.csv"\r\n'
+        "Content-Type: text/csv\r\n\r\n"
+        f"{todoist_csv}\r\n"
+        f"--{boundary}--\r\n"
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        base + "/api/import/third-party/preview",
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            prev = json.loads(resp.read().decode("utf-8"))
+        check("第三方 CSV 预览可解析", prev.get("tasks") == 2, str(prev.get("tasks")))
+        check("预览报出要新建的清单", "冒烟清单" in (prev.get("lists") or []), str(prev.get("lists")))
+        check("预览说明哪些不迁移", bool(prev.get("notes")), str(prev.get("notes")))
+    except urllib.error.HTTPError as exc:
+        check("第三方 CSV 预览可解析", False, f"HTTP {exc.code}")
+
+    req = urllib.request.Request(
+        base + "/api/import/third-party",
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            out = json.loads(resp.read().decode("utf-8"))
+        check("第三方 CSV 导入成功", out.get("result", {}).get("tasks") == 2, str(out.get("result")))
+        check("按名字建出清单", out.get("result", {}).get("lists") == 1, str(out.get("result")))
+    except urllib.error.HTTPError as exc:
+        check("第三方 CSV 导入成功", False, f"HTTP {exc.code}")
+
+    # 导入出来的东西真的在库里，且无归属的那条落进了收集箱。
+    status, res = call(base, "GET", "/api/tasks?q=第三方导入探针&status=all")
+    titles = [t["title"] for t in res.get("tasks", [])] if status == 200 else []
+    check("导入的任务可在库里搜到", "第三方导入探针" in titles, str(titles[:3]))
+    for t in res.get("tasks", []):
+        if t["title"] in ("第三方导入探针", "另一条"):
+            call(base, "DELETE", f"/api/tasks/{t['id']}")
+
+    # 认不出的格式要明确报错，不能「成功导入 0 条」。
+    bad = b"nonsense"
+    body2 = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="file"; filename="random.bin"\r\n'
+        "Content-Type: application/octet-stream\r\n\r\n"
+    ).encode("utf-8") + bad + f"\r\n--{boundary}--\r\n".encode("utf-8")
+    req = urllib.request.Request(
+        base + "/api/import/third-party/preview",
+        data=body2,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    status, _, resp = call_full(base, "GET", "/api/health")
+    try:
+        urllib.request.urlopen(req, timeout=10)
+        check("认不出的格式应报错", False, "居然成功了")
+    except urllib.error.HTTPError as exc:
+        check("认不出的格式应报错", exc.code == 400, str(exc.code))
+
+    # ---- Web Push：订阅存取与状态自检 ----
+    status, keys = call(base, "POST", "/api/push/webpush/keys")
+    check("VAPID 密钥可生成", status == 200 and keys.get("publicKey") and keys.get("privateKey"), str(status))
+
+    status, _ = call(base, "PUT", "/api/settings", {
+        "push.vapidPrivate": keys["privateKey"],
+        "push.vapidPublic": keys["publicKey"],
+    })
+    status, wp = call(base, "GET", "/api/push/webpush/status")
+    check("Web Push 状态报出已配置", status == 200 and wp.get("configured") is True, str(wp))
+
+    status, _ = call(base, "POST", "/api/push/subscribe", {
+        "endpoint": "https://push.example.test/send/abc",
+        "keys": {"p256dh": "k1", "auth": "a1"},
+    })
+    check("订阅可保存", status == 200, str(status))
+    status, wp = call(base, "GET", "/api/push/webpush/status")
+    check("状态报出已订阅 1 台", wp.get("subs") == 1, str(wp.get("subs")))
+
+    # 内容不完整的订阅要拒收（否则每次推送都白等超时）。
+    status, _, _ = call_full(base, "POST", "/api/push/subscribe", {"endpoint": "https://x/y"})
+    check("不完整的订阅被拒绝", status == 400, str(status))
+
+    status, _ = call(base, "POST", "/api/push/unsubscribe", {"endpoint": "https://push.example.test/send/abc"})
+    status, wp = call(base, "GET", "/api/push/webpush/status")
+    check("退订后计数归零", wp.get("subs") == 0, str(wp.get("subs")))
+
+    # ---- 活动来源：导入的记录要标成 import ----
+    status, acts = call(base, "GET", "/api/activities?limit=50")
+    items = acts.get("activities", []) if status == 200 and isinstance(acts, dict) else []
+    imported = [a for a in items if a.get("kind") == "imported"]
+    check("导入留下汇总活动", len(imported) >= 1, str(len(imported)))
+    check("汇总活动来源标为导入", bool(imported) and imported[0].get("source") == "import", str(imported[:1]))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="", help="对已运行的服务做测试，不自动启动实例")
@@ -1563,6 +1767,7 @@ def main() -> int:
         run_new_features(base)
         run_new_backend_features(base)
         run_offline_sync(base)
+        run_gap_fixes(base)
         if binary and tmp:
             # 鉴权需要独立实例：主实例是不带口令的，用来验证「不设口令时一切照旧」
             auth_proc, auth_base = spawn_instance(binary, repo_root, tmp, "test-token-9f3a2b7c")

@@ -12,7 +12,7 @@ export const PRIORITY_LABEL: Record<Priority, string> = {
 export interface Subtask {
   id: number
   taskId: number
-  /** 父级子任务：null 表示顶层，非空表示挂在另一条子任务之下（两级） */
+  /** 父级子任务：null 表示顶层，非空表示挂在另一条子任务之下（可多层嵌套） */
   parentId: number | null
   title: string
   /** 子任务自己的日期（YYYY-MM-DD），独立于父任务 */
@@ -264,7 +264,17 @@ export interface Activity {
   taskId: number | null
   title: string
   detail: string
+  /** 这条改动来自哪里：web / caldav / import / api。老记录读作 web。 */
+  source: string
   createdAt: string
+}
+
+/** 活动来源的中文名。与后端 store.ActivitySourceLabel 对齐。 */
+export const ACTIVITY_SOURCE_LABEL: Record<string, string> = {
+  web: '网页',
+  caldav: '日历同步',
+  import: '导入',
+  api: '接口',
 }
 
 export const ACTIVITY_LABEL: Record<string, string> = {
@@ -588,7 +598,32 @@ export interface PushTestResult {
   error?: string
 }
 
-/** 推送自检：服务端视角的推送状态与最近的投递台账。 */
+/**
+ * 浏览器推送订阅（只取用得到的字段）。
+ * 刻意不叫 PushSubscription：那是 DOM 的全局类型，重名会让两种含义在同一个文件里打架。
+ */
+export interface WebPushSubscription {
+  endpoint: string
+  keys: { p256dh: string; auth: string }
+}
+
+/** Web Push 通道状态。三种未就绪的情形必须分得清，否则用户没法判断该不该去弄。 */
+export interface WebPushStatus {
+  /** 服务端配好了 VAPID 密钥对。 */
+  configured: boolean
+  /** 公钥，前端 subscribe 时用。 */
+  publicKey: string
+  subject: string
+  /** 当前有几台设备订阅了。 */
+  subs: number
+  lastEndpoint?: string
+  /** 最近一次成功投递的时间（ISO）。 */
+  lastOkAt?: string
+}
+
+/**
+ * 推送自检：服务端视角的推送状态与最近的投递台账。
+ */
 export interface PushStatus {
   enabled: boolean
   channels: number

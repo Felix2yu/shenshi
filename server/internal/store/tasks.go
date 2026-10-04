@@ -246,9 +246,16 @@ func (f TaskFilter) build(countOnly bool) (string, []any) {
 		args = append(args, *f.TagID)
 	}
 	if f.Search != "" {
+		// 先剥掉结构化算子（#标签 @清单 p:高 due:today），剩下的才是自由文本。
+		// 解析不了的部分一律退回普通词，绝不因为出现半个符号就丢掉用户的输入。
+		spec := ParseQuery(f.Search, now)
+		qwhere, qargs := spec.apply()
+		where = append(where, qwhere...)
+		args = append(args, qargs...)
+
 		// 空格分词：多个词是「都要命中」，不是整串去匹配 ——
 		// 搜「季度 材料」时，标题里两词分开出现也该找得到。
-		for _, term := range splitSearchTerms(f.Search) {
+		for _, term := range splitSearchTerms(spec.text) {
 			// 命中范围不止标题与备注：标签名、清单名、子任务标题都算。
 			// 少一处，用户就得先猜「这玩意到底记在哪」。
 			where = append(where, `(
@@ -616,20 +623,29 @@ func (s *Store) attachSubtasks(tasks []model.Task) error {
 			byParent[*n.parentID] = append(byParent[*n.parentID], id)
 		}
 	}
-	var attach func(id int64) model.Subtask
-	attach = func(id int64) model.Subtask {
+	// visiting 记录本轮递归路径上的节点：父子关系一旦成环（A→B→A），
+	// attach 会无限递归把栈打爆。数据来自 DB，理论上不该出现环，
+	// 但一次错误的导入或手工改库就能造出来——这里按「遇到环就当根」处理，
+	// 宁可那条任务少显示几个子项，也不要整个列表接口 500。
+	var attach func(id int64, visiting map[int64]bool) model.Subtask
+	attach = func(id int64, visiting map[int64]bool) model.Subtask {
 		n := nodes[id]
 		sub := n.sub
 		sub.ParentID = n.parentID
-		for _, cid := range byParent[id] {
-			sub.Children = append(sub.Children, attach(cid))
+		if visiting[id] {
+			return sub // 环：截断，不再往下走
 		}
+		visiting[id] = true
+		for _, cid := range byParent[id] {
+			sub.Children = append(sub.Children, attach(cid, visiting))
+		}
+		delete(visiting, id)
 		return sub
 	}
 	for _, id := range order {
 		n := nodes[id]
 		if n.parentID == nil || *n.parentID == id || nodes[*n.parentID] == nil {
-			sub := attach(id)
+			sub := attach(id, map[int64]bool{})
 			if i, ok := idx[sub.TaskID]; ok {
 				tasks[i].Subtasks = append(tasks[i].Subtasks, sub)
 			}
@@ -802,7 +818,7 @@ func (s *Store) CreateTask(in model.TaskInput, defaultListID int64) (*model.Task
 	id, _ := res.LastInsertId()
 
 	if in.Subtasks.Set {
-		// 与 UpdateTask 同一条写入路径：日期、提醒、两级结构一并保留。
+		// 与 UpdateTask 同一条写入路径：日期、提醒、嵌套结构一并保留。
 		if err := replaceSubtasks(tx, id, in.Subtasks.Value); err != nil {
 			return nil, err
 		}
@@ -1132,7 +1148,7 @@ func (s *Store) emitTaskUpdatedQuietly(id int64) {
 	}
 }
 
-// clearSubtaskDone 复制一棵子任务树并把所有 done 归零（含嵌套子子任务）。
+// clearSubtaskDone 复制一棵子任务树并把所有 done 归零（含各层嵌套）。
 // 「副本」与「重复续期」共用：新一轮从头开始做，不能带着上一轮的勾。
 func clearSubtaskDone(items []model.Subtask) []model.Subtask {
 	out := make([]model.Subtask, 0, len(items))
@@ -1734,23 +1750,21 @@ func (s *Store) ReorderTasks(ids []int64) error {
 	return tx.Commit()
 }
 
-// AddSubtask 新增子任务。parentID 非空时挂在同级子任务之下（多级分解），
+// AddSubtask 新增子任务。parentID 非空时挂在另一条子任务之下（分解树可任意深），
 // dueDate 让这条步骤自己有节律，不必与父任务同起同落。
 func (s *Store) AddSubtask(taskID int64, title string, position int, parentID *int64, dueDate *string) (*model.Subtask, error) {
-	// 父级必须同属一条任务，且自身不再有父级 —— 分解树允许任意深度，
-	// 但「跨任务挂父」会造成删除与统计的语义混乱，直接拒绝。
+	// 父级必须同属一条任务：「跨任务挂父」会造成删除与统计的语义混乱，直接拒绝。
+	// 深度不设上限——递归结构下真正要防的不是层级，而是成环。
 	if parentID != nil {
 		var parentTask int64
-		var parentParent *int64
-		if err := s.db.QueryRow(`SELECT task_id, parent_id FROM subtasks WHERE id = ?`, *parentID).Scan(&parentTask, &parentParent); err != nil {
+		if err := s.db.QueryRow(`SELECT task_id FROM subtasks WHERE id = ?`, *parentID).Scan(&parentTask); err != nil {
 			return nil, ErrNotFound
 		}
 		if parentTask != taskID {
 			return nil, ValidationError{Msg: "父级子任务不属于该任务"}
 		}
-		if parentParent != nil {
-			return nil, ValidationError{Msg: "暂只支持两级子任务，父级已是子子任务"}
-		}
+		// 防环：新建的节点还没有 id，不可能成环；这里留作不变量说明——
+		// 唯一会成环的入口是「改父级」，由 UpdateSubtask 的 Reparent 路径把关。
 	}
 	if dueDate != nil && strings.TrimSpace(*dueDate) == "" {
 		dueDate = nil
@@ -1838,6 +1852,16 @@ func (s *Store) UpdateSubtask(id int64, u SubtaskUpdate) error {
 func (s *Store) DeleteSubtask(id int64) error {
 	var parentTask int64
 	_ = s.db.QueryRow(`SELECT task_id FROM subtasks WHERE id = ?`, id).Scan(&parentTask)
+	// 级联删掉整棵子树。分解树不再限两级，留下的孙节点会变成挂在空气上的孤儿：
+	// 前端渲染不到、服务端统计不到，用户那边看着像「凭空少了几条」。
+	// 递归 CTE 一条语句走到底（SQLite 自 3.8.3 支持 WITH RECURSIVE）。
+	if _, err := s.db.Exec(`WITH RECURSIVE sub(id) AS (
+		SELECT id FROM subtasks WHERE id = ?
+		UNION ALL
+		SELECT s.id FROM subtasks s JOIN sub ON s.parent_id = sub.id
+	) DELETE FROM subtasks WHERE id IN (SELECT id FROM sub)`, id); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(`DELETE FROM subtasks WHERE id = ?`, id); err != nil {
 		return err
 	}
@@ -1851,7 +1875,7 @@ func replaceSubtasks(db execer, taskID int64, subs []model.Subtask) error {
 	if _, err := db.Exec(`DELETE FROM subtasks WHERE task_id = ?`, taskID); err != nil {
 		return err
 	}
-	// 两级结构靠「先父后子 + 新 id 接续 parent_id」原样重建，日期/提醒一并保留。
+	// 嵌套结构靠「先父后子 + 新 id 接续 parent_id」原样重建，日期/提醒一并保留。
 	var insert func(items []model.Subtask, parent *int64) error
 	insert = func(items []model.Subtask, parent *int64) error {
 		for i, sub := range items {

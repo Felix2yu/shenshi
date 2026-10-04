@@ -158,6 +158,11 @@ func (s *Server) HandleStatic(h http.Handler) {
 func (s *Server) routes() {
 	h := func(fn func(http.ResponseWriter, *http.Request) error) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
+			// 每个请求进来先定下这次写入的来源，结束时恢复。
+			// 放在这层而不是各个 handler 里：写入口有二十几处，逐个标注迟早会漏，
+			// 而漏掉的那处会以「网页」记下，把排查引向错误的方向。
+			restore := s.st.SetActivitySource(sourceOf(r))
+			defer restore()
 			if err := fn(w, r); err != nil {
 				writeError(w, err)
 			}
@@ -239,6 +244,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/export/zip", h(s.exportZIP))
 	s.mux.HandleFunc("POST /api/import", h(s.importBackup))
 	s.mux.HandleFunc("POST /api/import/file", h(s.importBackupFile))
+	// 第三方格式（Todoist CSV / iCalendar）：先预览再导入，只增不改
+	s.mux.HandleFunc("POST /api/import/third-party/preview", h(s.previewThirdParty))
+	s.mux.HandleFunc("POST /api/import/third-party", h(s.importThirdParty))
 
 	s.mux.HandleFunc("GET /api/stats", h(s.stats))
 	s.mux.HandleFunc("GET /api/reviews", h(s.listReviews))
@@ -256,10 +264,21 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/push/test", h(s.pushTest))
 	s.mux.HandleFunc("GET /api/push/status", h(s.pushStatus))
 
+	// Web Push（iOS 16.4+，需先添加到主屏幕）：不依赖任何第三方服务
+	s.mux.HandleFunc("POST /api/push/subscribe", h(s.subscribePush))
+	s.mux.HandleFunc("POST /api/push/unsubscribe", h(s.unsubscribePush))
+	s.mux.HandleFunc("GET /api/push/webpush/status", h(s.webPushStatus))
+	s.mux.HandleFunc("POST /api/push/webpush/keys", h(s.webPushKeys))
+	s.mux.HandleFunc("POST /api/push/webpush/test", h(s.webPushTest))
+
 	// 实时通道：数据有变就推一条，其它设备据此立刻对账（见 stream.go）
 	s.mux.HandleFunc("GET /api/stream", h(s.streamEvents))
 	s.mux.HandleFunc("GET /api/meta/repeat", h(s.repeatMeta))
 	s.mux.HandleFunc("GET /api/meta/calendar", h(s.calendarMeta))
+
+	// 逾期顺延：把欠账一次性改到今天。破坏性写入，只能显式触发。
+	s.mux.HandleFunc("POST /api/overdue/roll-over", h(s.rollOverdue))
+	s.mux.HandleFunc("GET /api/overdue/count", h(s.overdueCount))
 
 	// 附件
 	s.mux.HandleFunc("GET /api/tasks/{id}/attachments", h(s.listAttachments))
@@ -292,6 +311,20 @@ func (s *Server) routes() {
 }
 
 // ---------- 响应辅助 ----------
+
+// sourceOf 判断这次请求的写入来源。
+//
+// 默认网页：绝大多数操作确实来自界面。X-Shenshi-Source 让快捷指令、脚本等
+// 外部调用方自报家门——它们不必知道有这个约定，带上这个头就能让历史记录说清来源。
+func sourceOf(r *http.Request) string {
+	switch r.Header.Get("X-Shenshi-Source") {
+	case store.SrcAPI:
+		return store.SrcAPI
+	case store.SrcImport:
+		return store.SrcImport
+	}
+	return store.SrcWeb
+}
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

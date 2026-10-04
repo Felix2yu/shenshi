@@ -15,6 +15,7 @@ import { QUOTES } from '../lib/quotes'
 import { parseQuickAdd, describeRepeat, QUICK_ADD_HINTS, type Chip } from '../lib/nlp'
 import { useIMEGuard } from '../lib/ime'
 import { coarsePointer, useRowTouch } from '../lib/touch'
+import { SEARCH_HINT, describeOperator, isQueryOperator, removeToken, splitQueryTokens } from '../lib/query'
 import { useStore } from '../store/AppStore'
 import type { Folder, List, Priority, Selection, Tag, Task, TaskPatch } from '../types'
 import {
@@ -1557,6 +1558,12 @@ export function SearchBar({ className, autoFocus }: { className?: string; autoFo
     setKeyword('')
   }
 
+  // 识别出的算子（含在原串中的下标，点 × 时据此删除）。
+  // 与后端 query.go 同规则：识别不出的词一律不当算子。
+  const ops = splitQueryTokens(draft)
+    .map((t, index) => ({ ...t, index }))
+    .filter((t) => isQueryOperator(t.text, t.quoted))
+
   return (
     <div
       className={cx(
@@ -1583,7 +1590,7 @@ export function SearchBar({ className, autoFocus }: { className?: string; autoFo
             e.currentTarget.blur()
           }
         }}
-        placeholder="搜索任务与备注"
+        placeholder={SEARCH_HINT}
         // 移动档（搜索展开行）随容器伸展；桌面端保持定宽 + 聚焦加宽的原有行为。
         className="min-w-0 flex-1 bg-transparent text-[0.8125rem] outline-none transition-all placeholder:text-ink-3 lg:w-40 lg:flex-none lg:focus:w-56"
       />
@@ -1596,6 +1603,34 @@ export function SearchBar({ className, autoFocus }: { className?: string; autoFo
         >
           <IconX size={13} />
         </button>
+      ) : null}
+      {/* 算子提示：把识别成筛选条件的词显式摊开，用户才知道这句话被怎么理解了。
+          走文档流而非浮层——搜索框宽度随档位变化（移动档满宽、桌面定宽），
+          内联渲染天然跟随，也躲开了「祖先 backdrop-blur 让 fixed 偏移」那个坑。 */}
+      {ops.length > 0 ? (
+        <div className="absolute left-0 top-[calc(100%+0.375rem)] z-30 flex max-w-[min(100%,28rem)] flex-wrap items-center gap-1 rounded-lg border border-line bg-surface px-1.5 py-1 shadow-[0_4px_12px_rgba(0,0,0,0.08)]">
+          {ops.map((op) => (
+            <span
+              key={op.index}
+              title={describeOperator(op.text)}
+              className="flex shrink-0 items-center gap-0.5 rounded-md bg-surface-2 py-0.5 pl-1.5 pr-0.5 text-[0.6875rem] text-ink-2"
+            >
+              <span className="max-w-[9rem] truncate whitespace-nowrap">{op.text}</span>
+              <button
+                type="button"
+                aria-label={`去掉条件 ${op.text}`}
+                className="shrink-0 rounded p-0.5 text-ink-3 hover:bg-surface hover:text-ink"
+                onClick={() => {
+                  const next = removeToken(draft, op.index)
+                  setDraft(next)
+                  setKeyword(next)
+                }}
+              >
+                <IconX size={10} />
+              </button>
+            </span>
+          ))}
+        </div>
       ) : null}
     </div>
   )
