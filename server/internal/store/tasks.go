@@ -18,8 +18,8 @@ var ErrNotFound = errors.New("记录不存在")
 
 const taskSelect = `
 SELECT t.id, t.list_id, t.title, t.notes, t.status, t.priority,
-       t.start_date, t.due_date, t.due_time, t.end_time, t.url, t.reminders, t.repeat_rule, t.repeat_from,
-       t.important, t.urgent, t.pinned, t.starred, t.estimate_minutes, t.progress, t.archived,
+       t.start_date, t.due_date, t.due_time, t.end_time, t.url, t.reminders, t.remind_at, t.repeat_rule, t.repeat_from,
+       t.important, t.urgent, t.pinned, t.starred, t.estimate_minutes, t.progress, t.archived, t.version,
        t.completed_at, t.sort_order, t.created_at, t.updated_at,
        l.name, l.color, l.folder_id
 FROM tasks t JOIN lists l ON l.id = t.list_id`
@@ -56,6 +56,47 @@ const statusOpenWithTodayDone = "open+today_done"
 
 // where 返回查询条件与参数（用于列表查询）。
 func (f TaskFilter) where() (string, []any) { return f.build(false) }
+
+// splitSearchTerms 把搜索串切成词：空格分隔，双引号里的内容算一个词。
+// 于是「季度 材料」是两词，「"季度材料"」是一个整体。
+func splitSearchTerms(s string) []string {
+	terms := []string{}
+	var cur strings.Builder
+	quoted := false
+	has := false
+	flush := func() {
+		if has {
+			if v := strings.TrimSpace(cur.String()); v != "" {
+				terms = append(terms, v)
+			}
+		}
+		cur.Reset()
+		has = false
+	}
+	for _, r := range s {
+		switch {
+		case r == '"':
+			quoted = !quoted
+			has = true
+		case (r == ' ' || r == '\t' || r == '\n') && !quoted:
+			flush()
+		default:
+			cur.WriteRune(r)
+			has = true
+		}
+	}
+	flush()
+	return terms
+}
+
+// escapeLike 转义 LIKE 的通配符。用户搜「50%」时不转义会变成「任意前缀」，
+// 搜下划线同理；反斜杠本身也要先转义，否则会吃掉后面的转义符。
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
 
 // whereCount 返回统计口径的条件：角标只关心「还剩多少未完成」，
 // 因此不把今日已完成的事项计入。
@@ -205,9 +246,29 @@ func (f TaskFilter) build(countOnly bool) (string, []any) {
 		args = append(args, *f.TagID)
 	}
 	if f.Search != "" {
-		where = append(where, "(t.title LIKE ? OR t.notes LIKE ?)")
-		like := "%" + f.Search + "%"
-		args = append(args, like, like)
+		// 先剥掉结构化算子（#标签 @清单 p:高 due:today），剩下的才是自由文本。
+		// 解析不了的部分一律退回普通词，绝不因为出现半个符号就丢掉用户的输入。
+		spec := ParseQuery(f.Search, now)
+		qwhere, qargs := spec.apply()
+		where = append(where, qwhere...)
+		args = append(args, qargs...)
+
+		// 空格分词：多个词是「都要命中」，不是整串去匹配 ——
+		// 搜「季度 材料」时，标题里两词分开出现也该找得到。
+		for _, term := range splitSearchTerms(spec.text) {
+			// 命中范围不止标题与备注：标签名、清单名、子任务标题都算。
+			// 少一处，用户就得先猜「这玩意到底记在哪」。
+			where = append(where, `(
+				t.title LIKE ? ESCAPE '\' OR t.notes LIKE ? ESCAPE '\'
+				OR l.name LIKE ? ESCAPE '\'
+				OR EXISTS (SELECT 1 FROM task_tags tt JOIN tags g ON g.id = tt.tag_id
+				           WHERE tt.task_id = t.id AND g.name LIKE ? ESCAPE '\')
+				OR EXISTS (SELECT 1 FROM subtasks sb
+				           WHERE sb.task_id = t.id AND sb.title LIKE ? ESCAPE '\')
+			)`)
+			like := "%" + escapeLike(term) + "%"
+			args = append(args, like, like, like, like, like)
+		}
 	}
 	switch f.Quadrant {
 	case "1":
@@ -431,15 +492,15 @@ type rowScanner interface {
 
 func scanTask(r rowScanner) (model.Task, error) {
 	var t model.Task
-	var startDate, dueDate, dueTime, endTime, repeatRule, completedAt sql.NullString
+	var startDate, dueDate, dueTime, endTime, repeatRule, completedAt, remindAt sql.NullString
 	var reminders, url, repeatFrom string
 	var important, urgent, pinned, starred, archived int
 	var listName, listColor sql.NullString
 	var folderID sql.NullInt64
 
 	err := r.Scan(&t.ID, &t.ListID, &t.Title, &t.Notes, &t.Status, &t.Priority,
-		&startDate, &dueDate, &dueTime, &endTime, &url, &reminders, &repeatRule, &repeatFrom,
-		&important, &urgent, &pinned, &starred, &t.EstimateMinutes, &t.Progress, &archived,
+		&startDate, &dueDate, &dueTime, &endTime, &url, &reminders, &remindAt, &repeatRule, &repeatFrom,
+		&important, &urgent, &pinned, &starred, &t.EstimateMinutes, &t.Progress, &archived, &t.Version,
 		&completedAt, &t.SortOrder, &t.CreatedAt, &t.UpdatedAt,
 		&listName, &listColor, &folderID)
 	if err != nil {
@@ -464,6 +525,10 @@ func scanTask(r rowScanner) (model.Task, error) {
 	if repeatRule.Valid {
 		v := repeatRule.String
 		t.RepeatRule = &v
+	}
+	if remindAt.Valid && strings.TrimSpace(remindAt.String) != "" {
+		v := remindAt.String
+		t.RemindAt = &v
 	}
 	if completedAt.Valid {
 		v := completedAt.String
@@ -558,20 +623,29 @@ func (s *Store) attachSubtasks(tasks []model.Task) error {
 			byParent[*n.parentID] = append(byParent[*n.parentID], id)
 		}
 	}
-	var attach func(id int64) model.Subtask
-	attach = func(id int64) model.Subtask {
+	// visiting 记录本轮递归路径上的节点：父子关系一旦成环（A→B→A），
+	// attach 会无限递归把栈打爆。数据来自 DB，理论上不该出现环，
+	// 但一次错误的导入或手工改库就能造出来——这里按「遇到环就当根」处理，
+	// 宁可那条任务少显示几个子项，也不要整个列表接口 500。
+	var attach func(id int64, visiting map[int64]bool) model.Subtask
+	attach = func(id int64, visiting map[int64]bool) model.Subtask {
 		n := nodes[id]
 		sub := n.sub
 		sub.ParentID = n.parentID
-		for _, cid := range byParent[id] {
-			sub.Children = append(sub.Children, attach(cid))
+		if visiting[id] {
+			return sub // 环：截断，不再往下走
 		}
+		visiting[id] = true
+		for _, cid := range byParent[id] {
+			sub.Children = append(sub.Children, attach(cid, visiting))
+		}
+		delete(visiting, id)
 		return sub
 	}
 	for _, id := range order {
 		n := nodes[id]
 		if n.parentID == nil || *n.parentID == id || nodes[*n.parentID] == nil {
-			sub := attach(id)
+			sub := attach(id, map[int64]bool{})
 			if i, ok := idx[sub.TaskID]; ok {
 				tasks[i].Subtasks = append(tasks[i].Subtasks, sub)
 			}
@@ -642,6 +716,19 @@ func (s *Store) CreateTask(in model.TaskInput, defaultListID int64) (*model.Task
 	if title == "" {
 		return nil, ValidationError{Msg: "任务标题不能为空"}
 	}
+	// 幂等：带 clientId 的新建如果已经落过库，直接把那一条还回去。
+	// 离线队列重放、多标签页同时补交、网络重试都可能把同一条新建送两次，
+	// 靠这个值去重，比事后让用户删掉一条重复任务体面得多。
+	if cid := strings.TrimSpace(deref(in.ClientID, "")); cid != "" {
+		var existing int64
+		err := s.db.QueryRow(`SELECT id FROM tasks WHERE client_id = ?`, cid).Scan(&existing)
+		if err == nil {
+			return s.GetTask(existing)
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+	}
 	listID := defaultListID
 	if in.ListID.Set && in.ListID.Value > 0 {
 		listID = in.ListID.Value
@@ -692,6 +779,14 @@ func (s *Store) CreateTask(in model.TaskInput, defaultListID int64) (*model.Task
 	if err := checkReminders(reminders); err != nil {
 		return nil, err
 	}
+	// 绝对时刻提醒：只接受能被解析的本地时刻，且必须是「精确到分钟」的 RFC3339。
+	remindAt := derefPtr(in.RemindAt, nil)
+	if remindAt != nil && strings.TrimSpace(*remindAt) == "" {
+		remindAt = nil
+	}
+	if err := checkRemindAt(remindAt); err != nil {
+		return nil, err
+	}
 	// 新任务默认追加到末尾。原实现取「当前毫秒 % 1000000」，会在约 16.7 分钟后回绕，
 	// 使新任务插到列表最前面；改为读取当前最大值再加固定步长。
 	sortOrder := deref(in.SortOrder, 0)
@@ -709,20 +804,21 @@ func (s *Store) CreateTask(in model.TaskInput, defaultListID int64) (*model.Task
 	}
 
 	ts := model.Now()
-	res, err := tx.Exec(`INSERT INTO tasks(list_id, title, notes, status, priority, start_date, due_date, due_time, end_time, url, reminders, repeat_rule, repeat_from, important, urgent, pinned, starred, estimate_minutes, progress, sort_order, created_at, updated_at)
-		VALUES(?,?,?,'todo',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	clientID := strings.TrimSpace(deref(in.ClientID, ""))
+	res, err := tx.Exec(`INSERT INTO tasks(list_id, title, notes, status, priority, start_date, due_date, due_time, end_time, url, reminders, remind_at, repeat_rule, repeat_from, important, urgent, pinned, starred, estimate_minutes, progress, sort_order, created_at, updated_at, client_id)
+		VALUES(?,?,?,'todo',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		listID, title, deref(in.Notes, ""), priority, ptrStr(startDate), ptrStr(dueDate), ptrStr(dueTime), ptrStr(endTime),
-		deref(in.URL, ""), mustJSON(reminders), ptrStr(repeatRule), repeatFrom,
+		deref(in.URL, ""), mustJSON(reminders), ptrStr(remindAt), ptrStr(repeatRule), repeatFrom,
 		boolInt(important), boolInt(urgent), boolInt(deref(in.Pinned, false)), boolInt(deref(in.Starred, false)),
 		maxInt(deref(in.EstimateMinutes, 0), 0), clampProgress(deref(in.Progress, 0)),
-		sortOrder, ts, ts)
+		sortOrder, ts, ts, nullableOrNil(clientID))
 	if err != nil {
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
 
 	if in.Subtasks.Set {
-		// 与 UpdateTask 同一条写入路径：日期、提醒、两级结构一并保留。
+		// 与 UpdateTask 同一条写入路径：日期、提醒、嵌套结构一并保留。
 		if err := replaceSubtasks(tx, id, in.Subtasks.Value); err != nil {
 			return nil, err
 		}
@@ -849,6 +945,17 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 		}
 		add("reminders = ?", mustJSON(r))
 	}
+	// 绝对时刻提醒：显式 null 表示清空，缺席表示不改动（与其余 Opt 字段同一套语义）。
+	if in.RemindAt.Set {
+		v := in.RemindAt.Value
+		if v != nil && strings.TrimSpace(*v) == "" {
+			v = nil
+		}
+		if err := checkRemindAt(v); err != nil {
+			return nil, err
+		}
+		add("remind_at = ?", ptrStr(v))
+	}
 	if in.RepeatRule.Set {
 		if err := checkRepeatRule(in.RepeatRule.Value); err != nil {
 			return nil, err
@@ -904,6 +1011,9 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 		}
 	}
 
+	// 每次写入都把版本号推一格：并发控制（If-Match）靠它，而不是靠 updated_at ——
+	// 后者只到秒，同一秒内的两次修改分辨不出来。
+	add("version = version + 1")
 	add("updated_at = ?", model.Now())
 	args = append(args, id)
 	// 字段更新、标签同步、子任务替换必须同生共死：否则中途失败会留下
@@ -1038,7 +1148,7 @@ func (s *Store) emitTaskUpdatedQuietly(id int64) {
 	}
 }
 
-// clearSubtaskDone 复制一棵子任务树并把所有 done 归零（含嵌套子子任务）。
+// clearSubtaskDone 复制一棵子任务树并把所有 done 归零（含各层嵌套）。
 // 「副本」与「重复续期」共用：新一轮从头开始做，不能带着上一轮的勾。
 func clearSubtaskDone(items []model.Subtask) []model.Subtask {
 	out := make([]model.Subtask, 0, len(items))
@@ -1454,6 +1564,14 @@ func ptrStr(p *string) any {
 	return nullableStr(*p)
 }
 
+// nullableOrNil 空串按 NULL 落库：client_id 留空时不该占掉唯一索引的一个坑。
+func nullableOrNil(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 // BatchAction 批量操作：complete | reopen | delete | move | pin | unpin |
 // star | unstar | archive | unarchive。
 //
@@ -1632,23 +1750,21 @@ func (s *Store) ReorderTasks(ids []int64) error {
 	return tx.Commit()
 }
 
-// AddSubtask 新增子任务。parentID 非空时挂在同级子任务之下（多级分解），
+// AddSubtask 新增子任务。parentID 非空时挂在另一条子任务之下（分解树可任意深），
 // dueDate 让这条步骤自己有节律，不必与父任务同起同落。
 func (s *Store) AddSubtask(taskID int64, title string, position int, parentID *int64, dueDate *string) (*model.Subtask, error) {
-	// 父级必须同属一条任务，且自身不再有父级 —— 分解树允许任意深度，
-	// 但「跨任务挂父」会造成删除与统计的语义混乱，直接拒绝。
+	// 父级必须同属一条任务：「跨任务挂父」会造成删除与统计的语义混乱，直接拒绝。
+	// 深度不设上限——递归结构下真正要防的不是层级，而是成环。
 	if parentID != nil {
 		var parentTask int64
-		var parentParent *int64
-		if err := s.db.QueryRow(`SELECT task_id, parent_id FROM subtasks WHERE id = ?`, *parentID).Scan(&parentTask, &parentParent); err != nil {
+		if err := s.db.QueryRow(`SELECT task_id FROM subtasks WHERE id = ?`, *parentID).Scan(&parentTask); err != nil {
 			return nil, ErrNotFound
 		}
 		if parentTask != taskID {
 			return nil, ValidationError{Msg: "父级子任务不属于该任务"}
 		}
-		if parentParent != nil {
-			return nil, ValidationError{Msg: "暂只支持两级子任务，父级已是子子任务"}
-		}
+		// 防环：新建的节点还没有 id，不可能成环；这里留作不变量说明——
+		// 唯一会成环的入口是「改父级」，由 UpdateSubtask 的 Reparent 路径把关。
 	}
 	if dueDate != nil && strings.TrimSpace(*dueDate) == "" {
 		dueDate = nil
@@ -1736,6 +1852,16 @@ func (s *Store) UpdateSubtask(id int64, u SubtaskUpdate) error {
 func (s *Store) DeleteSubtask(id int64) error {
 	var parentTask int64
 	_ = s.db.QueryRow(`SELECT task_id FROM subtasks WHERE id = ?`, id).Scan(&parentTask)
+	// 级联删掉整棵子树。分解树不再限两级，留下的孙节点会变成挂在空气上的孤儿：
+	// 前端渲染不到、服务端统计不到，用户那边看着像「凭空少了几条」。
+	// 递归 CTE 一条语句走到底（SQLite 自 3.8.3 支持 WITH RECURSIVE）。
+	if _, err := s.db.Exec(`WITH RECURSIVE sub(id) AS (
+		SELECT id FROM subtasks WHERE id = ?
+		UNION ALL
+		SELECT s.id FROM subtasks s JOIN sub ON s.parent_id = sub.id
+	) DELETE FROM subtasks WHERE id IN (SELECT id FROM sub)`, id); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(`DELETE FROM subtasks WHERE id = ?`, id); err != nil {
 		return err
 	}
@@ -1749,7 +1875,7 @@ func replaceSubtasks(db execer, taskID int64, subs []model.Subtask) error {
 	if _, err := db.Exec(`DELETE FROM subtasks WHERE task_id = ?`, taskID); err != nil {
 		return err
 	}
-	// 两级结构靠「先父后子 + 新 id 接续 parent_id」原样重建，日期/提醒一并保留。
+	// 嵌套结构靠「先父后子 + 新 id 接续 parent_id」原样重建，日期/提醒一并保留。
 	var insert func(items []model.Subtask, parent *int64) error
 	insert = func(items []model.Subtask, parent *int64) error {
 		for i, sub := range items {

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/yufei/shendu/server/internal/model"
@@ -43,7 +44,7 @@ func resolveDueTime(dueDate string, dueTime *string) (time.Time, bool) {
 func (s *Store) DueReminders(now time.Time, lookahead, lookback time.Duration) ([]ReminderHit, error) {
 	rows, err := s.db.Query(taskSelect + ` WHERE t.status IN ('todo','in_progress')
 		AND t.archived = 0 AND l.archived = 0
-		AND t.due_date IS NOT NULL AND t.reminders <> '[]'`)
+		AND ((t.due_date IS NOT NULL AND t.reminders <> '[]') OR (t.remind_at IS NOT NULL AND t.remind_at <> ''))`)
 	if err != nil {
 		return nil, err
 	}
@@ -102,6 +103,25 @@ func (s *Store) DueReminders(now time.Time, lookahead, lookback time.Duration) (
 
 	hits := []ReminderHit{}
 	for _, t := range tasks {
+		// 绝对时刻提醒：与到期日无关，独立成一条。
+		// Offset 记 -1 供前端区分（「指定时刻」而不是「提前 N 分钟」）。
+		if t.RemindAt != nil && strings.TrimSpace(*t.RemindAt) != "" {
+			if fireAt, err := time.Parse(time.RFC3339, *t.RemindAt); err == nil {
+				if !fireAt.After(now.Add(lookahead)) && !fireAt.Before(now.Add(-lookback)) {
+					fs := fireAt.Format(time.RFC3339)
+					if !suppressed(key(t.ID, fs)) {
+						hits = append(hits, ReminderHit{
+							Task:     t,
+							AckID:    t.ID,
+							FireAt:   fs,
+							Offset:   -1,
+							Overdue:  fireAt.Before(now),
+							DueLabel: describeRemindAt(fireAt, now),
+						})
+					}
+				}
+			}
+		}
 		if t.DueDate == nil {
 			continue
 		}
@@ -212,6 +232,20 @@ func (s *Store) ClearReminderLog(taskID int64) error {
 
 func key(taskID int64, fireAt string) string {
 	return strconv.FormatInt(taskID, 10) + "|" + fireAt
+}
+
+// describeRemindAt 给绝对时刻提醒一句人话：不谈「到期」，只说什么时候。
+func describeRemindAt(at, now time.Time) string {
+	d := int(time.Date(at.Year(), at.Month(), at.Day(), 0, 0, 0, 0, time.Local).
+		Sub(time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)).Hours() / 24)
+	switch d {
+	case 0:
+		return "今天 " + at.Format("15:04")
+	case 1:
+		return "明天 " + at.Format("15:04")
+	default:
+		return at.Format("1月2日 15:04")
+	}
 }
 
 func describeDue(due, now time.Time) string {

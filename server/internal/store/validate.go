@@ -50,6 +50,23 @@ func checkPriority(p int) error {
 	return nil
 }
 
+// checkRemindAt 校验绝对时刻提醒：必须是可解析的 RFC3339（本地时区）。
+// 放宽到「带时区偏移也收」——客户端可能给出带 Z 或 +08:00 的形式，
+// 解析后统一按本地时区比较即可。
+func checkRemindAt(p *string) error {
+	if p == nil {
+		return nil
+	}
+	v := strings.TrimSpace(*p)
+	if v == "" {
+		return nil
+	}
+	if _, err := time.Parse(time.RFC3339, v); err != nil {
+		return ValidationError{Msg: "提醒时刻格式应为 RFC3339，例如 2026-10-04T21:30:00+08:00"}
+	}
+	return nil
+}
+
 // checkReminders 校验提醒偏移（分钟）：0 表示到点提醒，上限 30 天。
 func checkReminders(r []int) error {
 	for _, v := range r {

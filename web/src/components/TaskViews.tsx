@@ -14,6 +14,8 @@ import { dayDiff, dueLabel, isOverdue, relativeTime, todayStr, addDays } from '.
 import { QUOTES } from '../lib/quotes'
 import { parseQuickAdd, describeRepeat, QUICK_ADD_HINTS, type Chip } from '../lib/nlp'
 import { useIMEGuard } from '../lib/ime'
+import { coarsePointer, useRowTouch } from '../lib/touch'
+import { SEARCH_HINT, describeOperator, isQueryOperator, removeToken, splitQueryTokens } from '../lib/query'
 import { useStore } from '../store/AppStore'
 import type { Folder, List, Priority, Selection, Tag, Task, TaskPatch } from '../types'
 import {
@@ -22,6 +24,7 @@ import {
   IconBell,
   IconCalendar,
   IconCheck,
+  IconCheckCircle,
   IconCircle,
   IconClock,
   IconCopy,
@@ -192,6 +195,15 @@ export const TaskRow = memo(function TaskRow({
   const [menuOpen, setMenuOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const done = task.status === 'done'
+  // 触屏手势：右滑完成 / 恢复，左滑或长按打开更多。桌面（鼠标）不启用，
+  // 那里有拖拽排序与悬停操作条，再叠一层滑动会互相打架。
+  const [touchEnabled] = useState(coarsePointer)
+  const swipe = useRowTouch({
+    enabled: touchEnabled && !editing,
+    onSwipeRight: () => void toggleTask(task.id),
+    onSwipeLeft: () => setMenuOpen(true),
+    onLongPress: () => setMenuOpen(true),
+  })
 
   useEffect(() => {
     if (editing) inputRef.current?.select()
@@ -220,15 +232,58 @@ export const TaskRow = memo(function TaskRow({
     e.dataTransfer.effectAllowed = 'move'
   }
 
+  const swiping = swipe.offset !== 0
+
   return (
-    <div
-      data-task-row={task.id}
-      role="button"
-      tabIndex={0}
-      aria-label={`${task.title}${done ? '（已完成）' : ''}`}
-      draggable={draggable && !editing}
-      onDragStart={onDragStart}
-      onClick={() => (multiSelect ? toggleSelected(task.id) : onOpen(task))}
+    <div className="swipe-row relative overflow-hidden rounded-xl">
+      {/* 滑动时露出的提示：一侧一个，按当前方向只显示对应的那一个 */}
+      {touchEnabled ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 flex items-center justify-between px-4 text-[0.75rem]"
+        >
+          <span
+            className={cx(
+              'flex items-center gap-1 transition-opacity',
+              swiping && swipe.offset > 0 ? (swipe.armed ? 'text-jade' : 'text-ink-3') : 'opacity-0',
+            )}
+          >
+            <IconCheckCircle size={14} />
+            {done ? '恢复' : '完成'}
+          </span>
+          <span
+            className={cx(
+              'flex items-center gap-1 transition-opacity',
+              swiping && swipe.offset < 0 ? (swipe.armed ? 'text-seal' : 'text-ink-3') : 'opacity-0',
+            )}
+          >
+            <IconMore size={14} />
+            更多
+          </span>
+        </div>
+      ) : null}
+
+      <div
+        data-task-row={task.id}
+        role="button"
+        tabIndex={0}
+        aria-label={`${task.title}${done ? '（已完成）' : ''}`}
+        draggable={draggable && !editing}
+        onDragStart={onDragStart}
+        onClick={(e) => {
+          // 长按刚刚触发过菜单，紧随其后的这一次 click 属于误触，吃掉它。
+          if (swipe.consumeClick()) {
+            e.preventDefault()
+            return
+          }
+          if (multiSelect) toggleSelected(task.id)
+          else onOpen(task)
+        }}
+        {...swipe.handlers}
+        style={{
+          transform: swiping ? `translateX(${swipe.offset}px)` : undefined,
+          transition: swiping ? 'none' : 'transform 0.18s ease-out',
+        }}
       onKeyDown={(e) => {
         // 只处理落在行本身上的按键；子控件（勾选框、操作按钮）的按键由它们自己处理。
         if (e.target !== e.currentTarget) return
@@ -402,6 +457,7 @@ export const TaskRow = memo(function TaskRow({
         ) : (
           <TaskMeta task={task} />
         )}
+        </div>
       </div>
     </div>
   )
@@ -841,9 +897,20 @@ export function QuickAdd({
   /** 预填字段（列头新建用）。标题解析出的显式条件优先于 defaults。 */
   defaults?: TaskPatch
 }) {
-  const { createTask, ensureTags, lists, tags, folders, selection, toast } = useStore()
+  const { createTask, ensureTags, lists, tags, folders, selection, toast, quickAddSeed, consumeQuickAddSeed } =
+    useStore()
   const { compositionProps, isComposing } = useIMEGuard()
   const [text, setText] = useState('')
+  // 外部塞进来的草稿（快捷指令 / 分享的 ?add= 深链）：打开应用时已经把话写好，
+  // 人只需看一眼解析结果再回车 —— 不替他直接落库，那是一条没有回退的写操作。
+  useEffect(() => {
+    if (!quickAddSeed) return
+    setText(quickAddSeed)
+    setExpanded(true)
+    consumeQuickAddSeed()
+    // 等输入框渲染出来再聚焦；移动端顺带把键盘叫起来。
+    window.setTimeout(() => inputRef.current?.focus(), 60)
+  }, [quickAddSeed, consumeQuickAddSeed])
   const [expanded, setExpanded] = useState(false)
   const [caret, setCaret] = useState(0)
   const [activeIndex, setActiveIndex] = useState(0)
@@ -1353,7 +1420,7 @@ export function BatchBar() {
   return (
     // 抬到底部固定浮层（专注指示条 / 提醒中心）之上，三者不再互相遮挡；
     // 移动端再抬高避开底部视图标签栏（3rem 栏高 + safe-area + 0.75rem 间距）
-    <div className="pointer-events-none fixed inset-x-3 bottom-[calc(3.75rem+env(safe-area-inset-bottom))] z-30 flex justify-center lg:bottom-20">
+    <div className="kb-lift pointer-events-none fixed inset-x-3 bottom-[calc(3.75rem+env(safe-area-inset-bottom))] z-30 flex justify-center lg:bottom-20">
       {/* 窄屏上操作条会横向溢出屏幕：改成可换行 + 限宽，宽屏观感不变 */}
       <div className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-2 rounded-2xl border border-line bg-surface/95 px-3 py-2 shadow-[var(--shadow-lg)] backdrop-blur">
         <span className="px-1 text-[0.78125rem] text-ink-2">已选 {selectedIds.length} 项</span>
@@ -1491,6 +1558,12 @@ export function SearchBar({ className, autoFocus }: { className?: string; autoFo
     setKeyword('')
   }
 
+  // 识别出的算子（含在原串中的下标，点 × 时据此删除）。
+  // 与后端 query.go 同规则：识别不出的词一律不当算子。
+  const ops = splitQueryTokens(draft)
+    .map((t, index) => ({ ...t, index }))
+    .filter((t) => isQueryOperator(t.text, t.quoted))
+
   return (
     <div
       className={cx(
@@ -1517,7 +1590,7 @@ export function SearchBar({ className, autoFocus }: { className?: string; autoFo
             e.currentTarget.blur()
           }
         }}
-        placeholder="搜索任务与备注"
+        placeholder={SEARCH_HINT}
         // 移动档（搜索展开行）随容器伸展；桌面端保持定宽 + 聚焦加宽的原有行为。
         className="min-w-0 flex-1 bg-transparent text-[0.8125rem] outline-none transition-all placeholder:text-ink-3 lg:w-40 lg:flex-none lg:focus:w-56"
       />
@@ -1530,6 +1603,34 @@ export function SearchBar({ className, autoFocus }: { className?: string; autoFo
         >
           <IconX size={13} />
         </button>
+      ) : null}
+      {/* 算子提示：把识别成筛选条件的词显式摊开，用户才知道这句话被怎么理解了。
+          走文档流而非浮层——搜索框宽度随档位变化（移动档满宽、桌面定宽），
+          内联渲染天然跟随，也躲开了「祖先 backdrop-blur 让 fixed 偏移」那个坑。 */}
+      {ops.length > 0 ? (
+        <div className="absolute left-0 top-[calc(100%+0.375rem)] z-30 flex max-w-[min(100%,28rem)] flex-wrap items-center gap-1 rounded-lg border border-line bg-surface px-1.5 py-1 shadow-[0_4px_12px_rgba(0,0,0,0.08)]">
+          {ops.map((op) => (
+            <span
+              key={op.index}
+              title={describeOperator(op.text)}
+              className="flex shrink-0 items-center gap-0.5 rounded-md bg-surface-2 py-0.5 pl-1.5 pr-0.5 text-[0.6875rem] text-ink-2"
+            >
+              <span className="max-w-[9rem] truncate whitespace-nowrap">{op.text}</span>
+              <button
+                type="button"
+                aria-label={`去掉条件 ${op.text}`}
+                className="shrink-0 rounded p-0.5 text-ink-3 hover:bg-surface hover:text-ink"
+                onClick={() => {
+                  const next = removeToken(draft, op.index)
+                  setDraft(next)
+                  setKeyword(next)
+                }}
+              >
+                <IconX size={10} />
+              </button>
+            </span>
+          ))}
+        </div>
       ) : null}
     </div>
   )

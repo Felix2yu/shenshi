@@ -292,6 +292,90 @@ textarea {
   outline-offset: -2px;
 }
 
+/* ============================================================
+   iOS / 主屏幕应用适配
+   ============================================================ */
+
+@layer utilities {
+  /* 安全区：装成主屏幕应用后，状态栏与 home 指示条会压在页面上。
+     这里刻意写成 `env(..., 0px)` —— 状态栏不透明的老版本 iOS 会报告 0，
+     于是自动不出多余留白；延伸到状态栏下的版本才会顶开。 */
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .px-safe {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+  .mt-safe {
+    margin-top: env(safe-area-inset-top, 0px);
+  }
+}
+
+/* dvh 兜底：iOS 15.0–15.3 不认 100dvh，声明被整条忽略 → 高度塌陷。
+   凡是用到 h-dvh 的容器（App 根、登录页、空态）都会掉到 auto 高度。 */
+@supports not (height: 100dvh) {
+  .h-dvh {
+    height: 100vh;
+  }
+}
+
+/* iOS 上输入框字号 <16px 时，Safari 会在聚焦那一刻把整个页面放大，
+   松手后也不还原（用户得手动捏回去）。窄屏一律抬到 16px。
+   复选框 / 颜色 / 范围这类非文本控件不受影响。 */
+@media (max-width: 1023px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='color']):not([type='range']),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+/* 触控热区补丁：视觉上可以小，按下去要够大。
+   给带 .tap 的控件补一个不可见的 44px 方块（绝对定位，不占布局）。 */
+@media (pointer: coarse) {
+  .tap {
+    position: relative;
+  }
+  .tap::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+}
+
+/* 长按菜单要自己接管：iOS 长按先弹系统「拷贝/查询」气泡或触发文本选择，
+   不关掉的话自绘菜单出不来。 */
+.no-callout {
+  -webkit-touch-callout: none;
+}
+
+/* 键盘弹出时（仅 iOS 会到这一步：它不缩布局视口）把底部标签栏让出来 ——
+   它本来就被键盘压着看不见，留着只是白白吃掉一截高度。 */
+[data-keyboard] [data-app-footer] {
+  display: none;
+}
+
+/* 悬浮层的键盘避让：跟着 --kb 抬起，落在键盘上沿。
+   桌面恒为 0，等价于不动。 */
+.kb-lift {
+  transform: translateY(calc(-1 * var(--kb, 0px)));
+}
+
+/* 任务行滑动：横向拖动归我们处理，纵向仍交给列表滚动；顺带禁掉拖选文字。 */
+.swipe-row {
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

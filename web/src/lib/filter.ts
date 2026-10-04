@@ -1,4 +1,4 @@
-import type { Task } from '../types'
+import type { Selection, Task, ViewKind } from '../types'
 
 /** 完成状态筛选。默认只看未完成——「全部」是用户主动要的视角，不该是默认。 */
 export type StatusFilter = 'all' | 'todo' | 'done'
@@ -123,4 +123,75 @@ export function filterFromQuery(query: string): TaskFilter {
   } catch {
     return EMPTY_FILTER
   }
+}
+
+// ---------- 保存的筛选 = 一整套视图 ----------
+
+/**
+ * 保存筛选时连同「在哪儿看、怎么看、怎么排」一起存，套用时才真的回到那个视角。
+ *
+ * 之前只存筛选条件，于是「某个清单里、按优先级筛、置顶优先」这个组合存不下来——
+ * 存了筛选，套用时清单和排序都还是当前那一份，看着像「没生效」。这正是自定义视图该有的样子。
+ * 老记录只有 filter 字段，scope 缺失时按「不改动作用域」处理（见 parseSavedScope）。
+ */
+export interface SavedScope {
+  /** 套用时切换到的清单 / 智能清单 / 标签。 */
+  selection: Selection
+  view: ViewKind
+  sortBy: string
+}
+
+export interface SavedFilterBundle {
+  filter: TaskFilter
+  /** 老记录没有这一项。 */
+  scope?: SavedScope
+}
+
+export function bundleToQuery(f: TaskFilter, scope?: SavedScope): string {
+  const b: SavedFilterBundle = { filter: normalize(f) }
+  if (scope) b.scope = scope
+  return JSON.stringify(b)
+}
+
+/**
+ * 解析保存的筛选。兼容两种形状：
+ * 旧版是 TaskFilter 直接躺在顶层，新版是 {filter, scope}。
+ */
+export function parseSavedQuery(query: string): SavedFilterBundle {
+  try {
+    const raw = JSON.parse(query) as Record<string, unknown>
+    if (raw && typeof raw === 'object' && 'filter' in raw) {
+      return {
+        filter: normalize(raw.filter as Partial<TaskFilter>),
+        scope: normalizeScope(raw.scope),
+      }
+    }
+    // 旧形状：整条就是筛选条件。
+    return { filter: normalize(raw as Partial<TaskFilter>) }
+  } catch {
+    return { filter: EMPTY_FILTER }
+  }
+}
+
+function normalizeScope(v: unknown): SavedScope | undefined {
+  if (!v || typeof v !== 'object') return undefined
+  const s = v as Partial<SavedScope>
+  if (!s.selection || !isSelection(s.selection)) return undefined
+  return {
+    selection: s.selection,
+    view: (s.view ?? 'list') as ViewKind,
+    sortBy: typeof s.sortBy === 'string' && s.sortBy ? s.sortBy : 'smart',
+  }
+}
+
+/** 作用域里的 selection 必须形状完整，否则套用时会跳到一个不存在的视图。 */
+function isSelection(v: unknown): v is Selection {
+  if (!v || typeof v !== 'object') return false
+  const s = v as { kind?: unknown }
+  if (typeof s.kind !== 'string') return false
+  if (s.kind === 'smart') return typeof (v as { key?: unknown }).key === 'string'
+  if (s.kind === 'search') return typeof (v as { q?: unknown }).q === 'string'
+  return s.kind === 'list' || s.kind === 'folder' || s.kind === 'tag'
+    ? typeof (v as { id?: unknown }).id === 'number'
+    : false
 }

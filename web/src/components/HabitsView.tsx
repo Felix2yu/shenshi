@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent a
 
 import { api } from '../api/client'
 import { addDays, todayStr, weekday, weekdayName } from '../lib/date'
+import { enqueue } from '../lib/offline'
 import { colorName } from '../lib/palette'
 import { useStore } from '../store/AppStore'
 import type { Habit, HabitBoard, HabitCadence, HabitLog, HabitStat } from '../types'
@@ -94,8 +95,16 @@ function weeklyLabel(weekdays: string): string {
  * 习惯打卡：以「日」为单位的长期坚持。
  * 上半是今日待办，下半是 12/26 周的热力图——点格子即可补记或撤销某一天。
  */
+/**
+ * 离线打卡入队。taskId 填 0：打卡不挂在任何任务上，队列靠 seq 保序，
+ * 这里的 taskId 只是为了满足 OutboxItem 的形状（与语义无关）。
+ */
+function queueCheckIn(habitId: number, day: string, undo: boolean): Promise<void> {
+  return enqueue({ kind: 'checkin', taskId: 0, checkin: { habitId, day, undo } })
+}
+
 export function HabitsView() {
-  const { settings, toast, confirm } = useStore()
+  const { settings, toast, confirm, online, refreshOfflineState } = useStore()
   const [weeks, setWeeks] = useState(DEFAULT_WEEKS)
   const [board, setBoard] = useState<HabitBoard | null>(null)
   const [loading, setLoading] = useState(true)
@@ -160,6 +169,32 @@ export function HabitsView() {
 
   const refresh = useCallback(() => setReload((n) => n + 1), [])
 
+  /**
+   * 离线时先把打卡结果落到本地 board，再入队。
+   *
+   * 打卡是移动端最高频的动作之一，也最常发生在没信号的地方（出门、路上一格）。
+   * 之前这里直连服务端，离线就是一次「打卡失败」——用户只好先记在脑子里，
+   * 而「事后凭记忆补打卡」几乎等于不补，习惯一旦断掉就很难接回来。
+   */
+  const applyLocalCheck = useCallback((habitId: number, day: string, count: number | null) => {
+    setBoard((prev) => {
+      if (!prev) return prev
+      const logs = prev.logs.filter((l) => !(l.habitId === habitId && l.day === day))
+      if (count !== null && count > 0) {
+        logs.push({ id: -(Date.now() % 1e9), habitId, day, count, note: '', createdAt: new Date().toISOString() })
+      }
+      // 统计随打卡即时重算：热力格与达标率都从 stats 读，
+      // 只改 logs 不改 stats 的话，格子亮了但数字没动。
+      const nextStats = prev.stats.map((s) => {
+        if (s.habitId !== habitId) return s
+        const delta = (count ?? 0) - ((prev.logs.find((l) => l.habitId === habitId && l.day === day)?.count) ?? 0)
+        const done = Math.max(0, s.done + delta)
+        return { ...s, done, todayAt: day === prev.today ? done : s.todayAt }
+      })
+      return { ...prev, logs, stats: nextStats }
+    })
+  }, [])
+
   // 连点守卫：同一习惯的请求在途时忽略后续点击。
   // 否则"记一次"与"撤一次"两次请求会以不可预期的顺序落库，
   // 结果既不等于一次也不等于两次（对比 MorningPlan 的 acting Set 写法）。
@@ -186,7 +221,14 @@ export function HabitsView() {
   /** 一键达标 / 撤销今日。目标多于一次时一次记满，避免连点。 */
   const toggleToday = (habit: Habit, stat: HabitStat | undefined) => {
     if (habit.archived) return
-    if (stat?.today) {
+    const undo = stat?.today === true
+    if (!online) {
+      applyLocalCheck(habit.id, today, undo ? null : habit.target)
+      void queueCheckIn(habit.id, today, undo).then(refreshOfflineState)
+      toast('已记录 · 联网后同步')
+      return
+    }
+    if (undo) {
       void run(habit, () => api.uncheckHabit(habit.id, today), '撤销失败')
       return
     }
@@ -196,6 +238,13 @@ export function HabitsView() {
   /** 分次记：目标为 N 次时一次一次累加。 */
   const bumpToday = (habit: Habit) => {
     if (habit.archived) return
+    if (!online) {
+      const cur = logIndex.get(`${habit.id}|${today}`)?.count ?? 0
+      applyLocalCheck(habit.id, today, cur + 1)
+      void queueCheckIn(habit.id, today, false).then(refreshOfflineState)
+      toast('已记录 · 联网后同步')
+      return
+    }
     void run(habit, () => api.checkHabit(habit.id, { day: today }), '打卡失败')
   }
 
@@ -203,6 +252,12 @@ export function HabitsView() {
   const toggleDay = (habit: Habit, day: string) => {
     if (habit.archived || day > today) return
     const met = (logIndex.get(`${habit.id}|${day}`)?.count ?? 0) >= habit.target
+    if (!online) {
+      applyLocalCheck(habit.id, day, met ? null : habit.target)
+      void queueCheckIn(habit.id, day, met).then(refreshOfflineState)
+      toast('已记录 · 联网后同步')
+      return
+    }
     void run(
       habit,
       () => (met ? api.uncheckHabit(habit.id, day) : api.checkHabit(habit.id, { day, count: habit.target })),

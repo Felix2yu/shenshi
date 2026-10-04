@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -178,6 +179,26 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) error {
 	var in model.TaskInput
 	if err := decode(w, r, &in); err != nil {
 		return err
+	}
+	// 并发保护：带了 If-Match 就必须与当前版本对得上。
+	// 多端同时改同一条时，后写覆盖会把先写的那次悄悄吞掉；
+	// 对不上就报 409，让前端提示「这条在别处被改过」，而不是假装改成功。
+	// 版本号用单调自增的 version 而不是 updated_at —— 后者只到秒，
+	// 同一秒里的两次改动分辨不出来，等于没控。
+	if raw := strings.Trim(strings.TrimSpace(r.Header.Get("If-Match")), `"`); raw != "" {
+		cur, err := s.st.GetTask(id)
+		if err != nil {
+			return err
+		}
+		want, convErr := strconv.ParseInt(raw, 10, 64)
+		if convErr != nil || want != cur.Version {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":     "这条任务已在别处被修改，请刷新后再试",
+				"version":   cur.Version,
+				"updatedAt": cur.UpdatedAt,
+			})
+			return nil
+		}
 	}
 	t, err := s.st.UpdateTask(id, in)
 	if err != nil {
