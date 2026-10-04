@@ -35,3 +35,7 @@ coverage.html
 # 图标生成用的字体源文件（12MB，只在本机跑 gen-icons.mjs / gen-icon-svg.py 时用，不入库；
 # 网页用的单子集 public/fonts/shenshi-lishu.woff2 已入库）
 /web/scripts/fonts/
+
+# 本机程序坞图标：由 scripts/make-dock-icon.py 从 bundle 导出（310KB），
+# 每人机器上重跑一次即可，源素材都在 web/public/icons 里，入库只会变成二进制噪声
+/shenshi-dock.icns
