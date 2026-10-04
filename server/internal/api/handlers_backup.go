@@ -67,6 +67,9 @@ func (s *Server) exportCSV(w http.ResponseWriter, r *http.Request) error {
 // importBackup 导入备份，?mode=merge（默认，追加副本）或 replace（清空重建）。
 // 请求体是裸 JSON，不带附件；要连附件一起还原请用 importBackupFile。
 func (s *Server) importBackup(w http.ResponseWriter, r *http.Request) error {
+	// 导入产生的活动一律标成「导入」：事后回看「这条谁建的」时，
+	// 「导入」和「网页」是完全不同的两回事，混起来就没法判断是不是自己点的。
+	defer s.st.SetActivitySource(store.SrcImport)()
 	mode := r.URL.Query().Get("mode")
 	if mode == "" {
 		mode = store.ImportMerge
@@ -89,6 +92,8 @@ func (s *Server) importBackup(w http.ResponseWriter, r *http.Request) error {
 // 之所以另开一个接口而不在 /api/import 上兼容 multipart：压缩包是字节流，
 // 塞进 JSON 字段要 base64 膨胀三分之一，也让「导入」的两种输入形态纠缠不清。
 func (s *Server) importBackupFile(w http.ResponseWriter, r *http.Request) error {
+	// 同 importBackup：上传文件也是导入，来源标错就查不出「这批是不是我导进来的」。
+	defer s.st.SetActivitySource(store.SrcImport)()
 	mode := r.URL.Query().Get("mode")
 	if mode == "" {
 		mode = store.ImportMerge

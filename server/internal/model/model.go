@@ -108,6 +108,9 @@ type Task struct {
 	EndTime    *string `json:"endTime"`   // HH:MM
 	URL        string  `json:"url"`       // 关联链接（会议、文档、单号）
 	Reminders  []int   `json:"reminders"`
+	// 绝对时刻提醒：RFC3339（本地时区）。与 Reminders 的「相对到期提前量」互补 ——
+	// 「今晚九点半提醒我复盘」这类与到期日无关的提醒只能用它表达。
+	RemindAt *string `json:"remindAt"`
 	RepeatRule *string `json:"repeatRule"`
 	// 重复任务的续期基准：due（默认，从原到期日推）| done（从实际完成日推）。
 	RepeatFrom string `json:"repeatFrom"`
@@ -121,7 +124,10 @@ type Task struct {
 	Progress        int `json:"progress"`        // 手工进度百分比 0-100；有子任务时可与其完成度互为印证
 
 	CompletedAt *string `json:"completedAt"`
-	SortOrder   float64 `json:"sortOrder"`
+	// Version 单调自增，每次写入 +1。并发控制（If-Match）比对的是它：
+	// updated_at 只到秒，同一秒内的两次改动看不出来。
+	Version   int64   `json:"version"`
+	SortOrder float64 `json:"sortOrder"`
 	CreatedAt   string  `json:"createdAt"`
 	UpdatedAt   string  `json:"updatedAt"`
 
@@ -342,6 +348,7 @@ type TaskInput struct {
 	EndTime    Opt[*string]   `json:"endTime"`
 	URL        Opt[string]    `json:"url"`
 	Reminders  Opt[[]int]     `json:"reminders"`
+	RemindAt   Opt[*string]   `json:"remindAt"`
 	RepeatRule Opt[*string]   `json:"repeatRule"`
 	RepeatFrom Opt[string]    `json:"repeatFrom"`
 	Important  Opt[bool]      `json:"important"`
@@ -355,6 +362,10 @@ type TaskInput struct {
 
 	EstimateMinutes Opt[int] `json:"estimateMinutes"`
 	Progress        Opt[int] `json:"progress"`
+
+	// ClientID 由调用方生成，用于给「新建」做幂等：同一个 id 只落一条任务。
+	// 离线重放与网络重试都会把同一条新建送两次，靠它去重。
+	ClientID Opt[string] `json:"clientId"`
 }
 
 // SavedFilter 保存下来的筛选条件。Query 存前端 TaskFilter 的 JSON 原文，
@@ -380,15 +391,21 @@ const (
 	ActUndone     = "undone"
 	ActArchived   = "archived"
 	ActUnarchived = "unarchived"
+	// ActImported 第三方格式导入的汇总记录。逐条不记（一次三百条会把历史冲干净），
+	// 只留一条「导了 N 件」，否则用户事后想不起来上周那批东西是哪来的。
+	ActImported = "imported"
 )
 
 // Activity 一条操作历史。
 type Activity struct {
-	ID        int64  `json:"id"`
-	Kind      string `json:"kind"`
-	TaskID    *int64 `json:"taskId"`
-	Title     string `json:"title"`
-	Detail    string `json:"detail"`
+	ID     int64  `json:"id"`
+	Kind   string `json:"kind"`
+	TaskID *int64 `json:"taskId"`
+	Title  string `json:"title"`
+	Detail string `json:"detail"`
+	// Source 标明这条改动来自哪里：web / caldav / import / api。
+	// 单用户场景下「谁改的」看着多余，但排查「我明明没动它」时它就是答案。
+	Source    string `json:"source"`
 	CreatedAt string `json:"createdAt"`
 }
 

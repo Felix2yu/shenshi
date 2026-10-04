@@ -187,3 +187,53 @@ export function greeting(): string {
 }
 
 export { WEEK_FULL }
+
+/**
+ * RFC3339 → `<input type="datetime-local">` 的值（本机时区，精确到分钟）。
+ * 服务端存的是带偏移的 RFC3339，而 datetime-local 只认「无时区的本地墙钟时间」，
+ * 两边必须显式转换，否则会差一个时区。
+ */
+export function toDateTimeLocal(rfc?: string | null): string {
+  if (!rfc) return ''
+  const d = new Date(rfc)
+  if (Number.isNaN(d.getTime())) return ''
+  return (
+    d.getFullYear() +
+    '-' +
+    pad2(d.getMonth() + 1) +
+    '-' +
+    pad2(d.getDate()) +
+    'T' +
+    pad2(d.getHours()) +
+    ':' +
+    pad2(d.getMinutes())
+  )
+}
+
+/** datetime-local 的值 → RFC3339（附本机时区偏移）。空值返回 null 表示「不提醒」。 */
+export function fromDateTimeLocal(v: string): string | null {
+  const s = (v ?? '').trim()
+  if (!s) return null
+  // 不带时区的时间串由 Date 按本机时区解析，正是我们要的墙钟语义。
+  const d = new Date(s)
+  if (Number.isNaN(d.getTime())) return null
+  const off = -d.getTimezoneOffset() // 东八区为 +480
+  const sign = off >= 0 ? '+' : '-'
+  const abs = Math.abs(off)
+  return (
+    d.getFullYear() +
+    '-' +
+    pad2(d.getMonth() + 1) +
+    '-' +
+    pad2(d.getDate()) +
+    'T' +
+    pad2(d.getHours()) +
+    ':' +
+    pad2(d.getMinutes()) +
+    ':00' +
+    sign +
+    pad2(Math.floor(abs / 60)) +
+    ':' +
+    pad2(abs % 60)
+  )
+}

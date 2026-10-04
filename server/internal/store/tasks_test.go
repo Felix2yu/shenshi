@@ -505,7 +505,18 @@ func TestBatchAction(t *testing.T) {
 	}
 }
 
-// TestSubtasks 两级子任务的增改删与跨任务挂父的拒绝。
+// subtaskDepth 量一棵子任务树的最大深度（顶层算 1 层）。
+func subtaskDepth(subs []model.Subtask) int {
+	best := 0
+	for _, sub := range subs {
+		if d := 1 + subtaskDepth(sub.Children); d > best {
+			best = d
+		}
+	}
+	return best
+}
+
+// TestSubtasks 子任务树的增改删与跨任务挂父的拒绝。
 func TestSubtasks(t *testing.T) {
 	s := newTestStore(t)
 	task := mustCreateTask(t, s, "分解任务", nil)
@@ -531,9 +542,13 @@ func TestSubtasks(t *testing.T) {
 		t.Errorf("parent = %v", sub3.ParentID)
 	}
 
-	// 三级被拒：父级已是子子任务。
-	if _, err := s.AddSubtask(task.ID, "第三级", -1, &sub3.ID, nil); err == nil {
-		t.Error("三级子任务应被拒绝")
+	// 第三级同样允许：分解树不限层级。
+	sub4, err := s.AddSubtask(task.ID, "第三级", -1, &sub3.ID, nil)
+	if err != nil {
+		t.Fatalf("第三级子任务应被允许: %v", err)
+	}
+	if sub4.ParentID == nil || *sub4.ParentID != sub3.ID {
+		t.Errorf("第三级 parent = %v", sub4.ParentID)
 	}
 
 	// 跨任务挂父被拒。
@@ -552,6 +567,13 @@ func TestSubtasks(t *testing.T) {
 	}
 	if len(got.Subtasks) < 2 {
 		t.Errorf("顶层子任务数 = %d，应 ≥2", len(got.Subtasks))
+	}
+	// 深层必须真的装进树里，否则前端渲染不到。
+	if d := subtaskDepth(got.Subtasks); d < 3 {
+		t.Errorf("装配出的子树深度 = %d，应 ≥3（三级链要完整）", d)
+	}
+	if got.SubtaskOpen < 4 {
+		t.Errorf("未完成子任务计数 = %d，应 ≥4（跨层统计）", got.SubtaskOpen)
 	}
 
 	// 更新：勾选完成。
@@ -580,6 +602,42 @@ func TestSubtasks(t *testing.T) {
 		if st.ID == sub2.ID {
 			t.Error("子任务应已删除")
 		}
+	}
+}
+
+// TestDeleteSubtaskCascade 删一个中间层，它下面整棵子树都得跟着走。
+// 树放开到任意层级后，漏掉级联会留下一串挂在空气上的孤儿：
+// 前端渲染不到、统计算不到，用户眼里就是「凭空少了几条」。
+func TestDeleteSubtaskCascade(t *testing.T) {
+	s := newTestStore(t)
+	task := mustCreateTask(t, s, "深层分解", nil)
+
+	// a → b → c → d，四层链；另有一条同层的 keep 不该被牵连。
+	a, _ := s.AddSubtask(task.ID, "a", 0, nil, nil)
+	b, _ := s.AddSubtask(task.ID, "b", -1, &a.ID, nil)
+	c, _ := s.AddSubtask(task.ID, "c", -1, &b.ID, nil)
+	d, _ := s.AddSubtask(task.ID, "d", -1, &c.ID, nil)
+	keep, _ := s.AddSubtask(task.ID, "keep", -1, nil, nil)
+
+	if err := s.DeleteSubtask(a.ID); err != nil {
+		t.Fatalf("DeleteSubtask: %v", err)
+	}
+
+	var n int
+	// 直接查库：孤儿行仍能被读到，只是不出现在装配结果里——那正是要防的。
+	for _, id := range []int64{a.ID, b.ID, c.ID, d.ID} {
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM subtasks WHERE id = ?`, id).Scan(&n); err != nil {
+			t.Fatalf("count: %v", err)
+		}
+		if n != 0 {
+			t.Errorf("子任务 %d 应随子树一并删除，仍在库里", id)
+		}
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM subtasks WHERE id = ?`, keep.ID).Scan(&n); err != nil {
+		t.Fatalf("count keep: %v", err)
+	}
+	if n != 1 {
+		t.Error("同层的 keep 不该被牵连删除")
 	}
 }
 

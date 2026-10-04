@@ -768,7 +768,13 @@ async function main() {
         /* 日志读不到就算了，本来就是失败时的额外信息 */
       }
     }
-    fs.rmSync(tmp, { recursive: true, force: true })
+    // 清理必须容错：磁盘满的时候 rmSync 自己也会失败（ENOSPC），
+    // 而这里的异常会把真正的原因盖掉 —— 上次磁盘满时正是这样攒下 49 个残留目录。
+    try {
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3 })
+    } catch (e) {
+      console.log(`\n临时目录清理失败（可手动删除）：${tmp} —— ${e.message}`)
+    }
   }
 }
 

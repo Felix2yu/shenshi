@@ -1,21 +1,32 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 
-import { BoardView } from './components/BoardView'
-import { CalendarView } from './components/CalendarView'
-import { HabitsView } from './components/HabitsView'
-import { QuadrantView } from './components/QuadrantView'
+import { InstallPrompt } from './components/InstallPrompt'
 import { Sidebar } from './components/Sidebar'
-import { StatsView } from './components/StatsView'
-import { TableView } from './components/TableView'
 import { TaskDetail } from './components/TaskDetail'
-import { SealLogo } from './components/icons'
 import { AppOverlays } from './components/Overlays'
 import { BatchBar, TaskListView } from './components/TaskViews'
+
+/**
+ * 首屏只打包「列表」这一条主路径：日历、看板、四象限、统计、习惯、表格
+ * 都在切过去时才下载。手机上第一次打开要的是「记下一件事」，
+ * 为六个不立刻用的视图多下载两三百 KB 不划算。
+ */
+const BoardView = lazy(() => import('./components/BoardView').then((m) => ({ default: m.BoardView })))
+const CalendarView = lazy(() => import('./components/CalendarView').then((m) => ({ default: m.CalendarView })))
+const QuadrantView = lazy(() => import('./components/QuadrantView').then((m) => ({ default: m.QuadrantView })))
+const StatsView = lazy(() => import('./components/StatsView').then((m) => ({ default: m.StatsView })))
+const HabitsView = lazy(() => import('./components/HabitsView').then((m) => ({ default: m.HabitsView })))
+const TableView = lazy(() => import('./components/TableView').then((m) => ({ default: m.TableView })))
+import { SealLogo } from './components/icons'
 import { MobileTabBar, Toolbar } from './components/Toolbar'
+import { IconRefresh } from './components/icons'
 import { Button, cx } from './components/ui'
 import { applyFilter } from './lib/filter'
 import { useEscapeArbiter } from './lib/escStack'
 import { useModalLayerActive } from './lib/modalLayer'
+import { useSwRevalidated } from './lib/offline'
+import { pullArmed, usePullToRefresh } from './lib/touch'
+import { useKeyboardInset } from './lib/viewport'
 import { useStore } from './store/AppStore'
 import type { Selection, Task, ViewKind } from './types'
 
@@ -41,7 +52,16 @@ export default function App() {
     locked,
     filters,
     setFilters,
+    reconcile,
   } = useStore()
+  // iOS 上键盘弹出不缩布局视口，底部固定元素会被压在键盘下面：
+  // 把键盘高度转成 CSS 变量，浮层抬起来、底部标签栏让位。
+  const keyboardInset = useKeyboardInset()
+  // 装成应用后没有刷新按钮，列表下拉即重新拉一次数据。
+  const pull = usePullToRefresh(() => reconcile(), true)
+  // 弱网时 SW 先给了缓存，网络随后到位会通知一次：这时再对一次账，
+  // 免得用户一直看着上次打开时的旧列表。
+  useSwRevalidated(() => reconcile())
   const [navOpen, setNavOpen] = useState(false)
   // 窄屏（<lg，1024px）判定：抽屉的对话框语义只在这一档生效；
   // 768–1023px 的窄窗口/平板竖屏也归入移动档 —— 常驻侧栏会吃掉约四成宽度，
@@ -148,7 +168,11 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-dvh w-full overflow-hidden bg-paper text-ink">
+    <div
+      className="flex h-dvh w-full overflow-hidden bg-paper text-ink"
+      data-keyboard={keyboardInset > 0 || undefined}
+      style={{ ['--kb' as string]: `${keyboardInset}px` }}
+    >
       {/* 有弹窗打开时让背景整体 inert：不可聚焦、也不被读屏读到。
           弹窗已 portal 到 body，不在此子树内，因此不受影响；
           提醒中心 / 专注指示 / Toast 等自绘浮层留在外面，仍可交互。 */}
@@ -165,7 +189,7 @@ export default function App() {
         aria-label="清单导航"
         className={
           navOpen
-            ? 'fixed inset-y-0 left-0 z-40 shadow-[var(--shadow-lg)] outline-none lg:static lg:z-auto lg:shadow-none'
+            ? 'pt-safe px-safe fixed inset-y-0 left-0 z-40 shadow-[var(--shadow-lg)] outline-none lg:static lg:z-auto lg:shadow-none'
             : 'hidden h-full lg:block'
         }
       >
@@ -179,8 +203,9 @@ export default function App() {
         />
       ) : null}
 
-      {/* 主区 */}
-      <main className="relative flex min-w-0 flex-1 flex-col" aria-busy={tasksLoading || undefined}>
+      {/* 主区。pt-safe 让内容避开状态栏（装成主屏幕应用后页面延伸到状态栏之下）；
+          桌面浏览器里 env() 为 0，不留多余空白。 */}
+      <main className="pt-safe relative flex min-w-0 flex-1 flex-col" aria-busy={tasksLoading || undefined}>
         {/* 任务列表刷新指示：absolute 贴在工具栏上沿，不占布局、不加文案；
             aria-busy 一并告诉读屏「内容正在刷新」。 */}
         <div
@@ -201,10 +226,13 @@ export default function App() {
         <BatchBar />
 
         <div
+          {...pull.handlers}
           className={
             view === 'list' || view === 'table' ? 'min-h-0 flex-1 overflow-y-auto' : 'min-h-0 flex-1 overflow-hidden'
           }
         >
+          <PullIndicator distance={pull.distance} refreshing={pull.refreshing} />
+          <Suspense fallback={<ViewLoading />}>
           {view === 'list' ? (
             <TaskListView tasks={visible} onOpen={openTask} emptyKey={emptyKey} />
           ) : view === 'table' ? (
@@ -220,6 +248,7 @@ export default function App() {
           ) : (
             <StatsView />
           )}
+          </Suspense>
         </div>
 
         {/* 移动端底部视图标签栏（lg:hidden）：视图切换下沉到拇指区，
@@ -250,7 +279,7 @@ export default function App() {
             role="dialog"
             aria-modal="true"
             aria-label="任务详情"
-            className="fixed inset-y-0 right-0 z-40 w-full max-w-[400px] lg:static lg:z-auto lg:w-auto lg:max-w-none"
+            className="pt-safe fixed inset-y-0 right-0 z-40 w-full max-w-[400px] lg:static lg:z-auto lg:w-auto lg:max-w-none"
           >
             <TaskDetail taskId={selectedTaskId} onClose={closeTask} />
           </div>
@@ -259,6 +288,36 @@ export default function App() {
 
       </div>
       <AppOverlays />
+      {/* 装成主屏幕应用的引导：只在未安装时浮出，关掉后一个月内不再提 */}
+      <InstallPrompt />
+    </div>
+  )
+}
+
+/**
+ * 视图懒加载时的占位：不写文案、不抖动，就是一小段与列表同色的空白，
+ * 加载通常在几十毫秒内结束，闪一句「加载中」反而更吵。
+ */
+function ViewLoading() {
+  return <div className="min-h-[8rem] w-full" aria-busy="true" />
+}
+
+/**
+ * 下拉刷新的指示器：跟手的那一段高度就是下拉位移，
+ * 越过阈值后文案从「下拉刷新」切成「松手刷新」。
+ */
+function PullIndicator({ distance, refreshing }: { distance: number; refreshing: boolean }) {
+  if (distance <= 0 && !refreshing) return null
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none flex items-end justify-center overflow-hidden text-[0.6875rem] text-ink-3"
+      style={{ height: refreshing ? 44 : distance }}
+    >
+      <span className={cx('pb-1.5 flex items-center gap-1.5', refreshing && 'text-seal')}>
+        <IconRefresh size={13} className={cx(refreshing && 'animate-spin')} />
+        {refreshing ? '正在刷新…' : pullArmed(distance) ? '松手刷新' : '下拉刷新'}
+      </span>
     </div>
   )
 }

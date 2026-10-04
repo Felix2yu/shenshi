@@ -204,6 +204,9 @@ func (b *Backend) PutCalendarObject(ctx context.Context, path string, cal *ical.
 		want = model.StatusTodo
 	}
 	if cur.Status != want {
+		// 从 Apple 提醒事项或系统日历勾掉一条，活动历史就该记成「日历同步」。
+		// 标成「网页」会让人以为是自己在界面上点的 —— 而他并没有。
+		defer b.st.SetActivitySource(store.SrcCalDAV)()
 		if _, err := b.st.ToggleTask(id); err != nil {
 			return nil, unavailable(err)
 		}

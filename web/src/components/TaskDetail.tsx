@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 
 import { api } from '../api/client'
 import { describeDay, labelClass, useCalendarInfo } from '../lib/calendar'
-import { addDays, addMonths, dayDiff, fullDate, relativeTime, todayStr, weekday } from '../lib/date'
+import { addDays, addMonths, dayDiff, fromDateTimeLocal, fullDate, relativeTime, toDateTimeLocal, todayStr, weekday } from '../lib/date'
 import { renderMarkdown } from '../lib/markdown'
 import { describeRepeat } from '../lib/nlp'
 import { useIMEGuard } from '../lib/ime'
@@ -342,7 +342,7 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
   }
 
   const done = task.status === 'done'
-  // 完成度按全树计（后端装配的 subtaskDone/Open 已含子子任务）。
+  // 完成度按全树计（后端装配的 subtaskDone/Open 已含各层嵌套）。
   const subDone = task.subtaskDone
   const subTotal = task.subtaskDone + task.subtaskOpen
   const tagOptions = tags.filter((t) => !task.tags.some((x) => x.id === t.id))
@@ -921,6 +921,26 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
             </Row>
           </div>
 
+          {/* 指定时刻提醒：与到期日无关的那一种，例如「今晚九点半提醒我复盘」 */}
+          <Row label="指定时刻" icon={IconClock}>
+            <input
+              type="datetime-local"
+              aria-label="指定时刻提醒"
+              value={toDateTimeLocal(task.remindAt)}
+              onChange={(e) => void updateTask(task.id, { remindAt: fromDateTimeLocal(e.target.value) })}
+              className="rounded-lg border border-control-line bg-surface px-2 py-1 text-[0.78125rem] text-ink outline-none transition-colors focus:border-seal/60"
+            />
+            {task.remindAt ? (
+              <button
+                type="button"
+                onClick={() => void updateTask(task.id, { remindAt: null })}
+                className="ml-1.5 text-[0.6875rem] text-ink-3 underline decoration-dotted underline-offset-2 hover:text-p-high"
+              >
+                清除
+              </button>
+            ) : null}
+          </Row>
+
           {/* 重复 */}
           <div className="relative">
             <Row label="重复" icon={IconRepeat}>
@@ -1487,7 +1507,23 @@ function formatSize(n: number): string {
 }
 
 /**
- * 一条子任务：勾选、改名、设日期、设提醒、加子子任务、删除。
+ * 子任务树的最大深度（顶层子任务算第 1 层）。
+ *
+ * 后端不限制层级，分解到多深都存得下；这里设个上限是为了界面：
+ * 手机上缩进逐层递减，一条十层的链会把标题挤到只剩几个像素。
+ * 实际用起来三四层已经够拆解绝大多数事了。
+ */
+const SUBTASK_MAX_DEPTH = 8
+
+/** 数一棵子树里共有多少条（含自己），用于删除前的确认文案。 */
+function countSubtasks(sub: Subtask): number {
+  let n = 1
+  for (const c of sub.children) n += countSubtasks(c)
+  return n
+}
+
+/**
+ * 一条子任务：勾选、改名、设日期、设提醒、加下级子任务、删除。
  * children 递归渲染成缩进的分解树；日期让子步骤有自己的节律，
  * 提醒走服务端的子任务提醒通道（见 store.DueReminders）。
  */
@@ -1580,10 +1616,10 @@ function SubtaskItem({ sub, depth }: { sub: Subtask; depth: number }) {
               </div>
             </Popover>
           </span>
-          {depth === 0 ? (
+          {depth < SUBTASK_MAX_DEPTH ? (
             <IconButton
               icon={IconPlus}
-              label="添加子子任务"
+              label="添加下级子任务"
               size={12}
               onClick={() => setChildOpen((v) => !v)}
             />
@@ -1596,7 +1632,10 @@ function SubtaskItem({ sub, depth }: { sub: Subtask; depth: number }) {
               // 子任务删除不入撤销栈（详情面板无 10 分钟恢复槽），所以必须先确认
               const ok = await confirm({
                 title: `删除子任务「${sub.title}」`,
-                message: sub.children.length > 0 ? '其下的子子任务会一并删除，且无法撤销。' : '此操作无法撤销。',
+                message:
+                  sub.children.length > 0
+                    ? `其下的 ${countSubtasks(sub)} 项子任务会一并删除，且无法撤销。`
+                    : '此操作无法撤销。',
                 confirmText: '删除',
                 danger: true,
               })
@@ -1606,16 +1645,17 @@ function SubtaskItem({ sub, depth }: { sub: Subtask; depth: number }) {
         </span>
       </div>
 
-      {/* 子子任务：只展开一层（后端同样限制两级），够拆解「准备答辩 → 订会议室」这类结构 */}
-      {depth === 0 && sub.children.length > 0 ? (
+      {/* 子任务树：任意层级递归渲染，超过上限就不再往下加，
+          免得一条二十层的链把面板撑到找不着北。 */}
+      {sub.children.length > 0 ? (
         <div className="space-y-0.5">
           {sub.children.map((c) => (
-            <SubtaskItem key={c.id} sub={c} depth={1} />
+            <SubtaskItem key={c.id} sub={c} depth={depth + 1} />
           ))}
         </div>
       ) : null}
 
-      {depth === 0 ? (
+      {depth < SUBTASK_MAX_DEPTH ? (
         <AddChildSubtask
           show={childOpen}
           value={childInput}
@@ -1634,7 +1674,7 @@ function SubtaskItem({ sub, depth }: { sub: Subtask; depth: number }) {
   )
 }
 
-/** 「添加子子任务」的行内输入：点 + 号展开，回车提交，失焦或空值时收起。 */
+/** 「添加下级子任务」的行内输入：点 + 号展开，回车提交，失焦或空值时收起。 */
 function AddChildSubtask({
   show,
   value,
@@ -1670,7 +1710,7 @@ function AddChildSubtask({
         onBlur={() => {
           if (!value.trim()) onClose()
         }}
-        placeholder="添加子子任务"
+        placeholder="添加下级子任务"
         className="min-w-0 flex-1 bg-transparent py-1 text-[0.78125rem] outline-none placeholder:text-ink-3"
       />
     </form>
