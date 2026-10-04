@@ -434,9 +434,20 @@ iOS 的两条硬前提写进了设置面板：必须 16.4+，且**必须先添�
 cd server && go vet ./... && go test ./internal/...     # 全绿
 cd web && pnpm typecheck                                  # 通过
 ./scripts/build.sh                                         # 主包 516KB / gzip 155KB
-python3 scripts/smoke.py                                  # 431/431
-node scripts/ui-smoke.mjs                                 # 见当日日志
-node scripts/pwa-smoke.mjs
+python3 scripts/smoke.py       # 431/431
+node scripts/ui-smoke.mjs      # 112/112
+node scripts/pwa-smoke.mjs     # 40/40
 ```
+
+冒烟过程中还揪出两处既有缺陷，一并修掉：
+
+- **日历拖拽被「当前时刻线」挡住**：那条线是纯装饰，但 `z-20` 压在任务块上且没关指针事件，拖到它所在那一小时的任务怎么拖都拖不动。
+  暴露得很巧：UI 冒烟固定把任务拖到 11:00，而那次跑在 11:15——时间线正好画在 11 点那行。
+  **这类按固定时刻定位的测试会在特定钟点失败，看起来像随机挂。**
+- **安装引导在桌面 Chrome 上误显示**：`shouldShowInstallPrompt` 的注释写「桌面浏览器不显示」，实现却是 `platform() !== 'other'`，而桌面 Chrome 返回 `desktop-chrome` → 条件为真。
+  后果是桌面上常驻一张 320px 卡片压住右下角，挡住真正要点的按钮。
+
+另外 `scripts/ui-smoke.mjs` 的临时目录清理加了容错：磁盘满时 `rmSync` 自己也会失败（ENOSPC），
+一次失败攒一个目录，攒够了几十个会把磁盘吃到 100%。现在清理失败会打印路径让人手动删。
 
 新增 Go 测试：查询语法解析与端到端（`query_test.go`）、多层子任务与级联删除（`tasks_test.go`）、逾期顺延口径一致性（`rollover_test.go`）、活动来源与嵌套恢复（`activity_source_test.go`）、第三方格式解析与端到端导入（`import3p_test.go`）、Web Push 订阅与状态（`webpush_test.go` ×2）。
