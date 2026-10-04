@@ -58,6 +58,8 @@ export interface Task {
   /** 关联链接（会议、文档、单号），与附件分开存放 */
   url: string
   reminders: number[]
+  /** 绝对时刻提醒（RFC3339，本机时区）。与 reminders 的「提前 N 分钟」互不干涉。 */
+  remindAt: string | null
   repeatRule: string | null
   /** 重复任务的续期基准：due=从原到期日推，done=从实际完成日推 */
   repeatFrom: 'due' | 'done'
@@ -74,6 +76,8 @@ export interface Task {
   /** 手工进度百分比 0-100；有子任务时可与其完成度互为印证 */
   progress: number
   completedAt: string | null
+  /** 单调自增版本号，每次写入 +1；并发控制（If-Match）比对的就是它。 */
+  version: number
   sortOrder: number
   createdAt: string
   updatedAt: string
@@ -509,6 +513,7 @@ export interface TaskPatch {
   endTime?: string | null
   url?: string
   reminders?: number[]
+  remindAt?: string | null
   repeatRule?: string | null
   repeatFrom?: 'due' | 'done'
   important?: boolean
@@ -581,6 +586,24 @@ export interface PushTestResult {
   url: string
   ok: boolean
   error?: string
+}
+
+/** 推送自检：服务端视角的推送状态与最近的投递台账。 */
+export interface PushStatus {
+  enabled: boolean
+  channels: number
+  daily: boolean
+  dailyTime: string
+  baseUrl: string
+  recent: {
+    key: string
+    /** reminder（提醒）/ daily（每日概览） */
+    kind: string
+    ok: boolean
+    error: string
+    sentAt: string
+    attempts: number
+  }[]
 }
 
 export interface DailyFocus {

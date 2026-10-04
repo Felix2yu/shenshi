@@ -18,6 +18,7 @@ import type {
   Review,
   RepeatMeta,
   PushTestResult,
+  PushStatus,
   SavedFilter,
   Stats,
   Tag,
@@ -31,6 +32,7 @@ import type {
   Webhook,
   WebhookDelivery,
 } from '../types'
+import { newClientId } from '../lib/offline'
 
 export class ApiError extends Error {
   status: number
@@ -60,10 +62,17 @@ export function setUnauthorizedHandler(fn: (() => void) | null): void {
   onUnauthorized = fn
 }
 
-async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  signal?: AbortSignal,
+  /** 额外的请求头。并发保护用它带 If-Match（见 api.updateTask）。 */
+  headers?: Record<string, string>,
+): Promise<T> {
   const init: RequestInit = {
     method,
-    headers: { Accept: 'application/json' },
+    headers: { Accept: 'application/json', ...(headers ?? {}) },
     signal,
   }
   if (body !== undefined) {
@@ -181,8 +190,12 @@ export const api = {
   /** 依赖阻塞状态：blocked_by 且对端未完成时给出阻塞者清单。 */
   taskBlocked: (id: number) =>
     request<{ blocked: boolean; blockers: Task[] }>('GET', `/api/tasks/${id}/blocked`),
-  createTask: (patch: TaskPatch) => request<Task>('POST', '/api/tasks', patch),
-  updateTask: (id: number, patch: TaskPatch) => request<Task>('PATCH', `/api/tasks/${id}`, patch),
+  /** 新建。clientId 是幂等键：网络抖动导致的重复提交会被服务端判重挡下。 */
+  createTask: (patch: TaskPatch) =>
+    request<Task>('POST', '/api/tasks', { ...patch, clientId: newClientId() }),
+  /** 局部更新。ifMatch 传本机看到的 updatedAt，服务端对不上会回 409（并发保护）。 */
+  updateTask: (id: number, patch: TaskPatch, ifMatch?: string) =>
+    request<Task>('PATCH', `/api/tasks/${id}`, patch, undefined, ifMatch ? { 'If-Match': ifMatch } : undefined),
   deleteTask: (id: number) => request<{ ok: boolean }>('DELETE', `/api/tasks/${id}`),
   toggleTask: (id: number) => request<ToggleResult>('POST', `/api/tasks/${id}/toggle`),
   /**
@@ -350,6 +363,9 @@ export const api = {
   /** 服务端推送（Apprise）：向推送渠道发一条测试消息。urls 省略时用已保存的配置。 */
   pushTest: (urls?: string[]) =>
     request<{ results: PushTestResult[] }>('POST', '/api/push/test', urls ? { urls } : {}),
+
+  /** 推送自检：开关、渠道条数与最近几条投递结果，用于排查「为什么没收到」。 */
+  pushStatus: () => request<PushStatus>('GET', '/api/push/status'),
 
   repeatMeta: () => request<RepeatMeta>('GET', '/api/meta/repeat'),
   calendarMeta: (from: string, to: string) =>

@@ -290,7 +290,9 @@ func TestDailyEmpty(t *testing.T) {
 	setPushSettings(t, s, kv)
 
 	p, sent := newTestPusher(t, s, 0)
-	p.tick(now)
+	// 用固定时点而不是 time.Now()：每日概览的默认时点是 09:00，
+	// 在早上九点之前跑测试会直接走到「未到点」分支，落账也就无从谈起。
+	p.tick(time.Date(now.Year(), now.Month(), now.Day(), 10, 0, 0, 0, time.Local))
 	if len(*sent) != 0 {
 		t.Errorf("空概览不应推送: %v", *sent)
 	}

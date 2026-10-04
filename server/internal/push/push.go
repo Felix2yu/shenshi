@@ -24,6 +24,9 @@ const (
 	SetURLs         = "push.appriseUrls"  // 每行一条 Apprise URL，# 开头视为注释
 	SetDailyEnabled = "push.dailyEnabled" // "1" 每日概览推送
 	SetDailyTime    = "push.dailyTime"    // "HH:MM"，默认 09:00
+	// 站点对外地址。推送是服务端发出的，它无从知道自己被哪个域名访问；
+	// 想让通知「点一下就回到这一条」，只能由使用者自己填一次。
+	SetBaseURL = "push.baseUrl" // 形如 https://shenshi.example.com，结尾不带斜杠
 )
 
 const (
@@ -103,6 +106,7 @@ type Config struct {
 	URLs         []string
 	DailyEnabled bool
 	DailyTime    string // "HH:MM"
+	BaseURL      string // 站点对外地址，用于拼「回到这一条」的深链
 }
 
 // LoadConfig 从设置键值里解析推送配置。URL 按行拆分，空行与 # 注释行忽略；
@@ -123,7 +127,22 @@ func LoadConfig(kv map[string]string) Config {
 		}
 		cfg.URLs = append(cfg.URLs, line)
 	}
+	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(kv[SetBaseURL]), "/")
 	return cfg
+}
+
+// deepLink 拼「点一下回到这一条」的链接。没有配站点地址就返回空 ——
+// 宁可不给链接，也不给一个打不开的假地址。
+func (c Config) deepLink(query string) string {
+	if c.BaseURL == "" {
+		return ""
+	}
+	return c.BaseURL + "/?" + query
+}
+
+// remindLink 提醒的深链：带上回执 id，页面据此立刻拉一次提醒，不必等下一个轮询周期。
+func (c Config) remindLink(ackID int64) string {
+	return c.deepLink("remind=" + strconv.FormatInt(ackID, 10))
 }
 
 func validHM(s string) bool {
@@ -174,7 +193,11 @@ func (p *Pusher) pushReminders(cfg Config, now time.Time) {
 		if h.Subtask != nil {
 			name = h.Task.Title + " · " + h.Subtask.Title
 		}
-		if err := p.send(cfg.URLs, "慎始 · "+name, h.DueLabel+"（已到时间）"); err != nil {
+		body := h.DueLabel + "（已到时间）"
+		if link := cfg.remindLink(h.AckID); link != "" {
+			body += "\n" + link
+		}
+		if err := p.send(cfg.URLs, "慎始 · "+name, body); err != nil {
 			_ = p.st.RecordPush(key, false, truncate(err.Error(), 300))
 			p.logf("push: 推送提醒失败（第 %d 次）：%s", state.Attempts+1, err)
 			continue
@@ -227,6 +250,10 @@ func (p *Pusher) pushDaily(cfg Config, now time.Time) {
 	if len(sum.Sample) > 0 {
 		b.WriteString("：")
 		b.WriteString(strings.Join(sum.Sample, "、"))
+	}
+	if link := cfg.deepLink("view=today"); link != "" {
+		b.WriteString("\n")
+		b.WriteString(link)
 	}
 	if err := p.send(cfg.URLs, "慎始 · 今日概览", b.String()); err != nil {
 		_ = p.st.RecordPush(key, false, truncate(err.Error(), 300))

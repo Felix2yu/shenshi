@@ -16,6 +16,7 @@ import { describeFilter, filterFromQuery, isFilterActive } from '../lib/filter'
 import { diagnoseNotifications, pushNotification, useNotifyDiagnosis, type NotifyState } from '../lib/notify'
 import { useIMEGuard } from '../lib/ime'
 import { ACCENTS, colorName, PALETTE } from '../lib/palette'
+import { isStandalone, resetInstallPrompt, subscribeInstallPrompt } from '../lib/pwa'
 import { useStore } from '../store/AppStore'
 import {
   ACTIVITY_LABEL,
@@ -23,6 +24,7 @@ import {
   fontScaleOf,
   type Folder,
   type List,
+  type PushStatus,
   type PushTestResult,
   type SmartKey,
   type Tag,
@@ -1518,10 +1520,20 @@ function splitPushUrls(raw: string): string[] {
 function PushNotifyField() {
   const { settings, saveSettings, toast } = useStore()
   const [urlsDraft, setUrlsDraft] = useState<string | null>(null)
+  const [baseDraft, setBaseDraft] = useState<string | null>(null)
+  const [status, setStatus] = useState<PushStatus | null>(null)
   const [results, setResults] = useState<PushTestResult[] | null>(null)
   const [testing, setTesting] = useState(false)
   const saved = settings['push.appriseUrls'] ?? ''
   const value = urlsDraft ?? saved
+
+  const loadStatus = async () => {
+    try {
+      setStatus(await api.pushStatus())
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '读取推送状态失败', 'error')
+    }
+  }
 
   const runTest = async () => {
     const urls = splitPushUrls(value)
@@ -1590,9 +1602,35 @@ function PushNotifyField() {
             }
           }}
         />
+        <div className="space-y-1">
+          <label className="block text-[0.71875rem] text-ink-2" htmlFor="shenshi-push-base">
+            站点地址（用于推送里的「打开」链接）
+          </label>
+          <input
+            id="shenshi-push-base"
+            type="url"
+            inputMode="url"
+            placeholder="https://shenshi.example.com"
+            className={cx(inputClass, 'font-mono text-[0.75rem]')}
+            value={baseDraft ?? (settings['push.baseUrl'] || '')}
+            onChange={(e) => setBaseDraft(e.target.value)}
+            onBlur={() => {
+              if (baseDraft === null) return
+              const v = baseDraft.trim().replace(/\/+$/, '')
+              setBaseDraft(null)
+              if (v !== (settings['push.baseUrl'] || '')) void saveSettings({ 'push.baseUrl': v })
+            }}
+          />
+          <p className="text-[0.6875rem] leading-relaxed text-ink-3">
+            服务端发出推送时无从知道自己被哪个域名访问，填一次之后，提醒消息会带上「打开」链接，点一下直达那条任务。
+          </p>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" size="sm" className="shrink-0" disabled={testing} onClick={() => void runTest()}>
             {testing ? '发送中…' : '发送测试推送'}
+          </Button>
+          <Button variant="outline" size="sm" className="shrink-0" onClick={() => void loadStatus()}>
+            推送自检
           </Button>
           {results ? (
             <span className="min-w-0 flex-1 space-y-0.5 text-[0.6875rem] leading-relaxed">
@@ -1607,6 +1645,31 @@ function PushNotifyField() {
             <span className="text-[0.6875rem] text-ink-3">测试用的是输入框当前内容，不必先保存。</span>
           )}
         </div>
+        {status ? (
+          <div className="rounded-lg border border-line bg-surface-2/50 p-2 text-[0.6875rem] leading-relaxed">
+            <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-ink-2">
+              <span className={status.enabled ? 'text-jade' : 'text-p-high'}>
+                开关：{status.enabled ? '已开启' : '未开启'}
+              </span>
+              <span>渠道 {status.channels} 条</span>
+              <span>每日概览：{status.daily ? status.dailyTime : '关'}</span>
+            </div>
+            {status.recent.length === 0 ? (
+              <p className="mt-1 text-ink-3">还没有推送记录。到点的提醒会在下一个巡检周期发出（约 30 秒内）。</p>
+            ) : (
+              <ul className="mt-1 space-y-0.5">
+                {status.recent.slice(0, 5).map((r) => (
+                  <li key={r.key} className="flex gap-1.5">
+                    <span className={r.ok ? 'text-jade' : 'text-p-high'}>{r.ok ? '✓' : '✗'}</span>
+                    <span className="text-ink-3">{r.kind === 'daily' ? '每日概览' : '提醒'}</span>
+                    <span className="text-ink-3">{relativeTime(r.sentAt)}</span>
+                    {r.error ? <span className="min-w-0 flex-1 truncate text-p-high">{r.error}</span> : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ) : null}
       </div>
     </Field>
   )
@@ -1647,6 +1710,18 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
     offlineReady,
   } = useStore()
   const { diag, request } = useNotifyDiagnosis()
+  const [installed, setInstalled] = useState(() => isStandalone())
+  // 装好之后（或引导被重新打开时）立刻反映到状态行，不必等下次进入设置。
+  useEffect(() => {
+    const update = () => setInstalled(isStandalone())
+    const off = subscribeInstallPrompt(update)
+    const mq = window.matchMedia('(display-mode: standalone)')
+    mq.addEventListener('change', update)
+    return () => {
+      off()
+      mq.removeEventListener('change', update)
+    }
+  }, [])
   const scale = fontScaleOf(settings.fontScale)
   const fileRef = useRef<HTMLInputElement>(null)
   const [integrationsOpen, setIntegrationsOpen] = useState(false)
@@ -1905,6 +1980,9 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
         >
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-2">
+              <span className={cx('text-[0.71875rem]', installed ? 'text-jade' : 'text-ink-3')}>
+                {installed ? '已装为应用' : '在浏览器中打开'}
+              </span>
               <span className={cx('text-[0.71875rem]', offlineReady ? 'text-jade' : 'text-ink-3')}>
                 离线能力：{offlineReady ? '已就绪' : '未启用（需 HTTPS）'}
               </span>
@@ -1916,6 +1994,11 @@ function AppearanceDialog({ open, onClose }: { open: boolean; onClose: () => voi
               ) : null}
             </div>
             <div className="flex flex-wrap gap-2">
+              {!installed ? (
+                <Button variant="outline" size="sm" onClick={resetInstallPrompt}>
+                  装到主屏幕
+                </Button>
+              ) : null}
               {updateReady ? (
                 <Button variant="primary" size="sm" onClick={() => void applyUpdate()}>
                   有新版，更新并重新加载

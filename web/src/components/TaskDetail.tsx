@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 
 import { api } from '../api/client'
 import { describeDay, labelClass, useCalendarInfo } from '../lib/calendar'
-import { addDays, addMonths, dayDiff, fullDate, relativeTime, todayStr, weekday } from '../lib/date'
+import { addDays, addMonths, dayDiff, fromDateTimeLocal, fullDate, relativeTime, toDateTimeLocal, todayStr, weekday } from '../lib/date'
 import { renderMarkdown } from '../lib/markdown'
 import { describeRepeat } from '../lib/nlp'
 import { useIMEGuard } from '../lib/ime'
@@ -920,6 +920,26 @@ export function TaskDetail({ taskId, onClose }: { taskId: number; onClose: () =>
               </Popover>
             </Row>
           </div>
+
+          {/* 指定时刻提醒：与到期日无关的那一种，例如「今晚九点半提醒我复盘」 */}
+          <Row label="指定时刻" icon={IconClock}>
+            <input
+              type="datetime-local"
+              aria-label="指定时刻提醒"
+              value={toDateTimeLocal(task.remindAt)}
+              onChange={(e) => void updateTask(task.id, { remindAt: fromDateTimeLocal(e.target.value) })}
+              className="rounded-lg border border-control-line bg-surface px-2 py-1 text-[0.78125rem] text-ink outline-none transition-colors focus:border-seal/60"
+            />
+            {task.remindAt ? (
+              <button
+                type="button"
+                onClick={() => void updateTask(task.id, { remindAt: null })}
+                className="ml-1.5 text-[0.6875rem] text-ink-3 underline decoration-dotted underline-offset-2 hover:text-p-high"
+              >
+                清除
+              </button>
+            ) : null}
+          </Row>
 
           {/* 重复 */}
           <div className="relative">

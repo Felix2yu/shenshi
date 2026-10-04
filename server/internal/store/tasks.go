@@ -18,8 +18,8 @@ var ErrNotFound = errors.New("记录不存在")
 
 const taskSelect = `
 SELECT t.id, t.list_id, t.title, t.notes, t.status, t.priority,
-       t.start_date, t.due_date, t.due_time, t.end_time, t.url, t.reminders, t.repeat_rule, t.repeat_from,
-       t.important, t.urgent, t.pinned, t.starred, t.estimate_minutes, t.progress, t.archived,
+       t.start_date, t.due_date, t.due_time, t.end_time, t.url, t.reminders, t.remind_at, t.repeat_rule, t.repeat_from,
+       t.important, t.urgent, t.pinned, t.starred, t.estimate_minutes, t.progress, t.archived, t.version,
        t.completed_at, t.sort_order, t.created_at, t.updated_at,
        l.name, l.color, l.folder_id
 FROM tasks t JOIN lists l ON l.id = t.list_id`
@@ -56,6 +56,47 @@ const statusOpenWithTodayDone = "open+today_done"
 
 // where 返回查询条件与参数（用于列表查询）。
 func (f TaskFilter) where() (string, []any) { return f.build(false) }
+
+// splitSearchTerms 把搜索串切成词：空格分隔，双引号里的内容算一个词。
+// 于是「季度 材料」是两词，「"季度材料"」是一个整体。
+func splitSearchTerms(s string) []string {
+	terms := []string{}
+	var cur strings.Builder
+	quoted := false
+	has := false
+	flush := func() {
+		if has {
+			if v := strings.TrimSpace(cur.String()); v != "" {
+				terms = append(terms, v)
+			}
+		}
+		cur.Reset()
+		has = false
+	}
+	for _, r := range s {
+		switch {
+		case r == '"':
+			quoted = !quoted
+			has = true
+		case (r == ' ' || r == '\t' || r == '\n') && !quoted:
+			flush()
+		default:
+			cur.WriteRune(r)
+			has = true
+		}
+	}
+	flush()
+	return terms
+}
+
+// escapeLike 转义 LIKE 的通配符。用户搜「50%」时不转义会变成「任意前缀」，
+// 搜下划线同理；反斜杠本身也要先转义，否则会吃掉后面的转义符。
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
 
 // whereCount 返回统计口径的条件：角标只关心「还剩多少未完成」，
 // 因此不把今日已完成的事项计入。
@@ -205,9 +246,22 @@ func (f TaskFilter) build(countOnly bool) (string, []any) {
 		args = append(args, *f.TagID)
 	}
 	if f.Search != "" {
-		where = append(where, "(t.title LIKE ? OR t.notes LIKE ?)")
-		like := "%" + f.Search + "%"
-		args = append(args, like, like)
+		// 空格分词：多个词是「都要命中」，不是整串去匹配 ——
+		// 搜「季度 材料」时，标题里两词分开出现也该找得到。
+		for _, term := range splitSearchTerms(f.Search) {
+			// 命中范围不止标题与备注：标签名、清单名、子任务标题都算。
+			// 少一处，用户就得先猜「这玩意到底记在哪」。
+			where = append(where, `(
+				t.title LIKE ? ESCAPE '\' OR t.notes LIKE ? ESCAPE '\'
+				OR l.name LIKE ? ESCAPE '\'
+				OR EXISTS (SELECT 1 FROM task_tags tt JOIN tags g ON g.id = tt.tag_id
+				           WHERE tt.task_id = t.id AND g.name LIKE ? ESCAPE '\')
+				OR EXISTS (SELECT 1 FROM subtasks sb
+				           WHERE sb.task_id = t.id AND sb.title LIKE ? ESCAPE '\')
+			)`)
+			like := "%" + escapeLike(term) + "%"
+			args = append(args, like, like, like, like, like)
+		}
 	}
 	switch f.Quadrant {
 	case "1":
@@ -431,15 +485,15 @@ type rowScanner interface {
 
 func scanTask(r rowScanner) (model.Task, error) {
 	var t model.Task
-	var startDate, dueDate, dueTime, endTime, repeatRule, completedAt sql.NullString
+	var startDate, dueDate, dueTime, endTime, repeatRule, completedAt, remindAt sql.NullString
 	var reminders, url, repeatFrom string
 	var important, urgent, pinned, starred, archived int
 	var listName, listColor sql.NullString
 	var folderID sql.NullInt64
 
 	err := r.Scan(&t.ID, &t.ListID, &t.Title, &t.Notes, &t.Status, &t.Priority,
-		&startDate, &dueDate, &dueTime, &endTime, &url, &reminders, &repeatRule, &repeatFrom,
-		&important, &urgent, &pinned, &starred, &t.EstimateMinutes, &t.Progress, &archived,
+		&startDate, &dueDate, &dueTime, &endTime, &url, &reminders, &remindAt, &repeatRule, &repeatFrom,
+		&important, &urgent, &pinned, &starred, &t.EstimateMinutes, &t.Progress, &archived, &t.Version,
 		&completedAt, &t.SortOrder, &t.CreatedAt, &t.UpdatedAt,
 		&listName, &listColor, &folderID)
 	if err != nil {
@@ -464,6 +518,10 @@ func scanTask(r rowScanner) (model.Task, error) {
 	if repeatRule.Valid {
 		v := repeatRule.String
 		t.RepeatRule = &v
+	}
+	if remindAt.Valid && strings.TrimSpace(remindAt.String) != "" {
+		v := remindAt.String
+		t.RemindAt = &v
 	}
 	if completedAt.Valid {
 		v := completedAt.String
@@ -642,6 +700,19 @@ func (s *Store) CreateTask(in model.TaskInput, defaultListID int64) (*model.Task
 	if title == "" {
 		return nil, ValidationError{Msg: "任务标题不能为空"}
 	}
+	// 幂等：带 clientId 的新建如果已经落过库，直接把那一条还回去。
+	// 离线队列重放、多标签页同时补交、网络重试都可能把同一条新建送两次，
+	// 靠这个值去重，比事后让用户删掉一条重复任务体面得多。
+	if cid := strings.TrimSpace(deref(in.ClientID, "")); cid != "" {
+		var existing int64
+		err := s.db.QueryRow(`SELECT id FROM tasks WHERE client_id = ?`, cid).Scan(&existing)
+		if err == nil {
+			return s.GetTask(existing)
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+	}
 	listID := defaultListID
 	if in.ListID.Set && in.ListID.Value > 0 {
 		listID = in.ListID.Value
@@ -692,6 +763,14 @@ func (s *Store) CreateTask(in model.TaskInput, defaultListID int64) (*model.Task
 	if err := checkReminders(reminders); err != nil {
 		return nil, err
 	}
+	// 绝对时刻提醒：只接受能被解析的本地时刻，且必须是「精确到分钟」的 RFC3339。
+	remindAt := derefPtr(in.RemindAt, nil)
+	if remindAt != nil && strings.TrimSpace(*remindAt) == "" {
+		remindAt = nil
+	}
+	if err := checkRemindAt(remindAt); err != nil {
+		return nil, err
+	}
 	// 新任务默认追加到末尾。原实现取「当前毫秒 % 1000000」，会在约 16.7 分钟后回绕，
 	// 使新任务插到列表最前面；改为读取当前最大值再加固定步长。
 	sortOrder := deref(in.SortOrder, 0)
@@ -709,13 +788,14 @@ func (s *Store) CreateTask(in model.TaskInput, defaultListID int64) (*model.Task
 	}
 
 	ts := model.Now()
-	res, err := tx.Exec(`INSERT INTO tasks(list_id, title, notes, status, priority, start_date, due_date, due_time, end_time, url, reminders, repeat_rule, repeat_from, important, urgent, pinned, starred, estimate_minutes, progress, sort_order, created_at, updated_at)
-		VALUES(?,?,?,'todo',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	clientID := strings.TrimSpace(deref(in.ClientID, ""))
+	res, err := tx.Exec(`INSERT INTO tasks(list_id, title, notes, status, priority, start_date, due_date, due_time, end_time, url, reminders, remind_at, repeat_rule, repeat_from, important, urgent, pinned, starred, estimate_minutes, progress, sort_order, created_at, updated_at, client_id)
+		VALUES(?,?,?,'todo',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		listID, title, deref(in.Notes, ""), priority, ptrStr(startDate), ptrStr(dueDate), ptrStr(dueTime), ptrStr(endTime),
-		deref(in.URL, ""), mustJSON(reminders), ptrStr(repeatRule), repeatFrom,
+		deref(in.URL, ""), mustJSON(reminders), ptrStr(remindAt), ptrStr(repeatRule), repeatFrom,
 		boolInt(important), boolInt(urgent), boolInt(deref(in.Pinned, false)), boolInt(deref(in.Starred, false)),
 		maxInt(deref(in.EstimateMinutes, 0), 0), clampProgress(deref(in.Progress, 0)),
-		sortOrder, ts, ts)
+		sortOrder, ts, ts, nullableOrNil(clientID))
 	if err != nil {
 		return nil, err
 	}
@@ -849,6 +929,17 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 		}
 		add("reminders = ?", mustJSON(r))
 	}
+	// 绝对时刻提醒：显式 null 表示清空，缺席表示不改动（与其余 Opt 字段同一套语义）。
+	if in.RemindAt.Set {
+		v := in.RemindAt.Value
+		if v != nil && strings.TrimSpace(*v) == "" {
+			v = nil
+		}
+		if err := checkRemindAt(v); err != nil {
+			return nil, err
+		}
+		add("remind_at = ?", ptrStr(v))
+	}
 	if in.RepeatRule.Set {
 		if err := checkRepeatRule(in.RepeatRule.Value); err != nil {
 			return nil, err
@@ -904,6 +995,9 @@ func (s *Store) UpdateTask(id int64, in model.TaskInput) (*model.Task, error) {
 		}
 	}
 
+	// 每次写入都把版本号推一格：并发控制（If-Match）靠它，而不是靠 updated_at ——
+	// 后者只到秒，同一秒内的两次修改分辨不出来。
+	add("version = version + 1")
 	add("updated_at = ?", model.Now())
 	args = append(args, id)
 	// 字段更新、标签同步、子任务替换必须同生共死：否则中途失败会留下
@@ -1452,6 +1546,14 @@ func ptrStr(p *string) any {
 		return nil
 	}
 	return nullableStr(*p)
+}
+
+// nullableOrNil 空串按 NULL 落库：client_id 留空时不该占掉唯一索引的一个坑。
+func nullableOrNil(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // BatchAction 批量操作：complete | reopen | delete | move | pin | unpin |

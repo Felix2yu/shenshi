@@ -88,8 +88,9 @@ export function IconButton({ icon: Icon, label, active, size = 15, tone, classNa
       title={label}
       aria-label={label}
       className={cx(
-        // 窄屏（<lg）触控热区放大到 36px（WCAG 2.5.8 目标尺寸），桌面维持 28px 的紧凑排布
-        'inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors duration-150 lg:h-7 lg:w-7',
+        // 窄屏（<lg）触控热区放大到 36px（WCAG 2.5.8 目标尺寸），桌面维持 28px 的紧凑排布。
+        // 再叠一层 .tap：手指上把可点区域补到 44px，视觉尺寸不变。
+        'tap inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors duration-150 lg:h-7 lg:w-7',
         active ? 'bg-seal/12 text-seal' : 'text-ink-3 hover:bg-surface-2 hover:text-ink',
         tone === 'danger' && 'hover:text-p-high',
         className,
@@ -130,7 +131,8 @@ export function RoundCheck({
         onChange(!checked)
       }}
       className={cx(
-        'group/check relative grid shrink-0 place-items-center rounded-full border transition-all duration-200',
+        // .tap：手指上把热区补到 44px（不占布局，仅粗指针生效），圆圈本身照旧 18px
+        'tap group/check relative grid shrink-0 place-items-center rounded-full border transition-all duration-200',
         checked ? 'border-transparent' : 'border-control-line hover:border-seal',
         disabled && 'cursor-not-allowed opacity-50',
       )}

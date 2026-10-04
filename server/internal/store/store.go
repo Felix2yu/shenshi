@@ -172,6 +172,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   starred     INTEGER NOT NULL DEFAULT 0,
   archived    INTEGER NOT NULL DEFAULT 0,
   completed_at TEXT,
+  version      INTEGER NOT NULL DEFAULT 1,
   sort_order  REAL    NOT NULL DEFAULT 0,
   created_at  TEXT    NOT NULL,
   updated_at  TEXT    NOT NULL
@@ -414,6 +415,13 @@ var addColumns = []struct{ table, column, ddl string }{
 	{"subtasks", "due_date", `ALTER TABLE subtasks ADD COLUMN due_date TEXT`},
 	{"subtasks", "reminders", `ALTER TABLE subtasks ADD COLUMN reminders TEXT NOT NULL DEFAULT '[]'`},
 	{"reminder_log", "snoozed_until", `ALTER TABLE reminder_log ADD COLUMN snoozed_until TEXT`},
+	// 绝对时刻提醒：与 reminders 的「提前 N 分钟」是两条独立的路。
+	{"tasks", "remind_at", `ALTER TABLE tasks ADD COLUMN remind_at TEXT`},
+	// 新建幂等：客户端生成的 id，重放与重试靠它去重。
+	{"tasks", "client_id", `ALTER TABLE tasks ADD COLUMN client_id TEXT`},
+	// 单调版本号：updated_at 只到秒，同一秒内的两次改动作不出差别，
+	// 拿它当并发控制的版本号等于没控。version 每次写入自增，不受时钟影响。
+	{"tasks", "version", `ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 1`},
 }
 
 func (s *Store) migrate() error {
@@ -424,6 +432,12 @@ func (s *Store) migrate() error {
 		if err := s.ensureColumn(c.table, c.column, c.ddl); err != nil {
 			return err
 		}
+	}
+	// 索引必须在补列之后建：老库的 tasks 表上还没有 client_id，
+	// 放进 schema 会让整段建表语句直接失败。
+	// 部分唯一索引（WHERE ... IS NOT NULL）：client_id 留空时不该互相占坑。
+	if _, err := s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_client ON tasks(client_id) WHERE client_id IS NOT NULL`); err != nil {
+		return fmt.Errorf("建立新建幂等索引失败: %w", err)
 	}
 	return nil
 }

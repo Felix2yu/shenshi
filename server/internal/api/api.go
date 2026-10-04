@@ -25,6 +25,7 @@ type Server struct {
 	hooks  *dispatcher
 	auto   *store.AutoBackup
 	caldav *shenshicaldav.Handler
+	stream *streamBroker
 }
 
 // New 构造路由表。token 非空时启用访问口令鉴权（见 auth.go）。
@@ -36,11 +37,14 @@ func New(st *store.Store, token string) *Server {
 		gate:   newGate(token),
 		auto:   store.NewAutoBackup(st, log.Printf),
 		caldav: dav,
+		stream: newStreamBroker(),
 	}
 	s.routes()
 	s.registerWebhooks()
 	// 任务一变就记进 CalDAV 变更日志，增量同步才有得可查。
 	st.OnEvent(dav.Backend().SyncHook())
+	// 同一批变更也广播给打开着的页面：别的设备改了什么，这台立刻去对账。
+	st.OnEvent(func(kind string, _ any) { s.stream.broadcast(kind) })
 	// root 在最外层套上鉴权，因此 API 与前端静态资源走同一道门。
 	s.root = s.gate.wrap(s.mux)
 	return s
@@ -123,6 +127,17 @@ func (w *statusWriter) WriteHeader(code int) {
 	w.code = code
 	w.ResponseWriter.WriteHeader(code)
 }
+
+// Flush 与 Unwrap 让包装后的 writer 仍然是「可流式输出」的：
+// SSE（/api/stream）需要逐块冲刷，http.ResponseController 靠 Unwrap 找回底层能力。
+// 少了这两个方法，事件流会被判成 500 —— 包装器把 Flusher 藏起来了。
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // hookWriter 在真正写出状态码之前回调一次，用于补上「只有看到状态码才知道该不该加」的响应头。
 type hookWriter struct {
@@ -239,6 +254,10 @@ func (s *Server) routes() {
 
 	// 服务端推送（Apprise）：提醒到期与每日概览推到手机等外部渠道
 	s.mux.HandleFunc("POST /api/push/test", h(s.pushTest))
+	s.mux.HandleFunc("GET /api/push/status", h(s.pushStatus))
+
+	// 实时通道：数据有变就推一条，其它设备据此立刻对账（见 stream.go）
+	s.mux.HandleFunc("GET /api/stream", h(s.streamEvents))
 	s.mux.HandleFunc("GET /api/meta/repeat", h(s.repeatMeta))
 	s.mux.HandleFunc("GET /api/meta/calendar", h(s.calendarMeta))
 

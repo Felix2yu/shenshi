@@ -114,6 +114,8 @@ export interface OutboxItem {
   completed?: boolean
   /** create 专用：localTasks 里那条临时任务的 id。 */
   tempId?: number
+  /** create 专用：新建幂等键。同一条新建的每次重放都用它，服务端据此判重。 */
+  clientId?: string
   createdAt: number
   /** 重试次数。超过 MAX_TRIES 视为这条再也送不出去，直接丢弃。 */
   tries: number
@@ -123,6 +125,13 @@ export interface OutboxItem {
 /** 离线新建的任务用负数 id：与服务端的正数 id 天然不撞。 */
 export function isTempTaskId(id: number): boolean {
   return id < 0
+}
+
+/** 新建幂等键。优先用 crypto.randomUUID，老 WebView 退回时间戳 + 随机串。 */
+export function newClientId(): string {
+  const c = globalThis.crypto
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID()
+  return `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 /**
@@ -193,6 +202,7 @@ export function buildLocalTask(opts: {
     endTime: patch.endTime ?? null,
     url: patch.url ?? '',
     reminders: patch.reminders ?? [],
+    remindAt: patch.remindAt ?? null,
     repeatRule: patch.repeatRule ?? null,
     repeatFrom: patch.repeatFrom ?? 'due',
     important: patch.important === true,
@@ -203,6 +213,7 @@ export function buildLocalTask(opts: {
     estimateMinutes: 0,
     progress: 0,
     completedAt: null,
+    version: 0,
     sortOrder: 0,
     createdAt: now,
     updatedAt: now,
@@ -380,7 +391,10 @@ async function send(item: OutboxItem, realId: number): Promise<
   switch (item.kind) {
     case 'create':
       url = '/api/tasks'
-      options = json(item.patch ?? {})
+      // 同一个 clientId 贯穿这条新建的重放全程：服务端据此判重，
+      // 队列重放、多标签页同时补交、请求超时重试都不会落出第二条。
+      if (!item.clientId) item.clientId = newClientId()
+      options = json({ ...(item.patch ?? {}), clientId: item.clientId })
       break
     case 'patch':
       url = `/api/tasks/${realId}`
@@ -633,4 +647,28 @@ export function useServiceWorker(): UpdateState {
   }, [])
 
   return { updateReady, updateKey, applyUpdate, hardReset, controlled }
+}
+
+/**
+ * 订阅 Service Worker 的「缓存已换成新版本」通知。
+ *
+ * 弱网下 SW 先把缓存给了页面，网络随后到位时才拿到真数据；
+ * 这时它发一条 SW_REVALIDATED，页面据此再对一次账 ——
+ * 否则用户看到的一直是上一次打开时的旧列表，还以为同步坏了。
+ */
+export function useSwRevalidated(handler: (url: string) => void): void {
+  const ref = useRef(handler)
+  ref.current = handler
+
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return
+    const onMessage = (e: MessageEvent) => {
+      const data: unknown = e.data
+      if (!data || typeof data !== 'object') return
+      const msg = data as { type?: string; url?: string }
+      if (msg.type === 'SW_REVALIDATED' && typeof msg.url === 'string') ref.current(msg.url)
+    }
+    navigator.serviceWorker.addEventListener('message', onMessage)
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage)
+  }, [])
 }

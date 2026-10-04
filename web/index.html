@@ -3,7 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#faf7f2" />
+    <!-- 深浅两套 theme-color：装成主屏幕应用后，状态栏与多任务切换器里的着色跟着系统外观走，
+         否则深色主题下顶部会留一条浅色状态栏。App 内切换主题时也会同步改写（见 AppStore.applyTheme）。 -->
+    <meta name="theme-color" content="#faf7f2" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#171513" media="(prefers-color-scheme: dark)" />
     <meta name="description" content="慎始 · 慎始而敬终，行稳致远。一个注重规划与善始善终的任务管理应用。" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6.5' fill='%23b4553d'/%3E%3Crect x='2.6' y='2.6' width='26.8' height='26.8' rx='4' fill='none' stroke='%23fdf6ef' stroke-width='0.9'/%3E%3Ctext x='16' y='16' font-size='25' text-anchor='middle' dominant-baseline='central' fill='%23fdf6ef' font-family='Libian SC,Baoli SC,Songti SC,serif'%3E%E6%85%8E%3C/text%3E%3C/svg%3E" />
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -21,7 +24,11 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="慎始" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <!-- black-translucent：让页面延伸到状态栏之下，状态栏随主题着色，
+         深色主题下不再是一条突兀的白条。代价是页面自己必须避开状态栏 ——
+         主区、抽屉与详情浮层都加了 .pt-safe（env(safe-area-inset-top)）。
+         老版本 iOS 若忽略这条 meta，env() 会报 0，也就不会多出留白。 -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="format-detection" content="telephone=no" />
 
     <title>慎始 · 慎始而敬终</title>

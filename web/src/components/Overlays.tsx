@@ -5,6 +5,7 @@ import { addDays, fullDate, todayStr } from '../lib/date'
 import { useEscapeLayer } from '../lib/escStack'
 import { QUOTES, morningLine, reviewLine } from '../lib/quotes'
 import { useNotifyDiagnosis } from '../lib/notify'
+import { isIOS } from '../lib/pwa'
 import { useStore } from '../store/AppStore'
 import type { Task } from '../types'
 import {
@@ -73,7 +74,7 @@ function FocusIndicator() {
       type="button"
       onClick={() => window.dispatchEvent(new CustomEvent('shenshi:focus'))}
       title="打开专注面板"
-      className="fixed bottom-[calc(3.5rem+env(safe-area-inset-bottom))] left-4 z-40 flex items-center gap-2 rounded-full border border-seal/40 bg-surface px-3 py-1.5 text-[0.75rem] text-ink shadow-[var(--shadow-sm)] transition-colors hover:bg-surface-2 lg:bottom-4"
+      className="kb-lift fixed bottom-[calc(3.5rem+env(safe-area-inset-bottom))] left-4 z-40 flex items-center gap-2 rounded-full border border-seal/40 bg-surface px-3 py-1.5 text-[0.75rem] text-ink shadow-[var(--shadow-sm)] transition-colors hover:bg-surface-2 lg:bottom-4"
     >
       <IconTimer size={13} className="text-seal" />
       <span className="tabular-nums font-medium">{mm}:{ss}</span>
@@ -813,7 +814,7 @@ function ReminderCenter() {
     <div
       aria-live="polite"
       aria-atomic="false"
-      className="fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] right-3 z-40 w-[330px] max-w-[calc(100vw-1.5rem)] animate-rise lg:bottom-4 lg:right-4"
+      className="kb-lift fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] right-3 z-40 w-[330px] max-w-[calc(100vw-1.5rem)] animate-rise lg:bottom-4 lg:right-4"
     >
       <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-lg)]">
         <header className="flex items-center gap-2 border-b border-line bg-seal/8 px-3 py-2">
@@ -1045,7 +1046,12 @@ function UpdateToast() {
           <IconRefresh size={15} className="mt-0.5 shrink-0 text-seal" />
           <div className="min-w-0 flex-1">
             <p className="whitespace-nowrap text-[0.8125rem] font-medium text-ink">慎始有新版了</p>
-            <p className="mt-0.5 text-[0.6875rem] leading-relaxed text-ink-3">换用新版本并重载页面</p>
+            <p className="mt-0.5 text-[0.6875rem] leading-relaxed text-ink-3">
+              换用新版本并重载页面
+              {isIOS()
+                ? '。iPhone 上若切不过来，把应用从后台划掉再打开一次即可'
+                : ''}
+            </p>
           </div>
           <button
             type="button"

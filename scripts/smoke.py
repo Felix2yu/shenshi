@@ -27,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 PASSED: list[str] = []
 FAILED: list[str] = []
@@ -330,6 +330,15 @@ def run(base: str) -> None:
         check(f"智能清单 {smart}", status == 200 and isinstance(r.get("tasks"), list), str(status))
     status, r = call(base, "GET", f"/api/tasks?q=验收")
     check("关键词搜索命中标题", status == 200 and any("验收" in x["title"] for x in r["tasks"]), str(r.get("count")))
+    # 搜索：多词 AND、引号短语、跨字段命中（标签名 / 清单名 / 子任务标题）
+    status, r = call(base, "GET", "/api/tasks?q=" + urllib.parse.quote("验收 材料"))
+    check(
+        "多词搜索按 AND 命中",
+        status == 200 and isinstance(r.get("tasks"), list),
+        str(r.get("count")),
+    )
+    status, r = call(base, "GET", "/api/tasks?q=" + urllib.parse.quote('"验收材料"'))
+    check("引号短语搜索可用", status == 200, str(r.get("count")))
     status, r = call(base, "GET", f"/api/tasks?date={today.isoformat()}")
     check("按日期筛选（日历视图）", status == 200 and all(x["dueDate"] == today.isoformat() for x in r["tasks"]), str(r.get("count")))
     status, r = call(base, "GET", "/api/tasks?quadrant=1")
@@ -1363,6 +1372,59 @@ def run_new_features(base: str) -> None:
         call(base, "DELETE", f"/api/tasks/{tid}")
 
 
+def run_new_backend_features(base: str) -> None:
+    """2026-10 新增：绝对时刻提醒、新建幂等 clientId、并发保护 If-Match、推送自检接口。"""
+    section("㉙ 绝对时刻提醒 / 新建幂等 / 并发保护 / 推送自检")
+
+    # ---- 绝对时刻提醒 ----
+    fire = (datetime.now() - timedelta(minutes=1)).astimezone()
+    fire_at = fire.strftime("%Y-%m-%dT%H:%M:00%z")
+    fire_at = fire_at[:-2] + ":" + fire_at[-2:]
+    status, t = call(base, "POST", "/api/tasks", {"title": "指定时刻提醒的任务", "remindAt": fire_at})
+    check("新建带指定时刻提醒", status in (200, 201) and t.get("remindAt"), str(t.get("remindAt")))
+    check("指定时刻提醒原样保存", t.get("remindAt", "").startswith(fire.strftime("%Y-%m-%dT%H:%M")), str(t.get("remindAt")))
+    status, r = call(base, "GET", "/api/reminders/due?lookahead=120")
+    hits = r.get("reminders", []) if isinstance(r, dict) else []
+    mine = [h for h in hits if h.get("task", {}).get("id") == t["id"]]
+    check("指定时刻提醒进入提醒队列", len(mine) == 1 and mine[0].get("offset") == -1, str(mine))
+    status, r = call(base, "PATCH", f"/api/tasks/{t['id']}", {"remindAt": None})
+    check("清空指定时刻提醒", status == 200 and r.get("remindAt") is None, str(r.get("remindAt")))
+    call(base, "DELETE", f"/api/tasks/{t['id']}")
+
+    status, r = call(base, "POST", "/api/tasks", {"title": "非法提醒时刻", "remindAt": "not-a-time"})
+    check("非法提醒时刻被拒（400）", status == 400, str(status))
+
+    # ---- 新建幂等：同一个 clientId 只落一条 ----
+    cid = "smoke-idem-1"
+    status, a = call(base, "POST", "/api/tasks", {"title": "幂等新建", "clientId": cid})
+    status2, b = call(base, "POST", "/api/tasks", {"title": "幂等新建", "clientId": cid})
+    check("同一 clientId 重复新建只落一条", status in (200, 201) and status2 in (200, 201) and a["id"] == b["id"], f"{a.get('id')} vs {b.get('id')}")
+    status, lst = call(base, "GET", "/api/tasks?q=幂等新建")
+    check("库中确实只有一条", len([x for x in lst.get("tasks", []) if x["title"] == "幂等新建"]) == 1, str(lst.get("count")))
+    call(base, "DELETE", f"/api/tasks/{a['id']}")
+
+    # ---- 并发保护：If-Match 对不上就 409 ----
+    status, task = call(base, "POST", "/api/tasks", {"title": "并发保护"})
+    ver = str(task["version"])
+    status, _, _ = call_full(base, "PATCH", f"/api/tasks/{task['id']}", {"notes": "第一次改"}, {"If-Match": ver})
+    check("If-Match 命中时正常写入", status == 200, str(status))
+    status, _, body = call_full(base, "PATCH", f"/api/tasks/{task['id']}", {"notes": "第二次改"}, {"If-Match": ver})
+    check("If-Match 过期时返回 409", status == 409, str(status))
+    status, got = call(base, "GET", f"/api/tasks/{task['id']}")
+    check("409 之后数据没被覆盖", got.get("notes") == "第一次改", str(got.get("notes")))
+    check("每次写入版本号递增", got.get("version", 0) > task.get("version", 0), f"{task.get('version')} -> {got.get('version')}")
+    status, _, _ = call_full(base, "PATCH", f"/api/tasks/{task['id']}", {"notes": "按最新版本改"}, {"If-Match": str(got["version"])})
+    check("用最新版本号可以继续写", status == 200, str(status))
+    call(base, "DELETE", f"/api/tasks/{task['id']}")
+
+    # ---- 推送自检 ----
+    status, st = call(base, "GET", "/api/push/status")
+    check("推送自检接口可用", status == 200 and "channels" in st and "recent" in st, str(status))
+    status, r = call(base, "PUT", "/api/settings", {"push.baseUrl": "https://shenshi.example.com/"})
+    status, st = call(base, "GET", "/api/push/status")
+    check("站点地址保存后去掉尾斜杠", st.get("baseUrl") == "https://shenshi.example.com", str(st.get("baseUrl")))
+
+
 def run_auth(base: str, token: str) -> None:
     """访问口令鉴权：单开一个带 -token 的实例，验证这道门该拦的拦住、该放的放行。"""
     section("⑳ 访问口令鉴权")
@@ -1499,6 +1561,7 @@ def main() -> int:
         run(base)
         run_extras(base)
         run_new_features(base)
+        run_new_backend_features(base)
         run_offline_sync(base)
         if binary and tmp:
             # 鉴权需要独立实例：主实例是不带口令的，用来验证「不设口令时一切照旧」
