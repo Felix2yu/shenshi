@@ -63,7 +63,7 @@ jobs:
   # 「慎始」特有的端到端冒烟不进公共 workflow，留在本地：
   # 真实 Chromium 走一遍主流程，并硬性要求「无控制台错误 / 无未捕获异常」。
   smoke:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: test
     steps:
       - uses: actions/checkout@v7
