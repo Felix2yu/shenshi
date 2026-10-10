@@ -1,49 +1,79 @@
+# 由 Felix2yu/.github/preset/dependabot.yml 生成 —— 升级时整份覆盖
+# 设计理由见 Felix2yu/.github/docs/dependabot.md
+
 version: 2
 updates:
-  # 后端 Go 依赖（go.mod 在 server/）
   - package-ecosystem: "gomod"
     directory: "/server"
     schedule:
       interval: "weekly"
       day: "friday"
       time: "00:00"
-      timezone: "UTC"
+      timezone: "Asia/Shanghai"
+    # 默认只有 5，达到上限后会「静默停止」提新 PR 且不报错
     open-pull-requests-limit: 10
+    commit-message:
+      prefix: "build"
+      prefix-development: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
+    groups:
+      go-minor-patch:
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
+      go-major:
+        patterns: ["*"]
+        update-types: ["major"]
 
-  # 前端 npm 依赖（package.json 在 web/）
   - package-ecosystem: "npm"
     directory: "/web"
     schedule:
       interval: "weekly"
       day: "friday"
       time: "00:00"
-      timezone: "UTC"
+      timezone: "Asia/Shanghai"
+    # 默认只有 5，达到上限后会「静默停止」提新 PR 且不报错
     open-pull-requests-limit: 10
+    commit-message:
+      prefix: "build"
+      prefix-development: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
+    groups:
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
+      npm-major:
+        patterns: ["*"]
+        update-types: ["major"]
 
-  # Docker 基础镜像（node:26-alpine / golang:1.27-alpine / alpine:3.24）
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
       day: "friday"
       time: "00:00"
-      timezone: "UTC"
-    open-pull-requests-limit: 10
-    # 这里刻意**不加** ignore：Node / Go 的大版本不冻结，dependabot 提 node:28-alpine
-    # 这类 PR 是允许的，工具链该升就升。
-    #
-    # 代价是镜像 tag 只是版本声明的四处之一（另三处是 `.nvmrc`、`web/package.json` 的
-    # `engines`、`server/go.mod`），而它是唯一读不到其它文件的一处 —— 只改镜像会让
-    # 本地、CI 测试与镜像跑在不同的运行时上。
-    # 所以 scripts/check-toolchain.sh 在 CI 里把关：遇到这种「只改一处」的 PR 会失败，
-    # 并指出还要一起改哪几处。按它说的补齐即可，而不是靠把大版本冻住来回避。
+      timezone: "Asia/Shanghai"
+    # 默认只有 5，达到上限后会「静默停止」提新 PR 且不报错
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
 
-  # GitHub Actions 工作流里用到的 action 版本
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
       day: "friday"
       time: "00:00"
-      timezone: "UTC"
-    open-pull-requests-limit: 10
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "dependencies"
+      - "ci"
+
