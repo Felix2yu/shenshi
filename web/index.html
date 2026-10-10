@@ -8,8 +8,12 @@
     <meta name="theme-color" content="#faf7f2" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#171513" media="(prefers-color-scheme: dark)" />
     <meta name="description" content="慎始 · 慎始而敬终，行稳致远。一个注重规划与善始善终的任务管理应用。" />
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6.5' fill='%23b4553d'/%3E%3Crect x='2.6' y='2.6' width='26.8' height='26.8' rx='4' fill='none' stroke='%23fdf6ef' stroke-width='0.9'/%3E%3Ctext x='16' y='16' font-size='25' text-anchor='middle' dominant-baseline='central' fill='%23fdf6ef' font-family='Libian SC,Baoli SC,Songti SC,serif'%3E%E6%85%8E%3C/text%3E%3C/svg%3E" />
+    <link rel="icon" href="/icons/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" type="image/svg+xml" href="/icons/favicon.svg" />
+    <!-- 32px 这一档单独给：小尺寸下内框线会糊，gen-icons.mjs 里它是关框 + 字放大到 0.80 的专用配方，
+         比 favicon.ico 里那张 32 更清楚，留给不支持 SVG favicon 的老浏览器。 -->
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
 
     <!-- 可安装（PWA）。断网时靠 Service Worker 回退缓存，详见 public/sw.js。 -->
     <link rel="manifest" href="/manifest.webmanifest" />
@@ -20,7 +24,7 @@
          所以图本身是满幅正方形，不要预先裁。
          apple-mobile-web-app-capable 是 manifest 的 display 之前的旧开关，
          新版 Safari 已改读 manifest，这里留着兼容较老的 iOS。 -->
-    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" sizes="180x180" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="慎始" />

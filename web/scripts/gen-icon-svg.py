@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""从 LiBianLiShuTi-2.otf 提取「慎」字形轮廓，生成 PWA 用的 icon.svg（512 画布）。
+"""从 LiBianLiShuTi-2.otf 提取「慎」字形轮廓，生成 PWA 用的 favicon.svg（512 画布）。
 
 设计与 gen-icons.mjs 的 icon-512.png 同参数：圆角章面 rx=0.205、
 印章内框 inset=0.075 / rx=0.12 / stroke=0.024、字高对齐 PNG 的墨迹高度。
@@ -11,7 +11,7 @@ from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.svgPathPen import SVGPathPen
 
 FONT = '/Users/yufei/git/shenshi/web/scripts/fonts/LiBianLiShuTi-2.otf'
-OUT = '/Users/yufei/git/shenshi/web/public/icons/icon.svg'
+OUT = '/Users/yufei/git/shenshi/web/public/icons/favicon.svg'
 CHAR = '慎'
 SEAL = '#b4553d'
 CREAM = '#fdf6ef'

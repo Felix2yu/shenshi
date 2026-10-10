@@ -2,10 +2,10 @@
 /**
  * 生成 PWA / Apple 所需的 PNG 图标。
  *
- * 唯一真源是 public/icons/icon.svg：字形由 gen-icon-svg.py 从 LiBianLiShuTi-2.otf
+ * 唯一真源是 public/icons/favicon.svg：字形由 gen-icon-svg.py 从 LiBianLiShuTi-2.otf
  * 转成 outline（不依赖系统字体），本脚本只负责「把这一枚矢量按各目标尺寸原生栅格化」。
- * 这么做的理由是 —— 字形放大改的是 icon.svg，而 Safari「添加到程序坞」用的恰恰也是
- * icon.svg（manifest 里 sizes:"any" 的 SVG 优先级最高），PNG 若走另一条渲染路径，
+ * 这么做的理由是 —— 字形放大改的是 favicon.svg，而 Safari「添加到程序坞」用的恰恰也是
+ * favicon.svg（manifest 里 sizes:"any" 的 SVG 优先级最高），PNG 若走另一条渲染路径，
  * 就必然和程序坞里那枚对不上。同源自此保证。
  *
  * 为什么必须是 PNG 而不是 SVG：
@@ -28,7 +28,7 @@ import { fileURLToPath } from 'node:url'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const webRoot = path.resolve(here, '..')
 const outDir = path.join(webRoot, 'public', 'icons')
-const refSvg = path.join(outDir, 'icon.svg')
+const refSvg = path.join(outDir, 'favicon.svg')
 
 const require = createRequire(path.join(webRoot, 'noop.js'))
 const { chromium } = require('playwright-core')
@@ -154,6 +154,9 @@ const TARGETS = [
   // 纯 maskable 至少让 Chrome/Android 明确拿这枚。Dock 想要方章只能在 Add to Dock 弹窗或
   // web app 设置里手动换图标（选 icon-512.png，Safari stretch + 垫白 squircle，方章保形）。
   { file: 'icon-maskable-512.png', size: 512, rounded: false, fontFrac: 0.58 },
+  // 与 512 成对的低分档：老版 Android（及部分启动器）只取 192。同一套配方，
+  // 保证两张 maskable 在同一个自适应遮罩下构图一致。
+  { file: 'icon-maskable-192.png', size: 192, rounded: false, fontFrac: 0.58 },
   // iOS 主屏幕图标：满幅不透明（系统自己裁 squircle），180×180 是 Apple 认的尺寸。
   { file: 'apple-touch-icon.png', size: 180, rounded: false, fontFrac: 0.76, frame: true },
   // 浏览器标签页书签：太小，内框线会糊成一团，关掉。
