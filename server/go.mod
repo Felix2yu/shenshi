@@ -3,14 +3,14 @@ module github.com/yufei/shendu/server
 go 1.27.1
 
 require (
+	github.com/daaku/webpush v0.5.0
 	github.com/emersion/go-ical v0.0.0-20240127095438-fc1c9d8fb2b6
 	github.com/emersion/go-webdav v0.7.0
 	github.com/unraid/apprise-go v0.3.3
-	modernc.org/sqlite v1.60.0
+	modernc.org/sqlite v1.60.1
 )
 
 require (
-	github.com/daaku/webpush v0.5.0 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/gomarkdown/markdown v0.0.0-20260417124207-7d523f7318df // indirect
