@@ -8,7 +8,7 @@
 
 ```bash
 # 后端单测：scripts/build.sh 只编译、不跑测试，跳过这步就只能等 CI 报红
-cd server && /opt/homebrew/bin/go test ./internal/...
+/opt/homebrew/bin/go test ./...   # 仓库根就是模块根
 
 # 类型：vite 不做类型检查，必须单独跑
 cd web && /opt/homebrew/bin/node ./node_modules/typescript/bin/tsc --noEmit -p tsconfig.json

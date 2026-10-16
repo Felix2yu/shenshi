@@ -68,7 +68,7 @@ Go 侧不用额外校验：`go build` 自己会按 `go.mod` 的 go 指令拒绝�
 ### 开发模式
 
 ```bash
-cd server && go run . -web ../web/dist   # 后端 + 磁盘上的前端产物
+go run ./cmd/shenshi -web web/dist   # 后端 + 磁盘上的前端产物
 cd web && pnpm run dev                   # 前端热更新，/api 自动代理到 :8787
 ```
 
@@ -485,7 +485,7 @@ CI 配置另在 `.github/`（`workflows/ci.yml`、`dependabot.yml`）。
 
 ```bash
 # 后端单元测试（重复规则推演等纯函数，秒回；CI 会附带覆盖率并上传 Codecov）
-cd server && go test ./... && cd ..
+go test ./...   # 仓库根就是模块根
 
 # 后端端到端（自建临时实例与数据库，逐条验证核心接口）
 python3 scripts/smoke.py

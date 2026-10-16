@@ -144,8 +144,8 @@ def build_binary(repo_root: str, tmp: str) -> str:
     env = dict(os.environ)
     env.setdefault("GOPROXY", "https://goproxy.cn,direct")
     subprocess.run(
-        [go_bin(), "build", "-o", binary, "."],
-        cwd=os.path.join(repo_root, "server"),
+        [go_bin(), "build", "-o", binary, "./cmd/shenshi"],
+        cwd=repo_root,
         check=True,
         env=env,
     )
