@@ -5,8 +5,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# 工具链版本**不写死在这里**：Node 的大版本从 .nvmrc 读，Go 交给 server/go.mod 的 go 指令去要求。
-# 于是升级版本只需要改声明文件（.nvmrc / web/package.json 的 engines / Dockerfile / server/go.mod），
+# 工具链版本**不写死在这里**：Node 的大版本从 .nvmrc 读，Go 交给 go.mod 的 go 指令去要求。
+# 于是升级版本只需要改声明文件（.nvmrc / web/package.json 的 engines / Dockerfile / go.mod），
 # 不必回头动脚本 —— 大版本刻意不冻结，脚本里也就没有需要跟着改的数字。
 # 两段查找都支持环境变量覆盖：NODE_BIN / GO_BIN。
 
@@ -72,7 +72,7 @@ fi
 # 让 npm / pnpm 与 NODE_BIN 同源，避免「node 来自一处、包管理器却来自另一处」。
 export PATH="$(dirname "$NODE_BIN"):$PATH"
 
-# ---------- Go（版本要求见 server/go.mod 的 go 指令）----------
+# ---------- Go（版本要求见 go.mod 的 go 指令）----------
 # Go 常见安装位置兜底（GUI 启动的终端常常没有配好 PATH）
 if [ -z "${GO_BIN:-}" ]; then
   if command -v go >/dev/null 2>&1; then
@@ -115,17 +115,18 @@ fi
 say "构建前端（vite）"
 pnpm run build
 
-# 2) 产物落到 server/dist，供 go:embed 使用
-say "同步前端产物到 server/dist"
-rm -rf "$ROOT/server/dist"
-mkdir -p "$ROOT/server/dist"
-cp -R "$ROOT/web/dist/." "$ROOT/server/dist/"
+# 2) 产物落到 internal/web/dist，供 go:embed 使用
+say "同步前端产物到 internal/web/dist"
+rm -rf "$ROOT/internal/web/dist"
+mkdir -p "$ROOT/internal/web/dist"
+cp -R "$ROOT/web/dist/." "$ROOT/internal/web/dist/"
+touch "$ROOT/internal/web/dist/.gitkeep"
 
-# 3) Go 二进制
-cd "$ROOT/server"
+# 3) Go 二进制（回到仓库根：./cmd/shenshi 相对根解析）
+cd "$ROOT"
 mkdir -p "$ROOT/bin"
 say "构建后端（go build）"
-"$GO_BIN" build -trimpath -ldflags "-s -w" -o "$ROOT/bin/shenshi" .
+"$GO_BIN" build -trimpath -ldflags "-s -w" -o "$ROOT/bin/shenshi" ./cmd/shenshi
 
 say "完成：$ROOT/bin/shenshi"
 printf '运行：%s\n' "cd $ROOT && ./bin/shenshi -addr :8787"

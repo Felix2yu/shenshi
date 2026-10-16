@@ -11,8 +11,7 @@
 # bin/ 不再排除：Dockerfile 已改为「装配式」，CI 预编译的二进制通过
 # COPY bin/shenshi 进镜像，必须出现在构建上下文里。
 web/dist/
-server/dist/
-server/shendu
+internal/web/dist/
 
 # 本地数据（含真实任务数据，绝不能进镜像层）
 data/
@@ -21,8 +20,10 @@ data/
 web/node_modules/
 
 # 开发与文档
+# scripts/ 不排除：Dockerfile 要 COPY scripts/docker-entrypoint.sh，
+# 而排除单个文件再取反会绕过 check-docker.py 的静态判位（假阳性）。
+# 这些脚本本就是源码的一部分，进上下文无代价。
 docs/
-scripts/
 README.md
 Dockerfile
 docker-compose.yml

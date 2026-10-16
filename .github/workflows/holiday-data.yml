@@ -12,7 +12,7 @@ name: 节假日数据
 
 on:
   schedule:
-    # 每周一 UTC 04:00，避开 build.yml 的 03:00 空跑。
+    # 每周一 UTC 04:00，避开 ci.yml 的 03:00 空跑。
     - cron: "0 4 * * 1"
   workflow_dispatch:
     inputs:
@@ -44,8 +44,8 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version-file: server/go.mod
-          cache-dependency-path: server/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
 
       # 默认盯当年与次年：11 月发文后，次年数据一出现就会被这里捡到。
       # 尚未发布的年份脚本会自动跳过（不算失败），所以定时任务不会因为「还没发文」而假红。
@@ -64,7 +64,6 @@ jobs:
       # 通知不可能安排上班），另有 2024 / 2025 / 2026 三年的逐日用例钉住具体日期。
       - name: 校验数据自洽
         run: go test ./internal/lunar/
-        working-directory: server
 
       # 无变更时这个 action 会自己什么都不做，不会开出空 PR。
       # 必须 ≥ v7.0.9：checkout@v6+ 把凭据放进临时 git-credentials-*.config，

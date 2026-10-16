@@ -5,7 +5,7 @@
  * 农历与节气是确定性算法，自己实现即可，永远不需要更新；
  * 但「哪天连休、哪天补班」是国务院办公厅每年 11 月前后公布的，**必须外部供给**。
  * 本脚本对接 NateScarlet/holiday-cn（每日自动抓取国务院公告，CI 自动更新），
- * 直接维护 server/internal/lunar/holidays.json —— 那个文件由 go:embed 打进二进制。
+ * 直接维护 internal/lunar/holidays.json —— 那个文件由 go:embed 打进二进制。
  *
  *   --sync 2027            拉取该年数据并写入 holidays.json（可逗号分隔多年）
  *   --sync 2027 --dry-run  只打印将要写入的内容，不改文件

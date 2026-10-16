@@ -17,8 +17,7 @@ ENV TZ=Asia/Shanghai \
 
 COPY --chmod=755 bin/shenshi /usr/local/bin/shenshi
 # 入口脚本：按 PUID/PGID 调整运行身份并修正 /data 属主
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+COPY --chmod=755 scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 # 数据落在挂载卷里，容器重建不丢数据
 RUN mkdir -p /data && chown -R shenshi:shenshi /data
