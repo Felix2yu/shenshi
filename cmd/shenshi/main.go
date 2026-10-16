@@ -6,7 +6,6 @@ package main
 
 import (
 	"context"
-	"embed"
 	"errors"
 	"flag"
 	"io/fs"
@@ -23,10 +22,8 @@ import (
 	"github.com/yufei/shendu/server/internal/api"
 	"github.com/yufei/shendu/server/internal/push"
 	"github.com/yufei/shendu/server/internal/store"
+	"github.com/yufei/shendu/server/internal/web"
 )
-
-//go:embed all:dist
-var embedded embed.FS
 
 func main() {
 	addr := flag.String("addr", ":8787", "监听地址")
@@ -126,7 +123,7 @@ func normalizeAddr(addr string) string {
 
 // staticHandler 返回前端资源处理器。
 // 优先使用 -web 指定的磁盘目录；否则使用内嵌资源；若内嵌资源为空（未执行前端构建），
-// 则回退到 ./web/dist，保证 `go run ./server` 在开发机上也能直接用。
+// 则回退到 ./web/dist，保证 `go run ./cmd/shenshi` 在开发机上也能直接用。
 func staticHandler(devDir string) (http.Handler, error) {
 	if devDir != "" {
 		abs, err := filepath.Abs(devDir)
@@ -140,12 +137,9 @@ func staticHandler(devDir string) (http.Handler, error) {
 		return spaHandler(os.DirFS(abs)), nil
 	}
 
-	dist, err := fs.Sub(embedded, "dist")
-	if err == nil {
-		if _, err := fs.Stat(dist, "index.html"); err == nil {
-			log.Printf("前端资源: 内嵌资源")
-			return spaHandler(dist), nil
-		}
+	if web.HasBuild() {
+		log.Printf("前端资源: 内嵌资源")
+		return spaHandler(web.FS()), nil
 	}
 	if _, err := os.Stat(filepath.Join("web", "dist", "index.html")); err == nil {
 		log.Printf("前端资源: web/dist（回退）")

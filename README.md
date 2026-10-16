@@ -16,8 +16,8 @@
 
 | 用途 | 版本 | 声明位置（口径） |
 | --- | --- | --- |
-| 前端构建 / 运行 | **Node 26** | `.nvmrc` 是准；`web/package.json` 的 `engines`（`>=26`）是下限；`Dockerfile` 的 `node:26-alpine` 跟随 |
-| 后端构建 / 运行 | **Go 1.27** | `server/go.mod` 的 `go 1.27.1` 是准；`Dockerfile` 的 `golang:1.27-alpine` 跟随 |
+| 前端构建 / 运行 | **Node 26** | `.nvmrc` 是准；`web/package.json` 的 `engines`（`>=26`）是下限；CI 的 `setup-node` 读 `.nvmrc` |
+| 后端构建 / 运行 | **Go 1.27** | `go.mod` 的 `go 1.27.1` 是准；CI 的 `setup-go` 直接读它 |
 | 最终镜像基础层 | **Alpine 3.24** | `Dockerfile` |
 
 ```bash
@@ -28,18 +28,18 @@ nvm use            # 读 .nvmrc，切到 Node 26
 ```
 
 **大版本不冻结**：Node / Go 该升就升，dependabot 提大版本升级不会被挡。
-代价是版本声明有四个落点（`.nvmrc`、`engines`、`server/go.mod`、`Dockerfile`），
-其中只有 Dockerfile 读不到另外三个 —— 所以多了一道校验：
+代价是版本声明有三个落点（`.nvmrc`、`engines`、`go.mod`）——CI 与 `scripts/build.sh`
+都直接读声明文件，本地想核对时跑一次：
 
 ```bash
-./scripts/check-toolchain.sh    # 声明不一致即非零退出；CI 里也会先跑这一步
+./scripts/check-toolchain.sh    # 声明不一致即非零退出
 ```
 
-它让「只改一处」的升级立刻暴露（并指出还要改哪几个文件），而不是让本地、CI 测试与镜像
+它让「只改一处」的升级立刻暴露（并指出还要改哪几个文件），而不是让本地与 CI
 悄悄跑在不同的运行时上。
 
 版本号在 CI 与本地脚本里都不写死：workflow 用 `node-version-file: .nvmrc` 与
-`go-version-file: server/go.mod`，`scripts/build.sh` 也按 `.nvmrc` 找 Node。
+`go-version-file: go.mod`，`scripts/build.sh` 也按 `.nvmrc` 找 Node。
 PATH 上找不到合规版本时会依次到 nvm / Homebrew 里找，并把实际用到的版本打印出来；
 也可用 `NODE_BIN` / `GO_BIN` 显式指定。
 
@@ -52,7 +52,7 @@ Go 侧不用额外校验：`go build` 自己会按 `go.mod` 的 go 指令拒绝�
 ## 快速开始
 
 ```bash
-# 一键构建：前端 → server/dist → 内嵌进二进制
+# 一键构建：前端 → internal/web/dist → 内嵌进二进制
 ./scripts/build.sh
 
 # 运行（默认 http://localhost:8787）
@@ -175,28 +175,24 @@ server {
 
 ## 持续集成
 
-`.github/workflows/` 下两个工作流。
+`.github/workflows/ci.yml` 一个工作流，四个 job。
 
-**`build.yml`** —— 推送 / PR / 手动 / **每周一 03:00 UTC 定时**触发：
-
-| 步骤 | 内容 |
+| job | 内容 |
 | --- | --- |
-| `test` | 校验工具链声明一致 → 前端类型检查 → `build.sh` → 后端冒烟 356 项 → 浏览器 UI 冒烟 91 项（失败时截图作为 artifact 上传） |
-| `docker` | 仅 `main`：`amd64` / `arm64` 各自在**原生 runner** 上构建并推到 `ghcr.io` |
-| `docker-manifest` | 把两个架构合成多架构 manifest（`latest` 与 `<sha>`） |
+| `test` | 复用 `Felix2yu/.github` 的 `reusable-test.yml`：`go vet` + `go test ./...` + 前端构建（产物由 `frontend-stage-command` 摆进 `internal/web/dist`） |
+| `smoke` | `pnpm install` + `tsc --noEmit` + NLP 解析回归 → `build.sh` 全链构建 → 后端冒烟 → 真实 Chromium UI 冒烟 → PWA / 离线冒烟（失败截图作为 artifact 上传） |
+| `image` | 仅 `main`：`amd64` / `arm64` 各自在**原生 runner** 上预编译后装配镜像，推到 `ghcr.io` 并合成多架构 manifest（`latest` 与 `<sha>`） |
+| `release` | 发布 release 时交叉编译 `linux/darwin × amd64/arm64` 四个二进制，连同 `SHA256SUMS.txt` 挂到该 release 上 |
 
 工具链版本由 workflow 直接读声明文件决定（`node-version-file: .nvmrc`、
-`go-version-file: server/go.mod`），不在 YAML 里写版本号。
+`go-version-file: go.mod`），不在 YAML 里写版本号。
 
-**`release.yml`** —— 在 GitHub 上发布 release 时，交叉编译 `linux/darwin × amd64/arm64` 四个二进制，
-连同 `SHA256SUMS.txt` 挂到该 release 上。
-
-**`.github/dependabot.yml`** —— 每周五检查依赖更新并开 PR：`gomod`（`/server`）、
+**`.github/dependabot.yml`** —— 每周五检查依赖更新并开 PR：`gomod`（`/`）、
 `npm`（`/web`）、`docker`（基础镜像）、`github-actions`（工作流里用到的 action）。
 Node / Go 的**大版本不冻结**，这类 PR 正常提；只改镜像 tag 的那种会被
 `check-toolchain.sh` 挡下，并提示把 `.nvmrc` / `engines` / `go.mod` 一起改。
 
-> **关于 runner 选择**：`ubuntu-24.04` / `ubuntu-24.04-arm` 是**显式钉死**的，不用 `-latest`。
+> **关于 runner 选择**：`ubuntu-26.04` / `ubuntu-26.04-arm` 是**显式钉死**的，不用 `-latest`。
 > `-latest` 已经静默换过底层镜像，而这类漂移只在出问题时才被发现。本项目的二进制是静态的、
 > 不受 glibc 影响，钉版本主要是为了让「CI 跑在什么环境上」这件事保持可预期。
 >
@@ -383,10 +379,10 @@ Node / Go 的**大版本不冻结**，这类 PR 正常提；只改镜像 tag 的
 
 ```
 shendu/
-├── server/                       # Go 后端：REST API + 静态资源托管
-│   ├── main.go                   # 入口、go:embed、SPA 回退
-│   ├── internal/model/model.go   # 领域模型与时间序列化
-│   ├── internal/store/           # 数据层（SQLite）
+├── cmd/shenshi/                  # 入口：flag 解析、装配、version 变量
+├── internal/                     # 私有业务包
+│   ├── model/model.go            # 领域模型与时间序列化
+│   ├── store/                    # 数据层（SQLite）
 │   │   ├── store.go              # 建表、种子数据
 │   │   ├── tasks.go              # 任务查询/写入、筛选与排序口径
 │   │   ├── org.go                # 分组 / 清单 / 标签
@@ -398,9 +394,11 @@ shendu/
 │   │   ├── extras.go             # 附件、Webhook、模板、CalDAV 变更日志
 │   │   ├── reminders.go          # 提醒调度与台账
 │   │   └── stats.go              # 统计、复盘、专注
-│   ├── internal/api/             # HTTP 层：路由、CORS、错误映射
-│   ├── internal/caldav/          # CalDAV 服务端（Apple 客户端兼容 + RFC 6578 增量同步）
-│   └── dist/                     # 前端构建产物（由 build.sh 生成，供 embed）
+│   ├── api/                      # HTTP 层：路由、CORS、错误映射
+│   ├── caldav/                   # CalDAV 服务端（Apple 客户端兼容 + RFC 6578 增量同步）
+│   └── web/                      # go:embed 位
+│       ├── embed.go              # //go:embed all:dist + FS()
+│       └── dist/                 # 前端构建产物（由 build.sh 生成，供 embed）
 ├── web/                          # React 前端
 │   ├── public/
 │   │   ├── sw.js                 # Service Worker：只管「读」的离线回退
@@ -422,7 +420,7 @@ shendu/
 │   └── lib/harness.mjs           # 浏览器测试的公共设施（找 Chromium、起实例）
 ```
 
-CI 配置另在 `.github/`（`workflows/build.yml`、`workflows/release.yml`、`dependabot.yml`）。
+CI 配置另在 `.github/`（`workflows/ci.yml`、`dependabot.yml`）。
 
 **几处设计取舍**
 

@@ -24,5 +24,5 @@
 
 ## 后端开发（仓库根）
 
-- 构建：`go build -o shenshi .`
+- 构建：`go build -o bin/shenshi ./cmd/shenshi`
 - 测试：`go test ./...`

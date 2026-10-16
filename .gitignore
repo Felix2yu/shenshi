@@ -1,6 +1,8 @@
 # 构建产物
 /bin/
-/server/dist/
+/internal/web/dist/*
+# 只留一个 .gitkeep：让没跑过 scripts/build.sh 的机器上 //go:embed all:dist 也能编译
+!/internal/web/dist/.gitkeep
 /web/dist/
 
 # 依赖
