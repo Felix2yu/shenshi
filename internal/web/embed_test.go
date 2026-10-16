@@ -17,9 +17,14 @@ func TestHasBuildAndFSAgree(t *testing.T) {
 }
 
 // 无论有没有真实产物，FS() 都必须返回可用的文件系统：
-// 占位目录下至少有 .gitkeep，调用方 fs.Sub/ReadFile 不应直接崩。
+// 有产物时 index.html 必然可读，只有占位时 .gitkeep 必然可读
+// （CI 的 test job 会 rm -rf 后摆真实产物，两种状态都会出现）。
 func TestFSAlwaysUsable(t *testing.T) {
-	if _, err := fs.ReadFile(FS(), ".gitkeep"); err != nil {
-		t.Fatalf("FS() 读不到占位文件 .gitkeep: %v", err)
+	want := ".gitkeep"
+	if HasBuild() {
+		want = "index.html"
+	}
+	if _, err := fs.ReadFile(FS(), want); err != nil {
+		t.Fatalf("FS() 读不到 %s: %v", want, err)
 	}
 }
