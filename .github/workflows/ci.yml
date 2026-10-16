@@ -25,11 +25,17 @@ jobs:
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     with:
-      # go.mod 在仓库根；//go:embed 位移至 internal/web（占位 .gitkeep 已提交），
+      # go.mod 在仓库根；仓库里 internal/web/dist 只有 .gitkeep 占位，
       # 未构建前端时 ./... 也能编译通过
       go-dir: .
       test-packages: ./...
       web-dir: web
+      # 把真实产物摆进 embed 位：让 embed 相关用例真跑起来（而非在
+      # 「没有产物」的状态下空转），也顺带验证打包路径本身
+      frontend-stage-command: |
+        rm -rf internal/web/dist
+        mkdir -p internal/web/dist
+        cp -R web/dist/. internal/web/dist/
 
   image:
     needs: test
