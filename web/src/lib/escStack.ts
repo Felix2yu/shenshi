@@ -12,57 +12,59 @@
  * 焦点不在容器内的（如 Popover 依附的触发按钮）用 `useEscapeLayer` 注册。
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react';
+
+import { useLatest } from './useLatest';
 
 interface EscapeEntry {
-  id: symbol
-  handler: () => void
+  id: symbol;
+  handler: () => void;
 }
 
-const stack: EscapeEntry[] = []
+const stack: EscapeEntry[] = [];
 
 export function pushEscapeLayer(handler: () => void): symbol {
-  const id = Symbol('escape-layer')
-  stack.push({ id, handler })
-  return id
+  const id = Symbol('escape-layer');
+  stack.push({ id, handler });
+  return id;
 }
 
 export function popEscapeLayer(id: symbol) {
-  const index = stack.findIndex((entry) => entry.id === id)
-  if (index >= 0) stack.splice(index, 1)
+  const index = stack.findIndex((entry) => entry.id === id);
+  if (index >= 0) stack.splice(index, 1);
 }
 
 /** 触发栈顶一层。返回本次按键是否被消费。 */
 export function consumeEscape(): boolean {
-  const top = stack[stack.length - 1]
-  if (!top) return false
-  top.handler()
-  return true
+  const top = stack[stack.length - 1];
+  if (!top) return false;
+  top.handler();
+  return true;
 }
 
 export function escapeLayerDepth(): number {
-  return stack.length
+  return stack.length;
 }
 
 /** 组件侧用法：`active` 期间把 handler 注册为栈顶。 */
 export function useEscapeLayer(active: boolean, handler: () => void) {
-  const ref = useRef(handler)
-  ref.current = handler
+  const ref = useLatest(handler);
   useEffect(() => {
-    if (!active) return
-    const id = pushEscapeLayer(() => ref.current())
-    return () => popEscapeLayer(id)
-  }, [active])
+    if (!active) return;
+    const id = pushEscapeLayer(() => ref.current());
+    return () => popEscapeLayer(id);
+    // ref 为稳定对象，列入依赖只为满足 exhaustive-deps，不改变挂载/卸载时机。
+  }, [active, ref]);
 }
 
 /** 由 App 挂载一次，作为 document 上唯一的 Esc 仲裁器。 */
 export function useEscapeArbiter() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented) return
-      if (consumeEscape()) e.stopPropagation()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [])
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      if (consumeEscape()) e.stopPropagation();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
 }

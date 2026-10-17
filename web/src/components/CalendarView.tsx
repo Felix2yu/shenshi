@@ -1,6 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type MouseEvent as ReactMouseEvent
+} from 'react';
 
-import { api } from '../api/client'
+import { api } from '../api/client';
 import {
   addDays,
   addMonths,
@@ -13,131 +20,151 @@ import {
   todayStr,
   toMinutes,
   weekDays,
-  weekdayHeaders,
-} from '../lib/date'
-import { describeDay, labelClass, officialYearsLoaded, useCalendarInfo, workMark } from '../lib/calendar'
-import { applyFilter, type TaskFilter } from '../lib/filter'
-import { useIMEGuard } from '../lib/ime'
-import { parseQuickAdd } from '../lib/nlp'
-import { useStore } from '../store/AppStore'
-import type { CalendarDayInfo, Task } from '../types'
-import { IconChevronLeft, IconChevronRight, IconClock, IconPlus, IconRepeat, IconX } from './icons'
-import { DRAG_MIME, PriorityFlag } from './TaskViews'
-import { IconButton, cx } from './ui'
+  weekdayHeaders
+} from '../lib/date';
+import {
+  describeDay,
+  labelClass,
+  officialYearsLoaded,
+  useCalendarInfo,
+  workMark
+} from '../lib/calendar';
+import { applyFilter, type TaskFilter } from '../lib/filter';
+import { useIMEGuard } from '../lib/ime';
+import { parseQuickAdd } from '../lib/nlp';
+import { useLatest } from '../lib/useLatest';
+import { useStore } from '../store/AppStore';
+import type { CalendarDayInfo, Task } from '../types';
+import { IconChevronLeft, IconChevronRight, IconClock, IconPlus, IconRepeat, IconX } from './icons';
+import { DRAG_MIME, PriorityFlag } from './TaskViews';
+import { IconButton, cx } from './ui';
 
-type Mode = 'month' | 'week' | 'day'
+type Mode = 'month' | 'week' | 'day';
 
 /** 日视图时间轴：每小时的高度。52px 在 24 小时下约 1250px，滚动浏览正合适。 */
-const HOUR_H = 52
-const DAY_MINUTES = 24 * 60
+const HOUR_H = 52;
+const DAY_MINUTES = 24 * 60;
 /** 时间轴上的最小吸附粒度（分钟）与无结束时间时的默认时长。 */
-const SNAP_MIN = 15
-const DEFAULT_DURATION = 45
-const PX_PER_MIN = HOUR_H / 60
-const HOURS = Array.from({ length: 24 }, (_, i) => i)
-const BLOCK_MIN_H = 26
+const SNAP_MIN = 15;
+const DEFAULT_DURATION = 45;
+const PX_PER_MIN = HOUR_H / 60;
+const HOURS = Array.from({ length: 24 }, (_, i) => i);
+const BLOCK_MIN_H = 26;
 
-const isTimeStr = (v: string | null): v is string => !!v && /^\d{2}:\d{2}$/.test(v)
+const isTimeStr = (v: string | null): v is string => !!v && /^\d{2}:\d{2}$/.test(v);
 
 /** 把 [from, to] 摊成日期数组，交给农历缓存层一次性取回。 */
 function dateRange(from: string, to: string): string[] {
-  const out: string[] = []
-  for (let d = from; d <= to; d = addDays(d, 1)) out.push(d)
-  return out
+  const out: string[] = [];
+  for (let d = from; d <= to; d = addDays(d, 1)) out.push(d);
+  return out;
 }
 
 /** 时间轴上的任务块布局：重叠的任务并排，互不重叠的各自占满整行。 */
 function placeDay(rows: { task: Task; start: number; end: number }[]) {
-  type Item = { task: Task; start: number; end: number; lane: number }
-  const out: (Item & { lanes: number })[] = []
-  let cluster: Item[] = []
-  let clusterEnd = -1
+  type Item = { task: Task; start: number; end: number; lane: number };
+  const out: (Item & { lanes: number })[] = [];
+  let cluster: Item[] = [];
+  let clusterEnd = -1;
   const flush = () => {
-    const lanes = cluster.reduce((m, x) => Math.max(m, x.lane + 1), 0)
-    for (const x of cluster) out.push({ ...x, lanes })
-    cluster = []
-    clusterEnd = -1
-  }
+    const lanes = cluster.reduce((m, x) => Math.max(m, x.lane + 1), 0);
+    for (const x of cluster) out.push({ ...x, lanes });
+    cluster = [];
+    clusterEnd = -1;
+  };
   for (const r of rows) {
-    if (cluster.length && r.start >= clusterEnd) flush()
-    const taken = new Set(cluster.filter((c) => c.end > r.start).map((c) => c.lane))
-    let lane = 0
-    while (taken.has(lane)) lane++
-    cluster.push({ ...r, lane })
-    clusterEnd = Math.max(clusterEnd, r.end)
+    if (cluster.length && r.start >= clusterEnd) flush();
+    const taken = new Set(cluster.filter((c) => c.end > r.start).map((c) => c.lane));
+    let lane = 0;
+    while (taken.has(lane)) lane++;
+    cluster.push({ ...r, lane });
+    clusterEnd = Math.max(clusterEnd, r.end);
   }
-  flush()
-  return out
+  flush();
+  return out;
 }
 
 /** 日历视图自持数据：它需要的是「一段时间范围内的全部任务」，与侧边栏选择无关。 */
-export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; filter: TaskFilter }) {
-  const { moveTask, version, createTask, ensureTags, lists } = useStore()
-  const [mode, setMode] = useState<Mode>('month')
-  const [anchor, setAnchor] = useState(todayStr())
-  const [items, setItems] = useState<Task[]>([])
-  const [loading, setLoading] = useState(false)
-  const [dropDay, setDropDay] = useState<string | null>(null)
-  const [adding, setAdding] = useState<string | null>(null)
-  const [draft, setDraft] = useState('')
-  const [weekStart, setWeekStart] = useState<0 | 1>(1)
+export function CalendarView({
+  onOpen,
+  filter
+}: {
+  onOpen: (t: Task) => void;
+  filter: TaskFilter;
+}) {
+  const { moveTask, version, createTask, ensureTags, lists } = useStore();
+  const [mode, setMode] = useState<Mode>('month');
+  const [anchor, setAnchor] = useState(todayStr());
+  const [items, setItems] = useState<Task[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [dropDay, setDropDay] = useState<string | null>(null);
+  const [adding, setAdding] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+  const [weekStart, setWeekStart] = useState<0 | 1>(1);
 
   const range = useMemo(() => {
     // 日视图只关心当天，范围收窄到一天能显著减少拉取量。
-    if (mode === 'day') return { from: anchor, to: anchor }
+    if (mode === 'day') return { from: anchor, to: anchor };
     if (mode === 'week') {
-      const days = weekDays(anchor, weekStart)
-      return { from: days[0], to: days[6] }
+      const days = weekDays(anchor, weekStart);
+      return { from: days[0], to: days[6] };
     }
-    const weeks = monthMatrix(Number(anchor.slice(0, 4)), Number(anchor.slice(5, 7)) - 1, weekStart)
-    return { from: weeks[0][0], to: weeks[5][6] }
-  }, [mode, anchor, weekStart])
+    const weeks = monthMatrix(
+      Number(anchor.slice(0, 4)),
+      Number(anchor.slice(5, 7)) - 1,
+      weekStart
+    );
+    return { from: weeks[0][0], to: weeks[5][6] };
+  }, [mode, anchor, weekStart]);
 
   useEffect(() => {
-    let alive = true
-    setLoading(true)
+    let alive = true;
+    setLoading(true);
     api
       .listTasks({ from: range.from, to: range.to })
       .then((r) => {
-        if (alive) setItems(r.tasks)
+        if (alive) setItems(r.tasks);
       })
       .catch(() => undefined)
-      .finally(() => alive && setLoading(false))
+      .finally(() => alive && setLoading(false));
     return () => {
-      alive = false
-    }
-  }, [range.from, range.to, version])
+      alive = false;
+    };
+  }, [range.from, range.to, version]);
 
-  const visible = useMemo(() => applyFilter(items, filter), [items, filter])
+  const visible = useMemo(() => applyFilter(items, filter), [items, filter]);
 
   // 农历与法定节假日：按当前可见区间整段取回，翻月时只多打一个接口。
-  const calDays = useMemo(() => dateRange(range.from, range.to), [range.from, range.to])
-  const cal = useCalendarInfo(calDays)
+  const calDays = useMemo(() => dateRange(range.from, range.to), [range.from, range.to]);
+  const cal = useCalendarInfo(calDays);
 
   const byDay = useMemo(() => {
-    const map = new Map<string, Task[]>()
+    const map = new Map<string, Task[]>();
     for (const t of visible) {
-      if (!t.dueDate) continue
-      const arr = map.get(t.dueDate)
-      if (arr) arr.push(t)
-      else map.set(t.dueDate, [t])
+      if (!t.dueDate) continue;
+      const arr = map.get(t.dueDate);
+      if (arr) arr.push(t);
+      else map.set(t.dueDate, [t]);
     }
     for (const arr of map.values()) {
-      arr.sort((a, b) => (a.dueTime ?? '99:99').localeCompare(b.dueTime ?? '99:99') || b.priority - a.priority)
+      arr.sort(
+        (a, b) =>
+          (a.dueTime ?? '99:99').localeCompare(b.dueTime ?? '99:99') || b.priority - a.priority
+      );
     }
-    return map
-  }, [visible])
+    return map;
+  }, [visible]);
 
-  const noDate = useMemo(() => visible.filter((t) => !t.dueDate && t.status !== 'done'), [visible])
+  const noDate = useMemo(() => visible.filter((t) => !t.dueDate && t.status !== 'done'), [visible]);
 
   const onDrop = async (e: DragEvent<HTMLDivElement>, day: string) => {
-    e.preventDefault()
-    setDropDay(null)
-    const raw = e.dataTransfer.getData(DRAG_MIME)
-    const id = Number(raw)
-    if (!id) return
-    await moveTask(id, { dueDate: day })
-  }
+    e.preventDefault();
+    setDropDay(null);
+    const raw = e.dataTransfer.getData(DRAG_MIME);
+    const id = Number(raw);
+    if (!id) return;
+    await moveTask(id, { dueDate: day });
+  };
 
   /**
    * 就地新建任务。
@@ -147,24 +174,24 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
    * 日期以格子（或时间轴）为准，标题里写的日期不覆盖它。
    */
   const submitDraft = async (base: { dueDate: string; dueTime?: string }) => {
-    const raw = draft.trim()
+    const raw = draft.trim();
     if (!raw) {
-      setDraft('')
-      setAdding(null)
-      return
+      setDraft('');
+      setAdding(null);
+      return;
     }
-    const parsed = parseQuickAdd(raw, { lists: lists.map((l) => ({ id: l.id, name: l.name })) })
-    const title = parsed.title.trim()
+    const parsed = parseQuickAdd(raw, { lists: lists.map((l) => ({ id: l.id, name: l.name })) });
+    const title = parsed.title.trim();
     if (!title) {
-      setDraft('')
-      setAdding(null)
-      return
+      setDraft('');
+      setAdding(null);
+      return;
     }
-    let tagIds: number[] | undefined
+    let tagIds: number[] | undefined;
     if (parsed.tagNames.length) {
-      const created = await ensureTags(parsed.tagNames)
-      if (created === null) return // 标签没建成：保留输入，错误已 toast
-      tagIds = created.map((t) => t.id)
+      const created = await ensureTags(parsed.tagNames);
+      if (created === null) return; // 标签没建成：保留输入，错误已 toast
+      tagIds = created.map((t) => t.id);
     }
     // 走 store 而不是直调 api：version 依赖会自动重拉本视图，
     // 清单/智能视图的对账也一并生效；失败时保留输入（store 已 toast）。
@@ -178,37 +205,37 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
       ...(parsed.important !== null ? { important: parsed.important } : {}),
       ...(parsed.urgent !== null ? { urgent: parsed.urgent } : {}),
       ...(parsed.listId !== null ? { listId: parsed.listId } : {}),
-      ...(tagIds ? { tagIds } : {}),
-    })
-    if (!t) return
-    setDraft('')
-    setAdding(null)
-  }
+      ...(tagIds ? { tagIds } : {})
+    });
+    if (!t) return;
+    setDraft('');
+    setAdding(null);
+  };
 
-  const quickCreate = (day: string) => submitDraft({ dueDate: day })
+  const quickCreate = (day: string) => submitDraft({ dueDate: day });
 
   /** 日视图：在某时刻落一件新任务。 */
-  const createAt = (time: string) => submitDraft({ dueDate: anchor, dueTime: time })
+  const createAt = (time: string) => submitDraft({ dueDate: anchor, dueTime: time });
 
   /** 日视图：把任务拖到某个时刻，只改时间不动日期；传 null 表示退回「全天」。 */
   const moveToTime = async (id: number, time: string | null) => {
-    await moveTask(id, { dueDate: anchor, dueTime: time })
-  }
+    await moveTask(id, { dueDate: anchor, dueTime: time });
+  };
 
   const label =
     mode === 'month'
       ? `${anchor.slice(0, 4)} 年 ${Number(anchor.slice(5, 7))} 月`
       : mode === 'day'
         ? fullDate(anchor)
-        : `${range.from} ~ ${range.to}`
+        : `${range.from} ~ ${range.to}`;
 
   const shift = (dir: number) => {
-    if (mode === 'month') setAnchor(addMonths(anchor, dir))
-    else if (mode === 'day') setAnchor(addDays(anchor, dir))
-    else setAnchor(addDays(anchor, dir * 7))
-  }
+    if (mode === 'month') setAnchor(addMonths(anchor, dir));
+    else if (mode === 'day') setAnchor(addDays(anchor, dir));
+    else setAnchor(addDays(anchor, dir * 7));
+  };
 
-  const today = todayStr()
+  const today = todayStr();
 
   return (
     <div className="flex h-full flex-col">
@@ -219,17 +246,19 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
           <button
             type="button"
             onClick={() => setAnchor(todayStr())}
-            className="whitespace-nowrap rounded-lg border border-line px-2.5 py-1 text-[0.78125rem] text-ink-2 transition-colors hover:bg-surface-2"
+            className="rounded-lg border border-line px-2.5 py-1 text-[0.78125rem] whitespace-nowrap text-ink-2 transition-colors hover:bg-surface-2"
           >
             回到今天
           </button>
           <IconButton icon={IconChevronRight} label="下一段" onClick={() => shift(1)} />
         </div>
-        <h2 className="brand-serif ml-1 whitespace-nowrap text-[0.9375rem] font-semibold text-ink">{label}</h2>
+        <h2 className="brand-serif ml-1 text-[0.9375rem] font-semibold whitespace-nowrap text-ink">
+          {label}
+        </h2>
         {loading ? <span className="text-[0.71875rem] text-ink-3">载入中…</span> : null}
         <div className="ml-auto flex items-center gap-2">
           <span
-            className="hidden whitespace-nowrap text-[0.71875rem] text-ink-3 sm:block"
+            className="hidden text-[0.71875rem] whitespace-nowrap text-ink-3 sm:block"
             title="日历加载的是全部清单的任务，不跟随侧栏的清单/标签选择；顶部搜索与筛选器仍然生效"
           >
             · 全部任务
@@ -239,7 +268,7 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
           </span>
           {[...cal.values()].some((d) => d.estimated) ? (
             <span
-              className="hidden whitespace-nowrap text-[0.71875rem] text-ink-3 lg:block"
+              className="hidden text-[0.71875rem] whitespace-nowrap text-ink-3 lg:block"
               title={`该年的放假调休安排国务院尚未公布，日历只标注《放假办法》规定的法定假日（已确定：${
                 officialYearsLoaded().join('、') || '暂无'
               }）`}
@@ -247,7 +276,11 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
               · 含推算节假日（调休待公布）
             </span>
           ) : null}
-          <div role="group" aria-label="日历粒度" className="flex shrink-0 rounded-lg border border-line p-0.5">
+          <div
+            role="group"
+            aria-label="日历粒度"
+            className="flex shrink-0 rounded-lg border border-line p-0.5"
+          >
             {(['day', 'week', 'month'] as Mode[]).map((m) => (
               <button
                 key={m}
@@ -255,14 +288,14 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
                 data-cal-mode={m}
                 aria-pressed={mode === m}
                 onClick={() => {
-                  setMode(m)
+                  setMode(m);
                   // adding 在月/周视图存的是日期，在日视图存的是时刻，切模式必须清掉。
-                  setAdding(null)
-                  setDraft('')
+                  setAdding(null);
+                  setDraft('');
                 }}
                 className={cx(
-                  'shrink-0 whitespace-nowrap rounded-md px-2.5 py-1 text-[0.78125rem] transition-colors',
-                  mode === m ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:text-ink',
+                  'shrink-0 rounded-md px-2.5 py-1 text-[0.78125rem] whitespace-nowrap transition-colors',
+                  mode === m ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:text-ink'
                 )}
               >
                 {m === 'month' ? '月' : m === 'week' ? '周' : '日'}
@@ -273,7 +306,7 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
             <button
               type="button"
               onClick={() => setWeekStart(weekStart === 1 ? 0 : 1)}
-              className="whitespace-nowrap rounded-lg border border-line px-2.5 py-1 text-[0.75rem] text-ink-2 transition-colors hover:bg-surface-2"
+              className="rounded-lg border border-line px-2.5 py-1 text-[0.75rem] whitespace-nowrap text-ink-2 transition-colors hover:bg-surface-2"
               title="切换每周起始日"
             >
               周始：{weekStart === 1 ? '周一' : '周日'}
@@ -287,15 +320,16 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
         <div className="flex items-center gap-2 overflow-x-auto border-b border-line bg-surface-2/50 px-5 py-2">
           <span className="shrink-0 text-[0.71875rem] text-ink-3">
             {/* 只列前 12 项，从前不说明，用户会以为未排期只有这些 */}
-            未排期 {noDate.length} 项{noDate.length > 12 ? '（此处只列前 12 项）' : ''}，可直接拖到日历上：
+            未排期 {noDate.length} 项{noDate.length > 12 ? '（此处只列前 12 项）' : ''}
+            ，可直接拖到日历上：
           </span>
           {noDate.slice(0, 12).map((t) => (
             <span
               key={t.id}
               draggable
               onDragStart={(e) => {
-                e.dataTransfer.setData(DRAG_MIME, String(t.id))
-                e.dataTransfer.effectAllowed = 'move'
+                e.dataTransfer.setData(DRAG_MIME, String(t.id));
+                e.dataTransfer.effectAllowed = 'move';
               }}
               onClick={() => onOpen(t)}
               className="shrink-0 cursor-grab rounded-lg border border-line bg-surface px-2 py-0.5 text-[0.75rem] text-ink-2 transition-colors hover:border-seal/40 hover:text-seal"
@@ -360,25 +394,25 @@ export function CalendarView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
         )}
       </div>
     </div>
-  )
+  );
 }
 
 interface GridProps {
-  anchor: string
-  weekStart: 0 | 1
-  byDay: Map<string, Task[]>
+  anchor: string;
+  weekStart: 0 | 1;
+  byDay: Map<string, Task[]>;
   /** 农历与节假日信息，按日期索引；缺哪天就退化为只显示公历。 */
-  cal: Map<string, CalendarDayInfo>
-  today: string
-  dropDay: string | null
-  setDropDay: (d: string | null) => void
-  onDrop: (e: DragEvent<HTMLDivElement>, day: string) => void
-  onOpen: (t: Task) => void
-  adding: string | null
-  setAdding: (d: string | null) => void
-  draft: string
-  setDraft: (v: string) => void
-  onQuickCreate: (day: string) => void
+  cal: Map<string, CalendarDayInfo>;
+  today: string;
+  dropDay: string | null;
+  setDropDay: (d: string | null) => void;
+  onDrop: (e: DragEvent<HTMLDivElement>, day: string) => void;
+  onOpen: (t: Task) => void;
+  adding: string | null;
+  setAdding: (d: string | null) => void;
+  draft: string;
+  setDraft: (v: string) => void;
+  onQuickCreate: (day: string) => void;
 }
 
 function DayCell({
@@ -396,34 +430,34 @@ function DayCell({
   draft,
   setDraft,
   onQuickCreate,
-  compact,
+  compact
 }: {
-  day: string
-  tasks: Task[]
-  today: string
-  isCurrentMonth: boolean
-  dayInfo?: CalendarDayInfo
-  dropDay: string | null
-  setDropDay: (d: string | null) => void
-  onDrop: (e: DragEvent<HTMLDivElement>, day: string) => void
-  onOpen: (t: Task) => void
-  adding: string | null
-  setAdding: (d: string | null) => void
-  draft: string
-  setDraft: (v: string) => void
-  onQuickCreate: (day: string) => void
-  compact?: boolean
+  day: string;
+  tasks: Task[];
+  today: string;
+  isCurrentMonth: boolean;
+  dayInfo?: CalendarDayInfo;
+  dropDay: string | null;
+  setDropDay: (d: string | null) => void;
+  onDrop: (e: DragEvent<HTMLDivElement>, day: string) => void;
+  onOpen: (t: Task) => void;
+  adding: string | null;
+  setAdding: (d: string | null) => void;
+  draft: string;
+  setDraft: (v: string) => void;
+  onQuickCreate: (day: string) => void;
+  compact?: boolean;
 }) {
-  const { compositionProps, isComposing } = useIMEGuard()
-  const isToday = day === today
-  const overdue = dayDiff(day, today) < 0
+  const { compositionProps, isComposing } = useIMEGuard();
+  const isToday = day === today;
+  const overdue = dayDiff(day, today) < 0;
   // 展开后显示当天全部任务。此前「还有 N 项」点下去打开的是第一个**被折叠**的任务，
   // 文案承诺"展开"、行为却是打开某一项，属于文不对题。
-  const [showAll, setShowAll] = useState(false)
-  const cap = compact ? 6 : 3
-  const visible = showAll ? tasks : tasks.slice(0, cap)
-  const rest = tasks.length - visible.length
-  const calText = describeDay(dayInfo)
+  const [showAll, setShowAll] = useState(false);
+  const cap = compact ? 6 : 3;
+  const visible = showAll ? tasks : tasks.slice(0, cap);
+  const rest = tasks.length - visible.length;
+  const calText = describeDay(dayInfo);
 
   return (
     <div
@@ -432,16 +466,16 @@ function DayCell({
       aria-label={`${Number(day.slice(5, 7))} 月 ${Number(day.slice(8, 10))} 日${calText ? `，${calText}` : ''}，${tasks.length} 项任务`}
       title={calText || undefined}
       onDragOver={(e) => {
-        e.preventDefault()
+        e.preventDefault();
         // dragover 高频触发，只在进入新的日期格时才更新高亮
-        if (dropDay !== day) setDropDay(day)
+        if (dropDay !== day) setDropDay(day);
       }}
       onDragLeave={() => setDropDay(null)}
       onDrop={(e) => void onDrop(e, day)}
       className={cx(
-        'group/day relative flex min-h-[92px] flex-col gap-1 border-b border-r border-line p-1 transition-colors md:p-1.5',
+        'group/day relative flex min-h-[92px] flex-col gap-1 border-r border-b border-line p-1 transition-colors md:p-1.5',
         isCurrentMonth ? 'bg-surface' : 'bg-surface-2/40',
-        dropDay === day && 'drop-target',
+        dropDay === day && 'drop-target'
       )}
     >
       {/* 日期数字 + 农历/节气/节假日同处一行：
@@ -465,7 +499,7 @@ function DayCell({
                     : 'text-holiday lg:text-ink-3'
                   : isCurrentMonth
                     ? 'text-ink-2'
-                    : 'text-ink-3',
+                    : 'text-ink-3'
           )}
         >
           {Number(day.slice(8, 10))}
@@ -477,7 +511,7 @@ function DayCell({
             className={cx(
               'min-w-0 flex-1 truncate text-[0.5rem] leading-tight md:text-[0.625rem]',
               labelClass(dayInfo),
-              !isCurrentMonth && 'opacity-60',
+              !isCurrentMonth && 'opacity-60'
             )}
           >
             {dayInfo.label}
@@ -508,7 +542,7 @@ function DayCell({
         size={12}
         aria-expanded={adding === day}
         onClick={() => setAdding(adding === day ? null : day)}
-        className="absolute right-1.5 top-1.5 opacity-0 transition-opacity group-hover/day:opacity-100"
+        className="absolute top-1.5 right-1.5 opacity-0 transition-opacity group-hover/day:opacity-100"
       />
 
       {visible.map((t) => (
@@ -517,8 +551,8 @@ function DayCell({
           type="button"
           draggable
           onDragStart={(e) => {
-            e.dataTransfer.setData(DRAG_MIME, String(t.id))
-            e.dataTransfer.effectAllowed = 'move'
+            e.dataTransfer.setData(DRAG_MIME, String(t.id));
+            e.dataTransfer.effectAllowed = 'move';
           }}
           onClick={() => onOpen(t)}
           className={cx(
@@ -529,11 +563,13 @@ function DayCell({
                 ? 'border-p-high/30 bg-p-high/8 text-ink hover:bg-p-high/14'
                 : t.priority === 2
                   ? 'border-p-mid/30 bg-p-mid/8 text-ink hover:bg-p-mid/14'
-                  : 'border-line bg-surface-2/70 text-ink hover:border-seal/35 hover:bg-seal/8',
+                  : 'border-line bg-surface-2/70 text-ink hover:border-seal/35 hover:bg-seal/8'
           )}
           title={`${t.title}${t.dueTime ? ` · ${t.dueTime}` : ''}`}
         >
-          {t.dueTime ? <span className="shrink-0 tabular-nums text-ink-3">{t.dueTime.slice(0, 5)}</span> : null}
+          {t.dueTime ? (
+            <span className="shrink-0 text-ink-3 tabular-nums">{t.dueTime.slice(0, 5)}</span>
+          ) : null}
           <PriorityFlag priority={t.priority} size={10} />
           <span className="truncate">{t.title}</span>
           {t.repeatRule ? <IconRepeat size={10} className="ml-auto shrink-0 text-ink-3" /> : null}
@@ -562,8 +598,8 @@ function DayCell({
       {adding === day ? (
         <form
           onSubmit={(e) => {
-            e.preventDefault()
-            onQuickCreate(day)
+            e.preventDefault();
+            onQuickCreate(day);
           }}
           className="mt-auto flex items-center gap-1 rounded-md border border-seal/40 bg-surface px-1 py-0.5"
         >
@@ -574,27 +610,44 @@ function DayCell({
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               // 输入法选词的 Enter 属于组合过程，阻止默认提交，否则会提前建任务。
-              if (isComposing(e)) e.preventDefault()
+              if (isComposing(e)) e.preventDefault();
             }}
             onBlur={() => !draft.trim() && setAdding(null)}
             placeholder="标题，回车即存"
             className="min-w-0 flex-1 bg-transparent text-[0.71875rem] outline-none placeholder:text-ink-3"
           />
-          <IconButton icon={IconX} label="取消新建" size={11} onClick={() => setAdding(null)} className="shrink-0" />
+          <IconButton
+            icon={IconX}
+            label="取消新建"
+            size={11}
+            onClick={() => setAdding(null)}
+            className="shrink-0"
+          />
         </form>
       ) : null}
     </div>
-  )
+  );
 }
 
 function MonthGrid(props: GridProps) {
-  const weeks = monthMatrix(Number(props.anchor.slice(0, 4)), Number(props.anchor.slice(5, 7)) - 1, props.weekStart)
-  const monthIdx = Number(props.anchor.slice(5, 7))
+  const weeks = monthMatrix(
+    Number(props.anchor.slice(0, 4)),
+    Number(props.anchor.slice(5, 7)) - 1,
+    props.weekStart
+  );
+  const monthIdx = Number(props.anchor.slice(5, 7));
   return (
-    <div role="group" aria-label={`${monthIdx} 月日历`} className="overflow-hidden rounded-xl border-l border-t border-line">
+    <div
+      role="group"
+      aria-label={`${monthIdx} 月日历`}
+      className="overflow-hidden rounded-xl border-t border-l border-line"
+    >
       <div className="grid grid-cols-7">
         {weekdayHeaders(props.weekStart).map((w) => (
-          <div key={w} className="border-b border-r border-line bg-surface-2 px-2 py-1.5 text-[0.71875rem] text-ink-3">
+          <div
+            key={w}
+            className="border-r border-b border-line bg-surface-2 px-2 py-1.5 text-[0.71875rem] text-ink-3"
+          >
             {w}
           </div>
         ))}
@@ -619,27 +672,27 @@ function MonthGrid(props: GridProps) {
         ))}
       </div>
     </div>
-  )
+  );
 }
 
 function WeekGrid(props: GridProps) {
-  const days = weekDays(props.anchor, props.weekStart)
+  const days = weekDays(props.anchor, props.weekStart);
   return (
     <div
       role="group"
       aria-label={`${days[0]} 至 ${days[days.length - 1]} 的周历`}
-      className="overflow-hidden rounded-xl border-l border-t border-line"
+      className="overflow-hidden rounded-xl border-t border-l border-line"
     >
       <div className="grid grid-cols-7">
         {days.map((day) => {
-          const info = props.cal.get(day)
+          const info = props.cal.get(day);
           return (
             <div
               key={day}
               title={describeDay(info) || undefined}
               className={cx(
-                'flex min-w-0 items-center justify-center gap-1.5 overflow-hidden border-b border-r border-line bg-surface-2 px-2 py-1.5 text-[0.71875rem]',
-                day === props.today ? 'text-seal' : 'text-ink-3',
+                'flex min-w-0 items-center justify-center gap-1.5 overflow-hidden border-r border-b border-line bg-surface-2 px-2 py-1.5 text-[0.71875rem]',
+                day === props.today ? 'text-seal' : 'text-ink-3'
               )}
             >
               <span className="shrink-0">{weekdayHeaders(props.weekStart)[days.indexOf(day)]}</span>
@@ -650,19 +703,24 @@ function WeekGrid(props: GridProps) {
                     ? 'font-semibold'
                     : workMark(info) === '休'
                       ? 'text-holiday lg:text-ink-3'
-                      : '',
+                      : ''
                 )}
               >
                 {Number(day.slice(8, 10))}
               </span>
               {/* 同月视图：窄屏表头也塞不下，只在桌面档显示农历。 */}
               {info ? (
-                <span className={cx('hidden min-w-0 truncate text-[0.625rem] leading-tight lg:block', labelClass(info))}>
+                <span
+                  className={cx(
+                    'hidden min-w-0 truncate text-[0.625rem] leading-tight lg:block',
+                    labelClass(info)
+                  )}
+                >
                   {info.label}
                 </span>
               ) : null}
             </div>
-          )
+          );
         })}
         {days.map((day) => (
           <DayCell
@@ -690,101 +748,114 @@ function WeekGrid(props: GridProps) {
         周视图按时间顺序列出当天事项；点击日期右上角的 + 可快速添加。
       </div>
     </div>
-  )
+  );
 }
 
 interface DayProps {
-  day: string
-  dayInfo?: CalendarDayInfo
-  today: string
-  tasks: Task[]
-  onOpen: (t: Task) => void
-  onMoveToTime: (id: number, time: string | null) => void
-  onCreateAt: (time: string) => void
-  adding: string | null
-  setAdding: (v: string | null) => void
-  draft: string
-  setDraft: (v: string) => void
-  onDropDay: (e: DragEvent<HTMLDivElement>, day: string) => void
+  day: string;
+  dayInfo?: CalendarDayInfo;
+  today: string;
+  tasks: Task[];
+  onOpen: (t: Task) => void;
+  onMoveToTime: (id: number, time: string | null) => void;
+  onCreateAt: (time: string) => void;
+  adding: string | null;
+  setAdding: (v: string | null) => void;
+  draft: string;
+  setDraft: (v: string) => void;
+  onDropDay: (e: DragEvent<HTMLDivElement>, day: string) => void;
 }
 
 /** 日视图：24 小时时间轴，任务按时段成块排布，可拖动改时间、点空白处新建。 */
 function DayView(props: DayProps) {
-  const { day, dayInfo, today, tasks, onOpen, onMoveToTime, onCreateAt, adding, setAdding, draft, setDraft, onDropDay } =
-    props
-  const { compositionProps, isComposing } = useIMEGuard()
-  const scroller = useRef<HTMLDivElement>(null)
-  const [dragTime, setDragTime] = useState<string | null>(null)
-  const [nowMin, setNowMin] = useState(() => toMinutes(nowHM()))
+  const {
+    day,
+    dayInfo,
+    today,
+    tasks,
+    onOpen,
+    onMoveToTime,
+    onCreateAt,
+    adding,
+    setAdding,
+    draft,
+    setDraft
+  } = props;
+  const { compositionProps, isComposing } = useIMEGuard();
+  const scroller = useRef<HTMLDivElement>(null);
+  const [dragTime, setDragTime] = useState<string | null>(null);
+  const [nowMin, setNowMin] = useState(() => toMinutes(nowHM()));
 
   useEffect(() => {
-    const id = window.setInterval(() => setNowMin(toMinutes(nowHM())), 60_000)
-    return () => window.clearInterval(id)
-  }, [])
+    const id = window.setInterval(() => setNowMin(toMinutes(nowHM())), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   // 分钟 → 时间轴 y 坐标；15 分钟一吸，避免出现 09:07 这种脏时刻。
-  const yOf = (min: number) => min * PX_PER_MIN
-  const snap = (y: number) => Math.min(DAY_MINUTES - SNAP_MIN, Math.max(0, Math.round(y / PX_PER_MIN / SNAP_MIN) * SNAP_MIN))
+  const yOf = (min: number) => min * PX_PER_MIN;
+  const snap = (y: number) =>
+    Math.min(DAY_MINUTES - SNAP_MIN, Math.max(0, Math.round(y / PX_PER_MIN / SNAP_MIN) * SNAP_MIN));
 
   // 进入某一天时定位到当前时刻（或 07:00），只定位一次，不随分钟刷新跳动。
-  const nowRef = useRef(nowMin)
-  nowRef.current = nowMin
+  const nowRef = useLatest(nowMin);
   useEffect(() => {
-    const el = scroller.current
-    if (!el) return
-    const focus = day === today ? nowRef.current : 7 * 60
-    el.scrollTop = Math.max(0, yOf(focus) - el.clientHeight / 2)
-  }, [day, today])
+    const el = scroller.current;
+    if (!el) return;
+    const focus = day === today ? nowRef.current : 7 * 60;
+    el.scrollTop = Math.max(0, yOf(focus) - el.clientHeight / 2);
+    // nowRef 是稳定对象，列入依赖只为满足 exhaustive-deps 对「effect 更新的 ref」的
+    // 要求，不会改变「仅按 day/today 定位」的触发条件。
+  }, [day, today, nowRef]);
 
   const placed = useMemo(() => {
     const rows = tasks
       .filter((t) => t.dueTime)
       .map((t) => {
-        const start = toMinutes(t.dueTime as string)
+        const start = toMinutes(t.dueTime as string);
         // 块高优先用结束时间；没有则按预计时长，再退回默认 45 分。
-        const dur = t.estimateMinutes > 0 ? t.estimateMinutes : DEFAULT_DURATION
-        const raw = t.endTime ? toMinutes(t.endTime) : start + dur
+        const dur = t.estimateMinutes > 0 ? t.estimateMinutes : DEFAULT_DURATION;
+        const raw = t.endTime ? toMinutes(t.endTime) : start + dur;
         // endTime ≤ dueTime 是跨午夜（23:00~次日 01:00）：今天这段画到午夜为止，
         // 次日部分不归当天的轴管；不能回退成默认时长，那会把通宵任务画成 45 分钟。
-        const end = !t.endTime ? start + dur : raw > start ? raw : DAY_MINUTES
-        return { task: t, start, end }
+        const end = !t.endTime ? start + dur : raw > start ? raw : DAY_MINUTES;
+        return { task: t, start, end };
       })
-      .sort((a, b) => a.start - b.start || a.end - b.end)
-    return placeDay(rows)
-  }, [tasks])
+      .sort((a, b) => a.start - b.start || a.end - b.end);
+    return placeDay(rows);
+  }, [tasks]);
 
-  const allDay = useMemo(() => tasks.filter((t) => !t.dueTime), [tasks])
+  const allDay = useMemo(() => tasks.filter((t) => !t.dueTime), [tasks]);
 
   const timeOf = (e: DragEvent<HTMLDivElement> | ReactMouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect()
-    return snap(e.clientY - rect.top)
-  }
+    const rect = e.currentTarget.getBoundingClientRect();
+    return snap(e.clientY - rect.top);
+  };
 
   const onSurfaceClick = (e: ReactMouseEvent<HTMLDivElement>) => {
-    const min = timeOf(e)
-    const next = minutesToHM(min)
+    const min = timeOf(e);
+    const next = minutesToHM(min);
     // 只在新开一个输入框时清空草稿：draft 由月/周网格共用，
     // 无条件清空会把别处已经敲了一半的内容抹掉。
-    if (adding !== next) setDraft('')
-    setAdding(next)
-  }
+    if (adding !== next) setDraft('');
+    setAdding(next);
+  };
 
   const onSurfaceDragOver = (e: DragEvent<HTMLDivElement>) => {
-    if (!e.dataTransfer.types.includes(DRAG_MIME)) return
-    e.preventDefault()
-    e.dataTransfer.dropEffect = 'move'
-    setDragTime(minutesToHM(timeOf(e)))
-  }
+    if (!e.dataTransfer.types.includes(DRAG_MIME)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragTime(minutesToHM(timeOf(e)));
+  };
 
   const onSurfaceDrop = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    const min = timeOf(e)
-    setDragTime(null)
-    const id = Number(e.dataTransfer.getData(DRAG_MIME))
-    if (id) void onMoveToTime(id, minutesToHM(min))
-  }
+    e.preventDefault();
+    const min = timeOf(e);
+    setDragTime(null);
+    const id = Number(e.dataTransfer.getData(DRAG_MIME));
+    if (id) void onMoveToTime(id, minutesToHM(min));
+  };
 
-  const empty = tasks.length === 0
+  const empty = tasks.length === 0;
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-line">
@@ -801,9 +872,13 @@ function DayView(props: DayProps) {
             <span className="whitespace-nowrap text-holiday">{dayInfo.holiday}</span>
           ) : null}
           {dayInfo.kind === 'workday' ? (
-            <span className="shrink-0 rounded-[3px] bg-surface-3 px-1 text-[0.625rem] text-ink-3">调休上班</span>
+            <span className="shrink-0 rounded-[3px] bg-surface-3 px-1 text-[0.625rem] text-ink-3">
+              调休上班
+            </span>
           ) : dayInfo.isHoliday ? (
-            <span className="shrink-0 rounded-[3px] bg-holiday/12 px-1 text-[0.625rem] text-holiday">放假</span>
+            <span className="shrink-0 rounded-[3px] bg-holiday/12 px-1 text-[0.625rem] text-holiday">
+              放假
+            </span>
           ) : dayInfo.holidaySpan ? (
             <span className="whitespace-nowrap text-ink-3">{dayInfo.holidaySpan}假期</span>
           ) : null}
@@ -817,16 +892,16 @@ function DayView(props: DayProps) {
       {/* 全天区：无时刻的任务；把时间轴上的块拖回这里可撤销时刻。 */}
       <div
         onDragOver={(e) => {
-          if (!e.dataTransfer.types.includes(DRAG_MIME)) return
-          e.preventDefault()
-          e.dataTransfer.dropEffect = 'move'
+          if (!e.dataTransfer.types.includes(DRAG_MIME)) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
         }}
         onDrop={(e) => {
-          e.preventDefault()
-          setDragTime(null)
-          const id = Number(e.dataTransfer.getData(DRAG_MIME))
+          e.preventDefault();
+          setDragTime(null);
+          const id = Number(e.dataTransfer.getData(DRAG_MIME));
           // 落到「全天」区即撤销时刻，任务仍留在这一天。
-          if (id) void onMoveToTime(id, null)
+          if (id) void onMoveToTime(id, null);
         }}
         className="flex items-start gap-2 border-b border-line bg-surface-2/60 px-3 py-1.5"
         data-day-allday
@@ -834,7 +909,9 @@ function DayView(props: DayProps) {
         <span className="mt-0.5 shrink-0 text-[0.6875rem] text-ink-3">全天</span>
         <div className="flex flex-1 flex-wrap items-center gap-1.5">
           {allDay.length === 0 ? (
-            <span className="text-[0.71875rem] text-ink-3">无排定时刻的事项，拖到下方时间轴即可定下时刻</span>
+            <span className="text-[0.71875rem] text-ink-3">
+              无排定时刻的事项，拖到下方时间轴即可定下时刻
+            </span>
           ) : (
             allDay.map((t) => (
               <button
@@ -842,15 +919,15 @@ function DayView(props: DayProps) {
                 type="button"
                 draggable
                 onDragStart={(e) => {
-                  e.dataTransfer.setData(DRAG_MIME, String(t.id))
-                  e.dataTransfer.effectAllowed = 'move'
+                  e.dataTransfer.setData(DRAG_MIME, String(t.id));
+                  e.dataTransfer.effectAllowed = 'move';
                 }}
                 onClick={() => onOpen(t)}
                 className={cx(
                   'max-w-[220px] cursor-grab truncate rounded-md border px-2 py-0.5 text-[0.71875rem] transition-colors',
                   t.status === 'done'
                     ? 'border-line bg-surface text-ink-3 line-through'
-                    : 'border-line bg-surface text-ink hover:border-seal/35 hover:text-seal',
+                    : 'border-line bg-surface text-ink hover:border-seal/35 hover:text-seal'
                 )}
                 title={t.title}
               >
@@ -874,7 +951,7 @@ function DayView(props: DayProps) {
           {HOURS.map((h) => (
             <span
               key={h}
-              className="-mt-1.5 absolute w-[52px] pr-2.5 text-right text-[0.6875rem] tabular-nums text-ink-3"
+              className="absolute -mt-1.5 w-[52px] pr-2.5 text-right text-[0.6875rem] text-ink-3 tabular-nums"
               style={{ top: yOf(h * 60), left: 0 }}
             >
               {pad2(h)}:00
@@ -886,18 +963,26 @@ function DayView(props: DayProps) {
             onClick={onSurfaceClick}
             onDragOver={onSurfaceDragOver}
             onDragLeave={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragTime(null)
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragTime(null);
             }}
             onDrop={onSurfaceDrop}
             data-day-axis
             className="absolute inset-y-0 right-0 left-[52px] border-l border-line"
           >
             {HOURS.map((h) => (
-              <div key={h} className="absolute right-0 left-0 h-px bg-line/70" style={{ top: yOf(h * 60) }} />
+              <div
+                key={h}
+                className="absolute right-0 left-0 h-px bg-line/70"
+                style={{ top: yOf(h * 60) }}
+              />
             ))}
             {/* 半点浅线，便于对齐 */}
             {HOURS.map((h) => (
-              <div key={`half-${h}`} className="absolute right-0 left-0 h-px bg-line/35" style={{ top: yOf(h * 60 + 30) }} />
+              <div
+                key={`half-${h}`}
+                className="absolute right-0 left-0 h-px bg-line/35"
+                style={{ top: yOf(h * 60 + 30) }}
+              />
             ))}
 
             {/* 当前时刻 */}
@@ -912,15 +997,22 @@ function DayView(props: DayProps) {
               >
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-seal" />
                 <div className="h-px flex-1 bg-seal/70" />
-                <span className="shrink-0 px-1 text-[0.625rem] tabular-nums text-seal">{minutesToHM(nowMin)}</span>
+                <span className="shrink-0 px-1 text-[0.625rem] text-seal tabular-nums">
+                  {minutesToHM(nowMin)}
+                </span>
               </div>
             ) : null}
 
             {/* 拖拽落点指示 */}
             {dragTime ? (
-              <div className="absolute right-0 left-0 z-30" style={{ top: yOf(toMinutes(dragTime)) }}>
+              <div
+                className="absolute right-0 left-0 z-30"
+                style={{ top: yOf(toMinutes(dragTime)) }}
+              >
                 <div className="flex items-center gap-1">
-                  <span className="rounded-sm bg-seal px-1 text-[0.625rem] tabular-nums text-seal-contrast">{dragTime}</span>
+                  <span className="rounded-sm bg-seal px-1 text-[0.625rem] text-seal-contrast tabular-nums">
+                    {dragTime}
+                  </span>
                   <div className="h-px flex-1 bg-seal" />
                 </div>
               </div>
@@ -934,19 +1026,19 @@ function DayView(props: DayProps) {
                 draggable
                 data-day-block={p.task.id}
                 onDragStart={(e) => {
-                  e.stopPropagation()
-                  e.dataTransfer.setData(DRAG_MIME, String(p.task.id))
-                  e.dataTransfer.effectAllowed = 'move'
+                  e.stopPropagation();
+                  e.dataTransfer.setData(DRAG_MIME, String(p.task.id));
+                  e.dataTransfer.effectAllowed = 'move';
                 }}
                 onClick={(e) => {
-                  e.stopPropagation()
-                  onOpen(p.task)
+                  e.stopPropagation();
+                  onOpen(p.task);
                 }}
                 style={{
                   top: yOf(p.start) + 1,
                   height: Math.max(BLOCK_MIN_H, yOf(p.end - p.start)) - 2,
                   left: `calc(${(p.lane / p.lanes) * 100}% + 4px)`,
-                  width: `calc(${100 / p.lanes}% - 8px)`,
+                  width: `calc(${100 / p.lanes}% - 8px)`
                 }}
                 className={cx(
                   'absolute z-10 cursor-grab overflow-hidden rounded-lg border px-2 py-1 text-left transition-colors',
@@ -956,16 +1048,18 @@ function DayView(props: DayProps) {
                       ? 'border-p-high/40 bg-p-high/10 text-ink hover:bg-p-high/16'
                       : p.task.priority === 2
                         ? 'border-p-mid/40 bg-p-mid/10 text-ink hover:bg-p-mid/16'
-                        : 'border-seal/30 bg-seal/8 text-ink hover:bg-seal/14',
+                        : 'border-seal/30 bg-seal/8 text-ink hover:bg-seal/14'
                 )}
                 title={`${p.task.title} · ${minutesToHM(p.start)}–${minutesToHM(p.end)}`}
               >
                 <span className="flex items-center gap-1">
                   <PriorityFlag priority={p.task.priority} size={10} />
                   <span className="truncate text-[0.75rem] font-medium">{p.task.title}</span>
-                  {p.task.repeatRule ? <IconRepeat size={10} className="ml-auto shrink-0 text-ink-3" /> : null}
+                  {p.task.repeatRule ? (
+                    <IconRepeat size={10} className="ml-auto shrink-0 text-ink-3" />
+                  ) : null}
                 </span>
-                <span className="block truncate text-[0.65625rem] tabular-nums text-ink-3">
+                <span className="block truncate text-[0.65625rem] text-ink-3 tabular-nums">
                   {minutesToHM(p.start)} – {minutesToHM(p.end)}
                   {p.task.endTime
                     ? ''
@@ -981,14 +1075,14 @@ function DayView(props: DayProps) {
               <form
                 onClick={(e) => e.stopPropagation()}
                 onSubmit={(e) => {
-                  e.preventDefault()
-                  onCreateAt(adding)
+                  e.preventDefault();
+                  onCreateAt(adding);
                 }}
                 style={{ top: yOf(toMinutes(adding)) + 1 }}
                 data-day-add={adding}
                 className="absolute right-2 left-1 z-40 flex items-center gap-1 rounded-lg border border-seal/50 bg-surface px-2 py-1 shadow-sm"
               >
-                <span className="shrink-0 text-[0.6875rem] tabular-nums text-seal">{adding}</span>
+                <span className="shrink-0 text-[0.6875rem] text-seal tabular-nums">{adding}</span>
                 <input
                   autoFocus
                   {...compositionProps}
@@ -999,7 +1093,13 @@ function DayView(props: DayProps) {
                   placeholder="标题，回车即存"
                   className="min-w-0 flex-1 bg-transparent text-[0.75rem] outline-none placeholder:text-ink-3"
                 />
-                <IconButton icon={IconX} label="取消新建" size={12} onClick={() => setAdding(null)} className="shrink-0" />
+                <IconButton
+                  icon={IconX}
+                  label="取消新建"
+                  size={12}
+                  onClick={() => setAdding(null)}
+                  className="shrink-0"
+                />
               </form>
             ) : null}
           </div>
@@ -1008,10 +1108,9 @@ function DayView(props: DayProps) {
 
       {/* 底部提示：拖回全天区可撤销时刻 */}
       <div className="flex items-center gap-2 border-t border-line bg-surface-2/40 px-3 py-1.5 text-[0.71875rem] text-ink-3">
-        <IconClock size={12} />
-        共 {placed.length} 项排定时刻、{allDay.length} 项全天；把块拖到顶部「全天」区可去掉时刻。
+        <IconClock size={12} />共 {placed.length} 项排定时刻、{allDay.length}{' '}
+        项全天；把块拖到顶部「全天」区可去掉时刻。
       </div>
     </div>
-  )
+  );
 }
-

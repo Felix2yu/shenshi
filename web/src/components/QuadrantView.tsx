@@ -1,12 +1,12 @@
-import { useMemo, useState, type DragEvent } from 'react'
+import { useMemo, useState, type DragEvent } from 'react';
 
-import { QUOTES } from '../lib/quotes'
-import { matchFilter, type TaskFilter } from '../lib/filter'
-import { useStore } from '../store/AppStore'
-import type { Task } from '../types'
-import { IconSparkle, IconPlus } from './icons'
-import { DRAG_MIME, QuickAdd, TaskRow } from './TaskViews'
-import { EmptyState, cx } from './ui'
+import { QUOTES } from '../lib/quotes';
+import { matchFilter, type TaskFilter } from '../lib/filter';
+import { useStore } from '../store/AppStore';
+import type { Task } from '../types';
+import { IconSparkle, IconPlus } from './icons';
+import { DRAG_MIME, QuickAdd, TaskRow } from './TaskViews';
+import { EmptyState, cx } from './ui';
 
 /**
  * 四象限（艾森豪威尔矩阵）。
@@ -20,7 +20,7 @@ const QUADRANTS = [
     hint: '《礼记·大学》：知止而后有定。先清此处，再谈其余。',
     accent: 'var(--p-high)',
     important: true,
-    urgent: true,
+    urgent: true
   },
   {
     key: 2,
@@ -29,7 +29,7 @@ const QUADRANTS = [
     hint: '此处最见功夫 —— 慎始即在此时安排。',
     accent: 'var(--p-mid)',
     important: true,
-    urgent: false,
+    urgent: false
   },
   {
     key: 3,
@@ -38,7 +38,7 @@ const QUADRANTS = [
     hint: '可委托、可合并，勿让其挤占第一象限。',
     accent: 'var(--p-low)',
     important: false,
-    urgent: true,
+    urgent: true
   },
   {
     key: 4,
@@ -47,52 +47,61 @@ const QUADRANTS = [
     hint: '张而不弛，文武弗能也。留白亦是一种节奏。',
     accent: 'var(--ink-3)',
     important: false,
-    urgent: false,
-  },
-] as const
+    urgent: false
+  }
+] as const;
 
-export function QuadrantView({ onOpen, filter }: { onOpen: (t: Task) => void; filter: TaskFilter }) {
-  const { tasks, updateTask, toast } = useStore()
-  const [dropKey, setDropKey] = useState<number | null>(null)
-  const [quickKey, setQuickKey] = useState<number | null>(null)
+export function QuadrantView({
+  onOpen,
+  filter
+}: {
+  onOpen: (t: Task) => void;
+  filter: TaskFilter;
+}) {
+  const { tasks, updateTask, toast } = useStore();
+  const [dropKey, setDropKey] = useState<number | null>(null);
+  const [quickKey, setQuickKey] = useState<number | null>(null);
 
   const grouped = useMemo(() => {
-    const map = new Map<number, Task[]>()
-    for (const q of QUADRANTS) map.set(q.key, [])
+    const map = new Map<number, Task[]>();
+    for (const q of QUADRANTS) map.set(q.key, []);
     for (const t of tasks) {
-      if (t.status === 'done' || !matchFilter(t, filter)) continue
-      const key = t.important ? (t.urgent ? 1 : 2) : t.urgent ? 3 : 4
-      map.get(key)!.push(t)
+      if (t.status === 'done' || !matchFilter(t, filter)) continue;
+      const key = t.important ? (t.urgent ? 1 : 2) : t.urgent ? 3 : 4;
+      map.get(key)!.push(t);
     }
     for (const arr of map.values()) {
       arr.sort((a, b) => {
-        if (a.dueDate && b.dueDate && a.dueDate !== b.dueDate) return a.dueDate < b.dueDate ? -1 : 1
-        if (a.dueDate && !b.dueDate) return -1
-        if (!a.dueDate && b.dueDate) return 1
-        return b.priority - a.priority
-      })
+        if (a.dueDate && b.dueDate && a.dueDate !== b.dueDate)
+          return a.dueDate < b.dueDate ? -1 : 1;
+        if (a.dueDate && !b.dueDate) return -1;
+        if (!a.dueDate && b.dueDate) return 1;
+        return b.priority - a.priority;
+      });
     }
-    return map
-  }, [tasks, filter])
+    return map;
+  }, [tasks, filter]);
 
   const onDrop = async (e: DragEvent<HTMLDivElement>, q: (typeof QUADRANTS)[number]) => {
-    e.preventDefault()
-    setDropKey(null)
-    const id = Number(e.dataTransfer.getData(DRAG_MIME))
-    if (!id) return
-    await updateTask(id, { important: q.important, urgent: q.urgent })
+    e.preventDefault();
+    setDropKey(null);
+    const id = Number(e.dataTransfer.getData(DRAG_MIME));
+    if (!id) return;
+    await updateTask(id, { important: q.important, urgent: q.urgent });
     // 象限是由「重要 / 紧急」两个字段推导出来的，拖拽会直接改写它们，
     // 必须把结果说出来——否则用户看到卡片跳过去却不知道改了什么属性。
-    toast(`已标为${q.important ? '重要' : '不重要'}且${q.urgent ? '紧急' : '不紧急'}`)
-  }
+    toast(`已标为${q.important ? '重要' : '不重要'}且${q.urgent ? '紧急' : '不紧急'}`);
+  };
 
-  const total = tasks.filter((t) => t.status !== 'done' && matchFilter(t, filter)).length
+  const total = tasks.filter((t) => t.status !== 'done' && matchFilter(t, filter)).length;
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b border-line px-3 py-2.5 md:px-5">
         <IconSparkle size={15} className="shrink-0 text-seal" />
-        <h2 className="brand-serif shrink-0 whitespace-nowrap text-[0.9375rem] font-semibold text-ink">四象限</h2>
+        <h2 className="brand-serif shrink-0 text-[0.9375rem] font-semibold whitespace-nowrap text-ink">
+          四象限
+        </h2>
         <span className="min-w-0 truncate text-[0.71875rem] text-ink-3">
           共 {total} 项未完成
           <span className="hidden sm:inline"> · 拖动任务卡片即可在象限之间移动</span>
@@ -102,20 +111,20 @@ export function QuadrantView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
       <div className="flex-1 overflow-auto p-4">
         <div className="grid min-h-full grid-cols-1 gap-3 lg:grid-cols-2">
           {QUADRANTS.map((q) => {
-            const list = grouped.get(q.key) ?? []
+            const list = grouped.get(q.key) ?? [];
             return (
               <div
                 key={q.key}
                 onDragOver={(e) => {
-                  e.preventDefault()
+                  e.preventDefault();
                   // 同看板：dragover 高频触发，仅在目标象限变化时更新高亮
-                  if (dropKey !== q.key) setDropKey(q.key)
+                  if (dropKey !== q.key) setDropKey(q.key);
                 }}
                 onDragLeave={() => setDropKey(null)}
                 onDrop={(e) => void onDrop(e, q)}
                 className={cx(
                   'flex min-h-[220px] flex-col rounded-2xl border border-line bg-surface/60 p-3 transition-colors',
-                  dropKey === q.key && 'drop-target',
+                  dropKey === q.key && 'drop-target'
                 )}
               >
                 <div className="mb-2 flex items-center gap-2">
@@ -131,7 +140,7 @@ export function QuadrantView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
                     onClick={() => setQuickKey(quickKey === q.key ? null : q.key)}
                     className={cx(
                       'rounded-md p-0.5 text-ink-3 transition-colors hover:bg-surface-2 hover:text-seal',
-                      quickKey === q.key && 'bg-seal/10 text-seal',
+                      quickKey === q.key && 'bg-seal/10 text-seal'
                     )}
                   >
                     <IconPlus size={13} />
@@ -158,11 +167,11 @@ export function QuadrantView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
                   )}
                 </div>
               </div>
-            )
+            );
           })}
         </div>
 
-          {tasks.filter((t) => t.status !== 'done').length === 0 ? (
+        {tasks.filter((t) => t.status !== 'done').length === 0 ? (
           <div className="pb-10">
             <EmptyState
               text={QUOTES.quadrant.text}
@@ -173,5 +182,5 @@ export function QuadrantView({ onOpen, filter }: { onOpen: (t: Task) => void; fi
         ) : null}
       </div>
     </div>
-  )
+  );
 }

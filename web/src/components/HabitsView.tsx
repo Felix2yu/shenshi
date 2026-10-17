@@ -1,46 +1,64 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent
+} from 'react';
 
-import { api } from '../api/client'
-import { addDays, todayStr, weekday, weekdayName } from '../lib/date'
-import { enqueue } from '../lib/offline'
-import { colorName } from '../lib/palette'
-import { useStore } from '../store/AppStore'
-import type { Habit, HabitBoard, HabitCadence, HabitLog, HabitStat } from '../types'
-import { IconFlame, IconMore, IconPlus, IconSeedling, IconTrash } from './icons'
-import { Button, ColorDot, EmptyState, Field, MenuItem, Modal, Popover, RoundCheck, cx, inputClass } from './ui'
+import { api } from '../api/client';
+import { addDays, todayStr, weekday, weekdayName } from '../lib/date';
+import { enqueue } from '../lib/offline';
+import { colorName } from '../lib/palette';
+import { useStore } from '../store/AppStore';
+import type { Habit, HabitBoard, HabitCadence, HabitLog, HabitStat } from '../types';
+import { IconFlame, IconMore, IconPlus, IconSeedling, IconTrash } from './icons';
+import {
+  Button,
+  ColorDot,
+  EmptyState,
+  Field,
+  MenuItem,
+  Modal,
+  Popover,
+  RoundCheck,
+  cx,
+  inputClass
+} from './ui';
 
 /** 可选的观察区间长度（周）。半年的跨度最能看出「积日成习」。 */
 const RANGES: { weeks: number; label: string }[] = [
   { weeks: 12, label: '近 12 周' },
-  { weeks: 26, label: '近 26 周' },
-]
-const DEFAULT_WEEKS = 26
+  { weeks: 26, label: '近 26 周' }
+];
+const DEFAULT_WEEKS = 26;
 
-const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0] // 周一 → 周日，表单与标签统一用这个顺序
-const WEEK_SHORT = ['日', '一', '二', '三', '四', '五', '六']
-const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6]
-const PALETTE = ['#6b7f6e', '#b4553d', '#8a6d3b', '#5c6b8a', '#7a5c7a', '#3f7a7a', '#8a7c66']
-const NAME_COL = 92 // 热力图左侧习惯名列宽（px）
-const CELL = 13 // 热力图格子边长（px）
-const CELL_GAP = 4 // 格子间距（px）
+const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0]; // 周一 → 周日，表单与标签统一用这个顺序
+const WEEK_SHORT = ['日', '一', '二', '三', '四', '五', '六'];
+const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
+const PALETTE = ['#6b7f6e', '#b4553d', '#8a6d3b', '#5c6b8a', '#7a5c7a', '#3f7a7a', '#8a7c66'];
+const NAME_COL = 92; // 热力图左侧习惯名列宽（px）
+const CELL = 13; // 热力图格子边长（px）
+const CELL_GAP = 4; // 格子间距（px）
 
 const WEEKDAY_PRESETS: { label: string; days: number[] }[] = [
   { label: '每天', days: ALL_DAYS },
   { label: '工作日', days: [1, 2, 3, 4, 5] },
-  { label: '周末', days: [0, 6] },
-]
+  { label: '周末', days: [0, 6] }
+];
 
 /** 弹出层用的表单草稿。 */
 interface HabitDraft {
-  id?: number
-  name: string
-  icon: string
-  color: string
-  cadence: HabitCadence
-  weekdays: number[]
-  target: number
-  startDate: string
-  note: string
+  id?: number;
+  name: string;
+  icon: string;
+  color: string;
+  cadence: HabitCadence;
+  weekdays: number[];
+  target: number;
+  startDate: string;
+  note: string;
 }
 
 function emptyDraft(): HabitDraft {
@@ -52,14 +70,17 @@ function emptyDraft(): HabitDraft {
     weekdays: ALL_DAYS,
     target: 1,
     startDate: todayStr(),
-    note: '',
-  }
+    note: ''
+  };
 }
 
 function draftOf(h: Habit): HabitDraft {
   const days = h.weekdays
-    ? h.weekdays.split(',').map(Number).filter((n) => n >= 0 && n <= 6)
-    : []
+    ? h.weekdays
+        .split(',')
+        .map(Number)
+        .filter((n) => n >= 0 && n <= 6)
+    : [];
   return {
     id: h.id,
     name: h.name,
@@ -69,26 +90,26 @@ function draftOf(h: Habit): HabitDraft {
     weekdays: days.length ? days : ALL_DAYS,
     target: h.target,
     startDate: h.startDate,
-    note: h.note,
-  }
+    note: h.note
+  };
 }
 
 /** 某天是否属于该习惯的排期日（与后端 habitScheduled 口径一致）。 */
 function scheduled(h: Habit, day: string): boolean {
-  if (day < h.startDate) return false
-  if (h.cadence !== 'weekly') return true
-  const days = h.weekdays ? h.weekdays.split(',').map(Number) : []
-  return days.length === 0 || days.includes(weekday(day))
+  if (day < h.startDate) return false;
+  if (h.cadence !== 'weekly') return true;
+  const days = h.weekdays ? h.weekdays.split(',').map(Number) : [];
+  return days.length === 0 || days.includes(weekday(day));
 }
 
 function weeklyLabel(weekdays: string): string {
   const days = (weekdays ? weekdays.split(',').map(Number) : [])
     .filter((n) => n >= 0 && n <= 6)
-    .sort((a, b) => WEEK_ORDER.indexOf(a) - WEEK_ORDER.indexOf(b))
-  if (days.length === 0 || days.length === 7) return '每天'
-  if (days.length === 5 && days.every((d) => d >= 1 && d <= 5)) return '工作日'
-  if (days.length === 2 && days.includes(0) && days.includes(6)) return '周末'
-  return '每周' + days.map((d) => WEEK_SHORT[d]).join('')
+    .sort((a, b) => WEEK_ORDER.indexOf(a) - WEEK_ORDER.indexOf(b));
+  if (days.length === 0 || days.length === 7) return '每天';
+  if (days.length === 5 && days.every((d) => d >= 1 && d <= 5)) return '工作日';
+  if (days.length === 2 && days.includes(0) && days.includes(6)) return '周末';
+  return '每周' + days.map((d) => WEEK_SHORT[d]).join('');
 }
 
 /**
@@ -100,74 +121,84 @@ function weeklyLabel(weekdays: string): string {
  * 这里的 taskId 只是为了满足 OutboxItem 的形状（与语义无关）。
  */
 function queueCheckIn(habitId: number, day: string, undo: boolean): Promise<void> {
-  return enqueue({ kind: 'checkin', taskId: 0, checkin: { habitId, day, undo } })
+  return enqueue({ kind: 'checkin', taskId: 0, checkin: { habitId, day, undo } });
 }
 
 export function HabitsView() {
-  const { settings, toast, confirm, online, refreshOfflineState } = useStore()
-  const [weeks, setWeeks] = useState(DEFAULT_WEEKS)
-  const [board, setBoard] = useState<HabitBoard | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [reload, setReload] = useState(0)
-  const [draft, setDraft] = useState<HabitDraft | null>(null)
-  const [menuFor, setMenuFor] = useState<number | null>(null)
-  const [busy, setBusy] = useState<number | null>(null)
-  const [showArchived, setShowArchived] = useState(false)
+  const { settings, toast, confirm, online, refreshOfflineState } = useStore();
+  const [weeks, setWeeks] = useState(DEFAULT_WEEKS);
+  const [board, setBoard] = useState<HabitBoard | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [reload, setReload] = useState(0);
+  const [draft, setDraft] = useState<HabitDraft | null>(null);
+  const [menuFor, setMenuFor] = useState<number | null>(null);
+  const [busy, setBusy] = useState<number | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
 
-  const weekStart = (settings.weekStart === '0' ? 0 : 1) as 0 | 1
+  const weekStart = (settings.weekStart === '0' ? 0 : 1) as 0 | 1;
 
   // 热力图按周对齐：最后一列是本周，往前推 weeks 列。
   const grid = useMemo(() => {
-    const t = todayStr()
-    const end = addDays(t, 6 - ((weekday(t) - weekStart + 7) % 7))
-    const start = addDays(end, -(weeks * 7 - 1))
-    const cells: string[] = []
-    for (let i = 0; i < weeks * 7; i++) cells.push(addDays(start, i))
+    const t = todayStr();
+    const end = addDays(t, 6 - ((weekday(t) - weekStart + 7) % 7));
+    const start = addDays(end, -(weeks * 7 - 1));
+    const cells: string[] = [];
+    for (let i = 0; i < weeks * 7; i++) cells.push(addDays(start, i));
     // 每列的最后一天，用来判断该列的月份（月份只在换月那一列标一次）
-    const labels = Array.from({ length: weeks }, (_, w) => cells[w * 7 + 6])
-    return { start, end, cells, labels }
-  }, [weeks, weekStart])
+    const labels = Array.from({ length: weeks }, (_, w) => cells[w * 7 + 6]);
+    return { start, end, cells, labels };
+  }, [weeks, weekStart]);
 
   useEffect(() => {
-    let alive = true
-    setLoading(true)
+    let alive = true;
+    setLoading(true);
     api
-      .listHabits({ from: grid.start, to: grid.end, includeArchived: showArchived ? '1' : undefined })
+      .listHabits({
+        from: grid.start,
+        to: grid.end,
+        includeArchived: showArchived ? '1' : undefined
+      })
       .then((b) => {
-        if (alive) setBoard(b)
+        if (alive) setBoard(b);
       })
       .catch(() => undefined)
-      .finally(() => alive && setLoading(false))
+      .finally(() => alive && setLoading(false));
     return () => {
-      alive = false
-    }
-  }, [grid.start, grid.end, reload, showArchived])
+      alive = false;
+    };
+  }, [grid.start, grid.end, reload, showArchived]);
 
-  const today = board?.today ?? todayStr()
-  const habits = board?.habits ?? []
+  const today = board?.today ?? todayStr();
+  const habits = board?.habits ?? [];
   const stats = useMemo(() => {
-    const m = new Map<number, HabitStat>()
-    for (const s of board?.stats ?? []) m.set(s.habitId, s)
-    return m
-  }, [board])
+    const m = new Map<number, HabitStat>();
+    for (const s of board?.stats ?? []) m.set(s.habitId, s);
+    return m;
+  }, [board]);
 
   /** habitId|day → 打卡记录，供热力图渲染。 */
   const logIndex = useMemo(() => {
-    const m = new Map<string, HabitLog>()
-    for (const l of board?.logs ?? []) m.set(`${l.habitId}|${l.day}`, l)
-    return m
-  }, [board])
+    const m = new Map<string, HabitLog>();
+    for (const l of board?.logs ?? []) m.set(`${l.habitId}|${l.day}`, l);
+    return m;
+  }, [board]);
 
   const summary = useMemo(() => {
     // 汇总只算未归档：归档是「收起来」，不该再占用今日分母与达标率。
-    const active = new Set((board?.habits ?? []).filter((h) => !h.archived).map((h) => h.id))
-    const list = (board?.stats ?? []).filter((s) => active.has(s.habitId))
-    const done = list.reduce((n, s) => n + s.done, 0)
-    const due = list.reduce((n, s) => n + s.due, 0)
-    return { done, due, rate: due ? done / due : 0, hit: list.filter((s) => s.today).length, active: active.size }
-  }, [board])
+    const active = new Set((board?.habits ?? []).filter((h) => !h.archived).map((h) => h.id));
+    const list = (board?.stats ?? []).filter((s) => active.has(s.habitId));
+    const done = list.reduce((n, s) => n + s.done, 0);
+    const due = list.reduce((n, s) => n + s.due, 0);
+    return {
+      done,
+      due,
+      rate: due ? done / due : 0,
+      hit: list.filter((s) => s.today).length,
+      active: active.size
+    };
+  }, [board]);
 
-  const refresh = useCallback(() => setReload((n) => n + 1), [])
+  const refresh = useCallback(() => setReload((n) => n + 1), []);
 
   /**
    * 离线时先把打卡结果落到本地 board，再入队。
@@ -178,92 +209,108 @@ export function HabitsView() {
    */
   const applyLocalCheck = useCallback((habitId: number, day: string, count: number | null) => {
     setBoard((prev) => {
-      if (!prev) return prev
-      const logs = prev.logs.filter((l) => !(l.habitId === habitId && l.day === day))
+      if (!prev) return prev;
+      const logs = prev.logs.filter((l) => !(l.habitId === habitId && l.day === day));
       if (count !== null && count > 0) {
-        logs.push({ id: -(Date.now() % 1e9), habitId, day, count, note: '', createdAt: new Date().toISOString() })
+        logs.push({
+          id: -(Date.now() % 1e9),
+          habitId,
+          day,
+          count,
+          note: '',
+          createdAt: new Date().toISOString()
+        });
       }
       // 统计随打卡即时重算：热力格与达标率都从 stats 读，
       // 只改 logs 不改 stats 的话，格子亮了但数字没动。
       const nextStats = prev.stats.map((s) => {
-        if (s.habitId !== habitId) return s
-        const delta = (count ?? 0) - ((prev.logs.find((l) => l.habitId === habitId && l.day === day)?.count) ?? 0)
-        const done = Math.max(0, s.done + delta)
-        return { ...s, done, todayAt: day === prev.today ? done : s.todayAt }
-      })
-      return { ...prev, logs, stats: nextStats }
-    })
-  }, [])
+        if (s.habitId !== habitId) return s;
+        const delta =
+          (count ?? 0) -
+          (prev.logs.find((l) => l.habitId === habitId && l.day === day)?.count ?? 0);
+        const done = Math.max(0, s.done + delta);
+        return { ...s, done, todayAt: day === prev.today ? done : s.todayAt };
+      });
+      return { ...prev, logs, stats: nextStats };
+    });
+  }, []);
 
   // 连点守卫：同一习惯的请求在途时忽略后续点击。
   // 否则"记一次"与"撤一次"两次请求会以不可预期的顺序落库，
   // 结果既不等于一次也不等于两次（对比 MorningPlan 的 acting Set 写法）。
-  const inFlight = useRef<Set<number>>(new Set())
+  const inFlight = useRef<Set<number>>(new Set());
 
   const run = useCallback(
     async (habit: Habit, fn: () => Promise<unknown>, failMsg: string) => {
-      if (inFlight.current.has(habit.id)) return
-      inFlight.current.add(habit.id)
-      setBusy(habit.id)
+      if (inFlight.current.has(habit.id)) return;
+      inFlight.current.add(habit.id);
+      setBusy(habit.id);
       try {
-        await fn()
-        refresh()
+        await fn();
+        refresh();
       } catch {
-        toast(failMsg, 'error')
+        toast(failMsg, 'error');
       } finally {
-        inFlight.current.delete(habit.id)
-        setBusy(null)
+        inFlight.current.delete(habit.id);
+        setBusy(null);
       }
     },
-    [refresh, toast],
-  )
+    [refresh, toast]
+  );
 
   /** 一键达标 / 撤销今日。目标多于一次时一次记满，避免连点。 */
   const toggleToday = (habit: Habit, stat: HabitStat | undefined) => {
-    if (habit.archived) return
-    const undo = stat?.today === true
+    if (habit.archived) return;
+    const undo = stat?.today === true;
     if (!online) {
-      applyLocalCheck(habit.id, today, undo ? null : habit.target)
-      void queueCheckIn(habit.id, today, undo).then(refreshOfflineState)
-      toast('已记录 · 联网后同步')
-      return
+      applyLocalCheck(habit.id, today, undo ? null : habit.target);
+      void queueCheckIn(habit.id, today, undo).then(refreshOfflineState);
+      toast('已记录 · 联网后同步');
+      return;
     }
     if (undo) {
-      void run(habit, () => api.uncheckHabit(habit.id, today), '撤销失败')
-      return
-    }
-    void run(habit, () => api.checkHabit(habit.id, { day: today, count: habit.target }), '打卡失败')
-  }
-
-  /** 分次记：目标为 N 次时一次一次累加。 */
-  const bumpToday = (habit: Habit) => {
-    if (habit.archived) return
-    if (!online) {
-      const cur = logIndex.get(`${habit.id}|${today}`)?.count ?? 0
-      applyLocalCheck(habit.id, today, cur + 1)
-      void queueCheckIn(habit.id, today, false).then(refreshOfflineState)
-      toast('已记录 · 联网后同步')
-      return
-    }
-    void run(habit, () => api.checkHabit(habit.id, { day: today }), '打卡失败')
-  }
-
-  /** 点热力格的某一天即补记或撤销那一天。 */
-  const toggleDay = (habit: Habit, day: string) => {
-    if (habit.archived || day > today) return
-    const met = (logIndex.get(`${habit.id}|${day}`)?.count ?? 0) >= habit.target
-    if (!online) {
-      applyLocalCheck(habit.id, day, met ? null : habit.target)
-      void queueCheckIn(habit.id, day, met).then(refreshOfflineState)
-      toast('已记录 · 联网后同步')
-      return
+      void run(habit, () => api.uncheckHabit(habit.id, today), '撤销失败');
+      return;
     }
     void run(
       habit,
-      () => (met ? api.uncheckHabit(habit.id, day) : api.checkHabit(habit.id, { day, count: habit.target })),
-      '更新失败',
-    )
-  }
+      () => api.checkHabit(habit.id, { day: today, count: habit.target }),
+      '打卡失败'
+    );
+  };
+
+  /** 分次记：目标为 N 次时一次一次累加。 */
+  const bumpToday = (habit: Habit) => {
+    if (habit.archived) return;
+    if (!online) {
+      const cur = logIndex.get(`${habit.id}|${today}`)?.count ?? 0;
+      applyLocalCheck(habit.id, today, cur + 1);
+      void queueCheckIn(habit.id, today, false).then(refreshOfflineState);
+      toast('已记录 · 联网后同步');
+      return;
+    }
+    void run(habit, () => api.checkHabit(habit.id, { day: today }), '打卡失败');
+  };
+
+  /** 点热力格的某一天即补记或撤销那一天。 */
+  const toggleDay = (habit: Habit, day: string) => {
+    if (habit.archived || day > today) return;
+    const met = (logIndex.get(`${habit.id}|${day}`)?.count ?? 0) >= habit.target;
+    if (!online) {
+      applyLocalCheck(habit.id, day, met ? null : habit.target);
+      void queueCheckIn(habit.id, day, met).then(refreshOfflineState);
+      toast('已记录 · 联网后同步');
+      return;
+    }
+    void run(
+      habit,
+      () =>
+        met
+          ? api.uncheckHabit(habit.id, day)
+          : api.checkHabit(habit.id, { day, count: habit.target }),
+      '更新失败'
+    );
+  };
 
   /**
    * 热力图的键盘导航。
@@ -273,34 +320,36 @@ export function HabitsView() {
    * 不这么做的话，26 周 × 7 天 = 182 个格子会变成 182 个 Tab 停靠点。
    */
   const moveInGrid = (e: ReactKeyboardEvent<HTMLDivElement>, habitId: number) => {
-    const attr = (e.target as HTMLElement).getAttribute('data-habit-cell')
-    if (!attr) return
-    const index = grid.cells.indexOf(attr.split('|')[1])
-    if (index < 0) return
-    let next = index
-    if (e.key === 'ArrowLeft') next = index - 7
-    else if (e.key === 'ArrowRight') next = index + 7
-    else if (e.key === 'ArrowUp') next = index - 1
-    else if (e.key === 'ArrowDown') next = index + 1
-    else return
-    if (next < 0 || next >= grid.cells.length) return
-    e.preventDefault()
-    const target = e.currentTarget.querySelector<HTMLElement>(`[data-habit-cell="${habitId}|${grid.cells[next]}"]`)
-    target?.focus()
-    target?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-  }
+    const attr = (e.target as HTMLElement).getAttribute('data-habit-cell');
+    if (!attr) return;
+    const index = grid.cells.indexOf(attr.split('|')[1]);
+    if (index < 0) return;
+    let next = index;
+    if (e.key === 'ArrowLeft') next = index - 7;
+    else if (e.key === 'ArrowRight') next = index + 7;
+    else if (e.key === 'ArrowUp') next = index - 1;
+    else if (e.key === 'ArrowDown') next = index + 1;
+    else return;
+    if (next < 0 || next >= grid.cells.length) return;
+    e.preventDefault();
+    const target = e.currentTarget.querySelector<HTMLElement>(
+      `[data-habit-cell="${habitId}|${grid.cells[next]}"]`
+    );
+    target?.focus();
+    target?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  };
 
   const saveDraft = async () => {
-    if (!draft) return
-    const name = draft.name.trim()
+    if (!draft) return;
+    const name = draft.name.trim();
     if (!name) {
-      toast('习惯名称不能为空', 'error')
-      return
+      toast('习惯名称不能为空', 'error');
+      return;
     }
-    const weekdays = [...new Set(draft.weekdays)].sort((a, b) => a - b).join(',')
+    const weekdays = [...new Set(draft.weekdays)].sort((a, b) => a - b).join(',');
     if (draft.cadence === 'weekly' && weekdays === '') {
-      toast('按周重复至少选一天', 'error')
-      return
+      toast('按周重复至少选一天', 'error');
+      return;
     }
     const body = {
       name,
@@ -311,63 +360,63 @@ export function HabitsView() {
       weekdays: draft.cadence === 'weekly' ? weekdays : '',
       target: Math.max(1, Math.min(99, Number(draft.target) || 1)),
       startDate: draft.startDate,
-      note: draft.note,
-    }
+      note: draft.note
+    };
     try {
-      if (draft.id) await api.updateHabit(draft.id, body)
-      else await api.createHabit(body)
-      toast(draft.id ? '已保存' : `已立「${name}」`)
-      setDraft(null)
-      refresh()
+      if (draft.id) await api.updateHabit(draft.id, body);
+      else await api.createHabit(body);
+      toast(draft.id ? '已保存' : `已立「${name}」`);
+      setDraft(null);
+      refresh();
     } catch {
-      toast('保存失败', 'error')
+      toast('保存失败', 'error');
     }
-  }
+  };
 
   const remove = async (habit: Habit) => {
-    setMenuFor(null)
+    setMenuFor(null);
     // 全站唯一还在用原生 confirm() 的地方：样式不可控、文案口径不一致，
     // 在 iframe / 部分浏览器里还会被直接拦掉。统一走应用内的确认框。
     const ok = await confirm({
       title: `删除习惯「${habit.name}」`,
       message: '打卡记录会一并删除，且不可恢复。',
       confirmText: '删除',
-      danger: true,
-    })
-    if (!ok) return
+      danger: true
+    });
+    if (!ok) return;
     try {
-      await api.deleteHabit(habit.id)
-      toast('已删除')
-      refresh()
+      await api.deleteHabit(habit.id);
+      toast('已删除');
+      refresh();
     } catch {
-      toast('删除失败', 'error')
+      toast('删除失败', 'error');
     }
-  }
+  };
 
   const archive = async (habit: Habit) => {
-    setMenuFor(null)
+    setMenuFor(null);
     try {
-      await api.updateHabit(habit.id, { archived: true })
-      toast(`已归档「${habit.name}」，勾选「显示已归档」可找回`)
-      refresh()
+      await api.updateHabit(habit.id, { archived: true });
+      toast(`已归档「${habit.name}」，勾选「显示已归档」可找回`);
+      refresh();
     } catch {
-      toast('归档失败', 'error')
+      toast('归档失败', 'error');
     }
-  }
+  };
 
   const restore = async (habit: Habit) => {
-    setMenuFor(null)
+    setMenuFor(null);
     try {
-      await api.updateHabit(habit.id, { archived: false })
-      toast(`已恢复「${habit.name}」`)
-      refresh()
+      await api.updateHabit(habit.id, { archived: false });
+      toast(`已恢复「${habit.name}」`);
+      refresh();
     } catch {
-      toast('恢复失败', 'error')
+      toast('恢复失败', 'error');
     }
-  }
+  };
 
   // 真空 = 服务端这次没给任何行（开关开着时归档行也在内，有行就该渲染列表）。
-  const showEmpty = habits.length === 0 && !loading
+  const showEmpty = habits.length === 0 && !loading;
 
   return (
     <div className="flex h-full flex-col">
@@ -375,11 +424,13 @@ export function HabitsView() {
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2.5 md:px-5">
         {loading ? <span className="text-[0.71875rem] text-ink-3">载入中…</span> : null}
         <span className="text-[0.75rem] text-ink-3">
-          今日已打卡 <span className="tabular-nums text-ink-2">{summary.hit}</span> / {summary.active}
+          今日已打卡 <span className="text-ink-2 tabular-nums">{summary.hit}</span> /{' '}
+          {summary.active}
           {summary.due > 0 ? (
             <>
               {' · '}
-              {weeks} 周达标率 <span className="tabular-nums text-ink-2">{Math.round(summary.rate * 100)}%</span>
+              {weeks} 周达标率{' '}
+              <span className="text-ink-2 tabular-nums">{Math.round(summary.rate * 100)}%</span>
             </>
           ) : null}
         </span>
@@ -392,7 +443,9 @@ export function HabitsView() {
                 onClick={() => setWeeks(r.weeks)}
                 className={cx(
                   'rounded-md px-2.5 py-1 text-[0.78125rem] transition-colors',
-                  weeks === r.weeks ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:text-ink',
+                  weeks === r.weeks
+                    ? 'bg-seal/12 font-medium text-seal'
+                    : 'text-ink-2 hover:text-ink'
                 )}
               >
                 {r.label}
@@ -405,7 +458,9 @@ export function HabitsView() {
             onClick={() => setShowArchived((v) => !v)}
             className={cx(
               'rounded-lg border px-2.5 py-1.5 text-[0.78125rem] transition-colors',
-              showArchived ? 'border-seal/45 bg-seal/12 font-medium text-seal' : 'border-line text-ink-2 hover:text-ink',
+              showArchived
+                ? 'border-seal/45 bg-seal/12 font-medium text-seal'
+                : 'border-line text-ink-2 hover:text-ink'
             )}
           >
             {showArchived ? '隐藏已归档' : '显示已归档'}
@@ -434,7 +489,9 @@ export function HabitsView() {
             {/* 今日 */}
             <section>
               <div className="mb-2 flex items-center gap-2">
-                <span className="text-[0.65625rem] font-semibold tracking-[0.14em] text-ink-3">今日</span>
+                <span className="text-[0.65625rem] font-semibold tracking-[0.14em] text-ink-3">
+                  今日
+                </span>
                 <span className="text-[0.6875rem] text-ink-3">{weekdayName(today)}</span>
                 <span className="ml-auto text-[0.6875rem] text-ink-3">右侧「+1」用于分次记录</span>
               </div>
@@ -450,8 +507,8 @@ export function HabitsView() {
                     onToggle={() => toggleToday(h, stats.get(h.id))}
                     onBump={() => bumpToday(h)}
                     onEdit={() => {
-                      setMenuFor(null)
-                      setDraft(draftOf(h))
+                      setMenuFor(null);
+                      setDraft(draftOf(h));
                     }}
                     onArchive={() => void archive(h)}
                     onRestore={() => void restore(h)}
@@ -464,18 +521,25 @@ export function HabitsView() {
             {/* 热力图 */}
             <section>
               <div className="mb-2 flex items-center gap-2">
-                <span className="text-[0.65625rem] font-semibold tracking-[0.14em] text-ink-3">坚持轨迹</span>
-                <span className="text-[0.6875rem] tabular-nums text-ink-3">
+                <span className="text-[0.65625rem] font-semibold tracking-[0.14em] text-ink-3">
+                  坚持轨迹
+                </span>
+                <span className="text-[0.6875rem] text-ink-3 tabular-nums">
                   {grid.start} 至 {grid.end}
                 </span>
-                <span className="ml-auto text-[0.6875rem] text-ink-3">点格子可补记或撤销那一天</span>
+                <span className="ml-auto text-[0.6875rem] text-ink-3">
+                  点格子可补记或撤销那一天
+                </span>
               </div>
               <div className="overflow-x-auto pb-1">
                 <div className="inline-flex flex-col rounded-xl border border-line bg-surface p-3">
                   {/* 月份刻度：与下方格子逐列对齐 */}
-                  <div className="mb-1 flex" style={{ paddingLeft: NAME_COL + CELL_GAP, gap: CELL_GAP }}>
+                  <div
+                    className="mb-1 flex"
+                    style={{ paddingLeft: NAME_COL + CELL_GAP, gap: CELL_GAP }}
+                  >
                     {grid.labels.map((d, i) => {
-                      const prev = i > 0 ? grid.labels[i - 1].slice(0, 7) : ''
+                      const prev = i > 0 ? grid.labels[i - 1].slice(0, 7) : '';
                       return (
                         <span
                           key={d}
@@ -484,11 +548,15 @@ export function HabitsView() {
                         >
                           {prev !== d.slice(0, 7) ? `${Number(d.slice(5, 7))}月` : ''}
                         </span>
-                      )
+                      );
                     })}
                   </div>
                   {habits.map((h) => (
-                    <div key={h.id} className={cx('flex items-center', h.archived && 'opacity-45')} style={{ gap: CELL_GAP }}>
+                    <div
+                      key={h.id}
+                      className={cx('flex items-center', h.archived && 'opacity-45')}
+                      style={{ gap: CELL_GAP }}
+                    >
                       <span
                         className="shrink-0 truncate pr-2 text-right text-[0.71875rem] text-ink-2"
                         style={{ width: NAME_COL }}
@@ -503,7 +571,7 @@ export function HabitsView() {
                         style={{
                           gridTemplateRows: `repeat(7, ${CELL}px)`,
                           gridAutoFlow: 'column',
-                          gap: CELL_GAP,
+                          gap: CELL_GAP
                         }}
                       >
                         {grid.cells.map((day) => (
@@ -528,11 +596,17 @@ export function HabitsView() {
                   未达标
                 </span>
                 <span className="flex items-center gap-1">
-                  <span className="h-[11px] w-[11px] rounded-[3px]" style={{ background: 'color-mix(in oklab, var(--seal) 45%, transparent)' }} />
+                  <span
+                    className="h-[11px] w-[11px] rounded-[3px]"
+                    style={{ background: 'color-mix(in oklab, var(--seal) 45%, transparent)' }}
+                  />
                   部分达成
                 </span>
                 <span className="flex items-center gap-1">
-                  <span className="h-[11px] w-[11px] rounded-[3px]" style={{ background: 'var(--seal)' }} />
+                  <span
+                    className="h-[11px] w-[11px] rounded-[3px]"
+                    style={{ background: 'var(--seal)' }}
+                  />
                   已达标
                 </span>
                 <span className="flex items-center gap-1">
@@ -563,7 +637,7 @@ export function HabitsView() {
         {draft ? <HabitForm draft={draft} onChange={setDraft} /> : null}
       </Modal>
     </div>
-  )
+  );
 }
 
 /* ---------------- 今日行 ---------------- */
@@ -579,24 +653,24 @@ function HabitRow({
   onEdit,
   onArchive,
   onRestore,
-  onDelete,
+  onDelete
 }: {
-  habit: Habit
-  stat?: HabitStat
-  busy: boolean
-  menuOpen: boolean
-  onMenu: (open: boolean) => void
-  onToggle: () => void
-  onBump: () => void
-  onEdit: () => void
-  onArchive: () => void
-  onRestore: () => void
-  onDelete: () => void
+  habit: Habit;
+  stat?: HabitStat;
+  busy: boolean;
+  menuOpen: boolean;
+  onMenu: (open: boolean) => void;
+  onToggle: () => void;
+  onBump: () => void;
+  onEdit: () => void;
+  onArchive: () => void;
+  onRestore: () => void;
+  onDelete: () => void;
 }) {
-  const done = stat?.today ?? false
-  const at = stat?.todayAt ?? 0
-  const archived = habit.archived
-  const cadence = habit.cadence === 'weekly' ? weeklyLabel(habit.weekdays) : '每天'
+  const done = stat?.today ?? false;
+  const at = stat?.todayAt ?? 0;
+  const archived = habit.archived;
+  const cadence = habit.cadence === 'weekly' ? weeklyLabel(habit.weekdays) : '每天';
 
   return (
     <div
@@ -609,11 +683,14 @@ function HabitRow({
           ? 'border-line bg-surface-2/50 opacity-60'
           : done
             ? 'border-seal/25 bg-seal/6'
-            : 'border-line bg-surface hover:border-line-strong',
+            : 'border-line bg-surface hover:border-line-strong'
       )}
     >
       {archived ? (
-        <span className="grid h-5 w-5 shrink-0 place-items-center text-[0.65625rem] text-ink-3" title="已归档，暂停打卡">
+        <span
+          className="grid h-5 w-5 shrink-0 place-items-center text-[0.65625rem] text-ink-3"
+          title="已归档，暂停打卡"
+        >
           档
         </span>
       ) : (
@@ -631,15 +708,22 @@ function HabitRow({
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className={cx('truncate text-[0.84375rem] font-medium', done && !archived ? 'text-ink-2' : 'text-ink')}>
+          <span
+            className={cx(
+              'truncate text-[0.84375rem] font-medium',
+              done && !archived ? 'text-ink-2' : 'text-ink'
+            )}
+          >
             {habit.name}
           </span>
           {archived ? (
-            <span className="shrink-0 rounded border border-line px-1 text-[0.65625rem] text-ink-3">已归档</span>
+            <span className="shrink-0 rounded border border-line px-1 text-[0.65625rem] text-ink-3">
+              已归档
+            </span>
           ) : habit.target > 1 ? (
             <span
               data-habit-progress={habit.id}
-              className="shrink-0 rounded border border-line px-1 text-[0.65625rem] tabular-nums text-ink-3"
+              className="shrink-0 rounded border border-line px-1 text-[0.65625rem] text-ink-3 tabular-nums"
             >
               {at}/{habit.target}
             </span>
@@ -665,14 +749,17 @@ function HabitRow({
 
       {!archived && stat && stat.streak > 0 ? (
         <span
-          className="flex shrink-0 items-center gap-1 rounded-md border border-p-high/25 bg-p-high/8 px-1.5 py-0.5 text-[0.6875rem] tabular-nums text-p-high"
+          className="flex shrink-0 items-center gap-1 rounded-md border border-p-high/25 bg-p-high/8 px-1.5 py-0.5 text-[0.6875rem] text-p-high tabular-nums"
           title={`当前连续 ${stat.streak} · 历史最长 ${stat.best}`}
         >
           <IconFlame size={12} />
           {stat.streak} 天
         </span>
       ) : !archived ? (
-        <span className="shrink-0 text-[0.6875rem] text-ink-3" title={stat ? `历史最长 ${stat.best}` : ''}>
+        <span
+          className="shrink-0 text-[0.6875rem] text-ink-3"
+          title={stat ? `历史最长 ${stat.best}` : ''}
+        >
           尚未连成
         </span>
       ) : null}
@@ -699,7 +786,7 @@ function HabitRow({
         </Popover>
       </div>
     </div>
-  )
+  );
 }
 
 /* ---------------- 热力图格子 ---------------- */
@@ -710,21 +797,21 @@ function HeatCell({
   today,
   count,
   tabbable,
-  onClick,
+  onClick
 }: {
-  habit: Habit
-  day: string
-  today: string
-  count: number
+  habit: Habit;
+  day: string;
+  today: string;
+  count: number;
   /** 每个习惯只保留一个 Tab 入口（今天那一格），其余靠方向键在网格内移动。
       26 周 × 7 天 = 182 个格子全可 Tab 的话，键盘用户根本走不出去。 */
-  tabbable: boolean
-  onClick: () => void
+  tabbable: boolean;
+  onClick: () => void;
 }) {
-  const future = day > today
-  const met = count >= habit.target
-  const partial = count > 0 && !met
-  const owed = !met && !partial && !future && scheduled(habit, day)
+  const future = day > today;
+  const met = count >= habit.target;
+  const partial = count > 0 && !met;
+  const owed = !met && !partial && !future && scheduled(habit, day);
   // 状态写进可访问名：颜色之外必须还有一条非视觉通道（WCAG 1.4.1）
   const stateWord = met
     ? '已达标'
@@ -734,8 +821,8 @@ function HeatCell({
         ? '未达标'
         : future
           ? '未到'
-          : '非排期'
-  const title = `${habit.name} · ${day} · ${stateWord}`
+          : '非排期';
+  const title = `${habit.name} · ${day} · ${stateWord}`;
 
   return (
     <button
@@ -746,7 +833,9 @@ function HeatCell({
       title={title}
       aria-label={title}
       data-habit-cell={`${habit.id}|${day}`}
-      data-habit-cell-state={met ? 'done' : partial ? 'partial' : owed ? 'owed' : future ? 'future' : 'idle'}
+      data-habit-cell-state={
+        met ? 'done' : partial ? 'partial' : owed ? 'owed' : future ? 'future' : 'idle'
+      }
       className={cx(
         'h-[13px] w-[13px] shrink-0 rounded-[3px] transition-transform',
         future ? 'cursor-default bg-surface-2/40' : 'hover:scale-[1.18]',
@@ -755,21 +844,31 @@ function HeatCell({
         owed && 'bg-surface-3 ring-1 ring-ink-3/45 ring-inset',
         partial && 'bg-seal/45',
         met && 'bg-seal',
-        !owed && !partial && !met && !future && 'bg-surface-2/40',
+        !owed && !partial && !met && !future && 'bg-surface-2/40'
       )}
-      style={count > 0 ? { background: count >= habit.target ? habit.color : `color-mix(in oklab, ${habit.color} 45%, transparent)` } : undefined}
+      style={
+        count > 0
+          ? {
+              background:
+                count >= habit.target
+                  ? habit.color
+                  : `color-mix(in oklab, ${habit.color} 45%, transparent)`
+            }
+          : undefined
+      }
     />
-  )
+  );
 }
 
 /* ---------------- 表单 ---------------- */
 
 function HabitForm({ draft, onChange }: { draft: HabitDraft; onChange: (d: HabitDraft) => void }) {
-  const set = <K extends keyof HabitDraft>(key: K, value: HabitDraft[K]) => onChange({ ...draft, [key]: value })
+  const set = <K extends keyof HabitDraft>(key: K, value: HabitDraft[K]) =>
+    onChange({ ...draft, [key]: value });
   const toggleDay = (wd: number) => {
-    const has = draft.weekdays.includes(wd)
-    set('weekdays', has ? draft.weekdays.filter((d) => d !== wd) : [...draft.weekdays, wd])
-  }
+    const has = draft.weekdays.includes(wd);
+    set('weekdays', has ? draft.weekdays.filter((d) => d !== wd) : [...draft.weekdays, wd]);
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -794,7 +893,9 @@ function HabitForm({ draft, onChange }: { draft: HabitDraft; onChange: (d: Habit
                 onClick={() => set('cadence', c)}
                 className={cx(
                   'rounded-md px-2.5 py-1 text-[0.78125rem] transition-colors',
-                  draft.cadence === c ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:text-ink',
+                  draft.cadence === c
+                    ? 'bg-seal/12 font-medium text-seal'
+                    : 'text-ink-2 hover:text-ink'
                 )}
               >
                 {c === 'daily' ? '每天' : '按周'}
@@ -807,7 +908,8 @@ function HabitForm({ draft, onChange }: { draft: HabitDraft; onChange: (d: Habit
                   key={p.label}
                   type="button"
                   aria-pressed={
-                    p.days.length === draft.weekdays.length && p.days.every((d) => draft.weekdays.includes(d))
+                    p.days.length === draft.weekdays.length &&
+                    p.days.every((d) => draft.weekdays.includes(d))
                   }
                   onClick={() => set('weekdays', p.days)}
                   className="rounded-md border border-line px-2 py-0.5 text-[0.71875rem] text-ink-2 transition-colors hover:border-seal/40 hover:text-seal"
@@ -820,7 +922,7 @@ function HabitForm({ draft, onChange }: { draft: HabitDraft; onChange: (d: Habit
         {draft.cadence === 'weekly' ? (
           <div className="mt-2 flex items-center gap-1">
             {WEEK_ORDER.map((wd) => {
-              const on = draft.weekdays.includes(wd)
+              const on = draft.weekdays.includes(wd);
               return (
                 <button
                   key={wd}
@@ -830,12 +932,14 @@ function HabitForm({ draft, onChange }: { draft: HabitDraft; onChange: (d: Habit
                   onClick={() => toggleDay(wd)}
                   className={cx(
                     'grid h-8 w-8 place-items-center rounded-lg border text-[0.75rem] transition-colors',
-                    on ? 'border-seal/45 bg-seal/12 font-medium text-seal' : 'border-line text-ink-2 hover:text-ink',
+                    on
+                      ? 'border-seal/45 bg-seal/12 font-medium text-seal'
+                      : 'border-line text-ink-2 hover:text-ink'
                   )}
                 >
                   {WEEK_SHORT[wd]}
                 </button>
-              )
+              );
             })}
           </div>
         ) : null}
@@ -882,7 +986,7 @@ function HabitForm({ draft, onChange }: { draft: HabitDraft; onChange: (d: Habit
               onClick={() => set('color', c)}
               className={cx(
                 'grid h-7 w-7 place-items-center rounded-full border-2 transition-colors',
-                draft.color === c ? 'border-seal' : 'border-transparent hover:border-line-strong',
+                draft.color === c ? 'border-seal' : 'border-transparent hover:border-line-strong'
               )}
             >
               <ColorDot color={c} size={16} />
@@ -896,5 +1000,5 @@ function HabitForm({ draft, onChange }: { draft: HabitDraft; onChange: (d: Habit
         习惯与任务分开记：任务做完就结束，习惯只在时间里长出来。
       </p>
     </div>
-  )
+  );
 }

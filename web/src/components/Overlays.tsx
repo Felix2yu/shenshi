@@ -1,13 +1,13 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react';
 
-import { api } from '../api/client'
-import { addDays, fullDate, todayStr } from '../lib/date'
-import { useEscapeLayer } from '../lib/escStack'
-import { QUOTES, morningLine, reviewLine } from '../lib/quotes'
-import { useNotifyDiagnosis } from '../lib/notify'
-import { isIOS } from '../lib/pwa'
-import { useStore } from '../store/AppStore'
-import type { Task } from '../types'
+import { api } from '../api/client';
+import { addDays, fullDate, todayStr } from '../lib/date';
+import { useEscapeLayer } from '../lib/escStack';
+import { QUOTES, morningLine, reviewLine } from '../lib/quotes';
+import { useNotifyDiagnosis } from '../lib/notify';
+import { isIOS } from '../lib/pwa';
+import { useStore } from '../store/AppStore';
+import type { Task } from '../types';
 import {
   IconAlert,
   IconBell,
@@ -18,9 +18,9 @@ import {
   IconRefresh,
   IconSunrise,
   IconTimer,
-  IconX,
-} from './icons'
-import { Button, Modal, ProgressRing, RoundCheck, cx, inputClass } from './ui'
+  IconX
+} from './icons';
+import { Button, Modal, ProgressRing, RoundCheck, cx, inputClass } from './ui';
 
 /* ============================================================
    全局覆盖层集合：晨省、日省、专注、确认框、提醒中心、轻提示。
@@ -28,23 +28,23 @@ import { Button, Modal, ProgressRing, RoundCheck, cx, inputClass } from './ui'
    ============================================================ */
 
 export function AppOverlays() {
-  const [morningOpen, setMorningOpen] = useState(false)
-  const [reviewOpen, setReviewOpen] = useState(false)
-  const [focusOpen, setFocusOpen] = useState(false)
+  const [morningOpen, setMorningOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [focusOpen, setFocusOpen] = useState(false);
 
   useEffect(() => {
-    const onMorning = () => setMorningOpen(true)
-    const onReview = () => setReviewOpen(true)
-    const onFocus = () => setFocusOpen(true)
-    window.addEventListener('shenshi:morning', onMorning)
-    window.addEventListener('shenshi:review', onReview)
-    window.addEventListener('shenshi:focus', onFocus)
+    const onMorning = () => setMorningOpen(true);
+    const onReview = () => setReviewOpen(true);
+    const onFocus = () => setFocusOpen(true);
+    window.addEventListener('shenshi:morning', onMorning);
+    window.addEventListener('shenshi:review', onReview);
+    window.addEventListener('shenshi:focus', onFocus);
     return () => {
-      window.removeEventListener('shenshi:morning', onMorning)
-      window.removeEventListener('shenshi:review', onReview)
-      window.removeEventListener('shenshi:focus', onFocus)
-    }
-  }, [])
+      window.removeEventListener('shenshi:morning', onMorning);
+      window.removeEventListener('shenshi:review', onReview);
+      window.removeEventListener('shenshi:focus', onFocus);
+    };
+  }, []);
 
   return (
     <>
@@ -58,17 +58,17 @@ export function AppOverlays() {
       <ToastHost />
       <AutoRituals onMorning={() => setMorningOpen(true)} onReview={() => setReviewOpen(true)} />
     </>
-  )
+  );
 }
 
 /** 专注进行中的迷你计时条。任务详情开始专注后面板会自动弹出；关掉面板后靠它保持可见，
  *  点击即可重新打开专注面板。 */
 function FocusIndicator() {
-  const { focus, tasks } = useStore()
-  if (!focus.running) return null
-  const mm = String(Math.floor(focus.remaining / 60)).padStart(2, '0')
-  const ss = String(focus.remaining % 60).padStart(2, '0')
-  const title = tasks.find((t) => t.id === focus.taskId)?.title
+  const { focus, tasks } = useStore();
+  if (!focus.running) return null;
+  const mm = String(Math.floor(focus.remaining / 60)).padStart(2, '0');
+  const ss = String(focus.remaining % 60).padStart(2, '0');
+  const title = tasks.find((t) => t.id === focus.taskId)?.title;
   return (
     <button
       type="button"
@@ -77,10 +77,12 @@ function FocusIndicator() {
       className="kb-lift fixed bottom-[calc(3.5rem+env(safe-area-inset-bottom))] left-4 z-40 flex items-center gap-2 rounded-full border border-seal/40 bg-surface px-3 py-1.5 text-[0.75rem] text-ink shadow-[var(--shadow-sm)] transition-colors hover:bg-surface-2 lg:bottom-4"
     >
       <IconTimer size={13} className="text-seal" />
-      <span className="tabular-nums font-medium">{mm}:{ss}</span>
+      <span className="font-medium tabular-nums">
+        {mm}:{ss}
+      </span>
       {title ? <span className="max-w-36 truncate text-ink-3">{title}</span> : null}
     </button>
-  )
+  );
 }
 
 /* ---------------- 自动触发 ---------------- */
@@ -89,64 +91,75 @@ function FocusIndicator() {
  *  判定以服务端 settings 为准，另用 localStorage 记「今天已弹过」作兜底：
  *  即便保存接口失败（后端未起、断网等），也不会在当天反复打扰。 */
 function AutoRituals({ onMorning, onReview }: { onMorning: () => void; onReview: () => void }) {
-  const { settings, loading } = useStore()
+  const { settings, loading } = useStore();
 
   useEffect(() => {
-    if (loading) return
-    const today = todayStr()
+    if (loading) return;
+    const today = todayStr();
     // 延后一拍再弹，避免与首屏数据加载抢占注意力。
     const timer = window.setTimeout(() => {
       const shownToday = (key: string) => {
         try {
-          return localStorage.getItem(key) === today
+          return localStorage.getItem(key) === today;
         } catch {
-          return false
+          return false;
         }
-      }
+      };
       const markShown = (key: string) => {
         try {
-          localStorage.setItem(key, today)
+          localStorage.setItem(key, today);
         } catch {
           /* 隐私模式等场景下静默跳过，仅依赖服务端记录 */
         }
-      }
+      };
       if (settings.morningPlanDone !== today && !shownToday('shenshi.morningPlanShown')) {
-        onMorning()
-        markShown('shenshi.morningPlanShown')
+        onMorning();
+        markShown('shenshi.morningPlanShown');
         // 只记「今天弹过」，不写 morningPlanDone：用户可能直接关掉面板，
         // 把「弹过」当成「做过」会让完成率统计说谎。真正完成由 MorningPlan.start 保存。
-        return
+        return;
       }
       if (
         settings.reviewDone !== today &&
         !shownToday('shenshi.reviewShown') &&
         new Date().getHours() >= 20
       ) {
-        onReview()
-        markShown('shenshi.reviewShown')
+        onReview();
+        markShown('shenshi.reviewShown');
       }
-    }, 900)
-    return () => window.clearTimeout(timer)
+    }, 900);
+    return () => window.clearTimeout(timer);
     // 仅在加载完成后触发一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading])
+  }, [loading]);
 
-  return null
+  return null;
 }
 
 /* ---------------- 晨省 ---------------- */
 
 function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { lists, todayFocusIds, setTodayFocus, registerTasks, moveTask, updateTask, toggleTask, saveSettings, toast, confirm } = useStore()
-  const [overdue, setOverdue] = useState<Task[]>([])
-  const [today, setToday] = useState<Task[]>([])
-  const [inbox, setInbox] = useState<Task[]>([])
-  const [picked, setPicked] = useState<number[]>(todayFocusIds)
-  const [busy, setBusy] = useState(false)
+  const {
+    lists,
+    todayFocusIds,
+    setTodayFocus,
+    registerTasks,
+    moveTask,
+    updateTask,
+    toggleTask,
+    saveSettings,
+    toast,
+    confirm
+  } = useStore();
+  const [overdue, setOverdue] = useState<Task[]>([]);
+  const [today, setToday] = useState<Task[]>([]);
+  const [inbox, setInbox] = useState<Task[]>([]);
+  const [picked, setPicked] = useState<number[]>(todayFocusIds);
+  const [busy, setBusy] = useState(false);
   /** 批量顺延进行中：进行中禁用按钮，避免重复提交同一批改期。 */
-  const [rolling, setRolling] = useState(false)
+  const [rolling, setRolling] = useState(false);
   /** 在途写操作的行 id：防止请求未归档时再点一次把刚完成的任务翻回未完成。 */
-  const acting = useRef(new Set<number>())
+  const acting = useRef(new Set<number>());
 
   // 面板里的三份列表是**打开时的快照**：store 的 tasks 只含当前视图，
   // 完成/移动这类写操作不会回写到这里。不显式重拉，勾选后行就停在原状，
@@ -156,103 +169,103 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
       const [o, t, i] = await Promise.all([
         api.listTasks({ smart: 'overdue' }),
         api.listTasks({ smart: 'today' }),
-        api.listTasks({ smart: 'inbox' }).catch(() => ({ tasks: [] as Task[], count: 0 })),
-      ])
-      setOverdue(o.tasks)
-      setToday(t.tasks)
-      setInbox(i.tasks)
+        api.listTasks({ smart: 'inbox' }).catch(() => ({ tasks: [] as Task[], count: 0 }))
+      ]);
+      setOverdue(o.tasks);
+      setToday(t.tasks);
+      setInbox(i.tasks);
       // 把快照任务并入全量索引，今日重点才能按 id 反查到真实标题
       // （这些任务不经过主界面 tasks，否则焦点任务标题会缺失）。
-      registerTasks([...o.tasks, ...t.tasks, ...i.tasks])
+      registerTasks([...o.tasks, ...t.tasks, ...i.tasks]);
     } catch {
-      toast('晨省列表刷新失败')
+      toast('晨省列表刷新失败');
     }
-  }
+  };
 
   /** 面板内写操作的统一收尾：重拉快照，并挡住同一行的重复点击。 */
   const run = async (id: number, op: () => Promise<unknown>) => {
-    if (acting.current.has(id)) return
-    acting.current.add(id)
+    if (acting.current.has(id)) return;
+    acting.current.add(id);
     try {
-      await op()
-      await reload()
+      await op();
+      await reload();
     } finally {
-      acting.current.delete(id)
+      acting.current.delete(id);
     }
-  }
+  };
 
   useEffect(() => {
-    if (!open) return
-    setPicked(todayFocusIds)
-    void reload()
+    if (!open) return;
+    setPicked(todayFocusIds);
+    void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
+  }, [open]);
 
   // 智能清单默认带「今日已完成」的留存，但晨省是排程面板：
   // 已完成的事不在「逾期未了 / 待澄清」里继续占位，只在问候语里计入完成数。
-  const overdueOpen = overdue.filter((t) => t.status !== 'done')
-  const inboxOpen = inbox.filter((t) => t.status !== 'done')
-  const doneToday = today.filter((t) => t.status === 'done').length
-  const pending = today.filter((t) => t.status !== 'done').length
-  const line = morningLine(pending, overdueOpen.length, doneToday)
+  const overdueOpen = overdue.filter((t) => t.status !== 'done');
+  const inboxOpen = inbox.filter((t) => t.status !== 'done');
+  const doneToday = today.filter((t) => t.status === 'done').length;
+  const pending = today.filter((t) => t.status !== 'done').length;
+  const line = morningLine(pending, overdueOpen.length, doneToday);
 
   const togglePick = (id: number) => {
-    let next: number[]
+    let next: number[];
     if (picked.includes(id)) {
-      next = picked.filter((x) => x !== id)
+      next = picked.filter((x) => x !== id);
     } else {
       if (picked.length >= 3) {
         // 上限提示：静默忽略会让用户以为点击没生效。
-        toast('今日重点最多 3 件，先放下一件再选')
-        return
+        toast('今日重点最多 3 件，先放下一件再选');
+        return;
       }
-      next = [...picked, id]
+      next = [...picked, id];
     }
-    setPicked(next)
+    setPicked(next);
     // 勾选即生效：不必等「开始今日」，关闭面板（稍后/X）也不会丢失已选。
-    void setTodayFocus(next)
-  }
+    void setTodayFocus(next);
+  };
 
   const start = async () => {
-    setBusy(true)
+    setBusy(true);
     try {
-      await setTodayFocus(picked)
-      await saveSettings({ morningPlanDone: todayStr() })
-      onClose()
+      await setTodayFocus(picked);
+      await saveSettings({ morningPlanDone: todayStr() });
+      onClose();
     } finally {
-      setBusy(false)
+      setBusy(false);
     }
-  }
+  };
 
   const inboxOf = (id: number) => {
-    const l = lists.find((x) => x.id === id)
-    return l?.name ?? '收集箱'
-  }
+    const l = lists.find((x) => x.id === id);
+    return l?.name ?? '收集箱';
+  };
 
   /**
    * 把所有逾期未完成的任务改到今天。
    * 一次改很多条日期，不算可撤销的小操作——先确认，再动手。
    */
   const rollAllOverdue = async () => {
-    const n = overdueOpen.length
-    if (!n || rolling) return
+    const n = overdueOpen.length;
+    if (!n || rolling) return;
     const ok = await confirm({
       title: `把 ${n} 件逾期的事移到今天`,
       message: '它们的到期日都会改成今天。已完成和已归档的事不动。',
-      confirmText: '全部移到今天',
-    })
-    if (!ok) return
-    setRolling(true)
+      confirmText: '全部移到今天'
+    });
+    if (!ok) return;
+    setRolling(true);
     try {
-      const res = await api.rollOverdue()
-      await reload()
-      toast(`已把 ${res.rolled} 件事移到今天`)
+      const res = await api.rollOverdue();
+      await reload();
+      toast(`已把 ${res.rolled} 件事移到今天`);
     } catch {
-      toast('顺延失败，请稍后再试', 'error')
+      toast('顺延失败，请稍后再试', 'error');
     } finally {
-      setRolling(false)
+      setRolling(false);
     }
-  }
+  };
 
   return (
     <Modal
@@ -314,13 +327,21 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
                 onPick={() => togglePick(t.id)}
                 actions={
                   <>
-                    <MiniButton onClick={() => void run(t.id, () => moveTask(t.id, { dueDate: todayStr() }))}>
+                    <MiniButton
+                      onClick={() => void run(t.id, () => moveTask(t.id, { dueDate: todayStr() }))}
+                    >
                       移到今天
                     </MiniButton>
-                    <MiniButton onClick={() => void run(t.id, () => moveTask(t.id, { dueDate: addDays(todayStr(), 1) }))}>
+                    <MiniButton
+                      onClick={() =>
+                        void run(t.id, () => moveTask(t.id, { dueDate: addDays(todayStr(), 1) }))
+                      }
+                    >
                       明天
                     </MiniButton>
-                    <MiniButton onClick={() => void run(t.id, () => toggleTask(t.id))}>完成</MiniButton>
+                    <MiniButton onClick={() => void run(t.id, () => toggleTask(t.id))}>
+                      完成
+                    </MiniButton>
                   </>
                 }
               />
@@ -329,9 +350,15 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
         ) : null}
 
         {/* 今日 */}
-        <Section title="今日到期" count={today.filter((t) => t.status !== 'done').length} tone="accent">
+        <Section
+          title="今日到期"
+          count={today.filter((t) => t.status !== 'done').length}
+          tone="accent"
+        >
           {today.filter((t) => t.status !== 'done').length === 0 ? (
-            <p className="px-1 py-2 text-[0.78125rem] text-ink-3">今日无排定事项，可补充一件要务。</p>
+            <p className="px-1 py-2 text-[0.78125rem] text-ink-3">
+              今日无排定事项，可补充一件要务。
+            </p>
           ) : (
             today
               .filter((t) => t.status !== 'done')
@@ -344,10 +371,16 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
                   onPick={() => togglePick(t.id)}
                   actions={
                     <>
-                      <MiniButton onClick={() => void run(t.id, () => moveTask(t.id, { dueDate: addDays(todayStr(), 1) }))}>
+                      <MiniButton
+                        onClick={() =>
+                          void run(t.id, () => moveTask(t.id, { dueDate: addDays(todayStr(), 1) }))
+                        }
+                      >
                         顺延
                       </MiniButton>
-                      <MiniButton onClick={() => void run(t.id, () => toggleTask(t.id))}>完成</MiniButton>
+                      <MiniButton onClick={() => void run(t.id, () => toggleTask(t.id))}>
+                        完成
+                      </MiniButton>
                     </>
                   }
                 />
@@ -357,7 +390,11 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
 
         {/* 收集箱 */}
         {inboxOpen.length > 0 ? (
-          <Section title="收集箱待澄清" count={inboxOpen.length} note="先决定它们属于哪一天，或哪一份清单。">
+          <Section
+            title="收集箱待澄清"
+            count={inboxOpen.length}
+            note="先决定它们属于哪一天，或哪一份清单。"
+          >
             {inboxOpen.slice(0, 6).map((t) => (
               <PlanRow
                 key={t.id}
@@ -367,20 +404,26 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
                 onPick={() => togglePick(t.id)}
                 actions={
                   <>
-                    <MiniButton onClick={() => void run(t.id, () => moveTask(t.id, { dueDate: todayStr() }))}>
+                    <MiniButton
+                      onClick={() => void run(t.id, () => moveTask(t.id, { dueDate: todayStr() }))}
+                    >
                       今天
                     </MiniButton>
-                    <MiniButton onClick={() => void run(t.id, () => moveTask(t.id, { dueDate: addDays(todayStr(), 1) }))}>
+                    <MiniButton
+                      onClick={() =>
+                        void run(t.id, () => moveTask(t.id, { dueDate: addDays(todayStr(), 1) }))
+                      }
+                    >
                       明天
                     </MiniButton>
                     <select
                       className="h-6 rounded-md border border-line bg-surface px-1 text-[0.71875rem]"
                       defaultValue=""
                       onChange={(e) => {
-                        if (!e.target.value) return
-                        const listId = Number(e.target.value)
-                        e.currentTarget.value = ''
-                        void run(t.id, () => updateTask(t.id, { listId }))
+                        if (!e.target.value) return;
+                        const listId = Number(e.target.value);
+                        e.currentTarget.value = '';
+                        void run(t.id, () => updateTask(t.id, { listId }));
                       }}
                     >
                       <option value="">移入清单…</option>
@@ -395,7 +438,9 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
               />
             ))}
             {inboxOpen.length > 6 ? (
-              <p className="px-1 pt-1 text-[0.71875rem] text-ink-3">另有 {inboxOpen.length - 6} 项，稍后处理。</p>
+              <p className="px-1 pt-1 text-[0.71875rem] text-ink-3">
+                另有 {inboxOpen.length - 6} 项，稍后处理。
+              </p>
             ) : null}
           </Section>
         ) : null}
@@ -408,7 +453,7 @@ function MorningPlan({ open, onClose }: { open: boolean; onClose: () => void }) 
         ) : null}
       </div>
     </Modal>
-  )
+  );
 }
 
 function Section({
@@ -417,16 +462,16 @@ function Section({
   note,
   tone,
   action,
-  children,
+  children
 }: {
-  title: string
-  count?: number
-  note?: string
-  tone?: 'danger' | 'accent'
+  title: string;
+  count?: number;
+  note?: string;
+  tone?: 'danger' | 'accent';
   /** 标题行右侧的操作（如批量顺延）。放在标题旁而不是 note 行，
       是因为它是个可点的动作，混在说明文字里既不像按钮也不像文字。 */
-  action?: React.ReactNode
-  children: React.ReactNode
+  action?: React.ReactNode;
+  children: React.ReactNode;
 }) {
   return (
     <section>
@@ -434,20 +479,22 @@ function Section({
         <h3
           className={cx(
             'text-[0.8125rem] font-semibold',
-            tone === 'danger' ? 'text-p-high' : tone === 'accent' ? 'text-seal' : 'text-ink',
+            tone === 'danger' ? 'text-p-high' : tone === 'accent' ? 'text-seal' : 'text-ink'
           )}
         >
           {title}
         </h3>
         {count !== undefined ? (
-          <span className="rounded-full bg-surface-2 px-1.5 text-[0.6875rem] text-ink-3 tabular-nums">{count}</span>
+          <span className="rounded-full bg-surface-2 px-1.5 text-[0.6875rem] text-ink-3 tabular-nums">
+            {count}
+          </span>
         ) : null}
         {action ? <span className="ml-auto">{action}</span> : null}
       </div>
       {note ? <p className="mb-1.5 text-[0.71875rem] text-ink-3">{note}</p> : null}
       <div className="space-y-1">{children}</div>
     </section>
-  )
+  );
 }
 
 function PlanRow({
@@ -455,20 +502,20 @@ function PlanRow({
   listName,
   picked,
   onPick,
-  actions,
+  actions
 }: {
-  task: Task
-  listName: string
-  picked: boolean
-  onPick: () => void
-  actions: React.ReactNode
+  task: Task;
+  listName: string;
+  picked: boolean;
+  onPick: () => void;
+  actions: React.ReactNode;
 }) {
   return (
     <div
       data-plan-row={task.id}
       className={cx(
         'flex flex-wrap items-center gap-2 rounded-xl border px-2.5 py-2 transition-colors',
-        picked ? 'border-seal/40 bg-seal/8' : 'border-line bg-surface hover:border-line-strong',
+        picked ? 'border-seal/40 bg-seal/8' : 'border-line bg-surface hover:border-line-strong'
       )}
     >
       {/* 语义是"选为今日重点"，不是"标记完成"——读屏默认文案会说反，必须显式指定 */}
@@ -489,20 +536,20 @@ function PlanRow({
       </div>
       <div className="flex items-center gap-1">{actions}</div>
     </div>
-  )
+  );
 }
 
 function MiniButton({
   children,
   onClick,
   disabled,
-  title,
+  title
 }: {
-  children: React.ReactNode
-  onClick: () => void
+  children: React.ReactNode;
+  onClick: () => void;
   /** 进行中的操作要能被看见地挡住，否则连点两下就是两批重复改期。 */
-  disabled?: boolean
-  title?: string
+  disabled?: boolean;
+  title?: string;
 }) {
   return (
     <button
@@ -511,73 +558,73 @@ function MiniButton({
       disabled={disabled}
       title={title}
       className={cx(
-        'whitespace-nowrap rounded-md border border-line px-1.5 py-0.5 text-[0.71875rem] text-ink-2 transition-colors hover:border-seal/40 hover:text-seal',
-        disabled && 'cursor-default opacity-50 hover:border-line hover:text-ink-2',
+        'rounded-md border border-line px-1.5 py-0.5 text-[0.71875rem] whitespace-nowrap text-ink-2 transition-colors hover:border-seal/40 hover:text-seal',
+        disabled && 'cursor-default opacity-50 hover:border-line hover:text-ink-2'
       )}
     >
       {children}
     </button>
-  )
+  );
 }
 
 /* ---------------- 日省 ---------------- */
 
-const MOODS = ['稳', '顺', '疲', '滞', '躁']
+const MOODS = ['稳', '顺', '疲', '滞', '躁'];
 
 function DailyReview({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { stats, loadStats, saveSettings, toast } = useStore()
-  const [date, setDate] = useState(todayStr())
-  const [mood, setMood] = useState('')
-  const [wins, setWins] = useState('')
-  const [blockers, setBlockers] = useState('')
-  const [tomorrow, setTomorrow] = useState('')
-  const [busy, setBusy] = useState(false)
-  const dateId = useId()
+  const { stats, loadStats, saveSettings, toast } = useStore();
+  const [date, setDate] = useState(todayStr());
+  const [mood, setMood] = useState('');
+  const [wins, setWins] = useState('');
+  const [blockers, setBlockers] = useState('');
+  const [tomorrow, setTomorrow] = useState('');
+  const [busy, setBusy] = useState(false);
+  const dateId = useId();
 
   // 打开时定格在「今天」，并预取概览数据
   useEffect(() => {
-    if (!open) return
-    setDate(todayStr())
-    void loadStats(7)
-  }, [open, loadStats])
+    if (!open) return;
+    setDate(todayStr());
+    void loadStats(7);
+  }, [open, loadStats]);
 
   // 复盘内容跟着日期走：页脚承诺「可随时补写或修改」，那就得真能翻到往日。
   // alive 守卫避免快速切换日期时旧响应盖掉新内容。
   useEffect(() => {
-    if (!open) return
-    let alive = true
+    if (!open) return;
+    let alive = true;
     api
       .getReview(date)
       .then((r) => {
-        if (!alive) return
-        setMood(r.mood)
-        setWins(r.wins)
-        setBlockers(r.blockers)
-        setTomorrow(r.tomorrow)
+        if (!alive) return;
+        setMood(r.mood);
+        setWins(r.wins);
+        setBlockers(r.blockers);
+        setTomorrow(r.tomorrow);
       })
-      .catch(() => undefined)
+      .catch(() => undefined);
     return () => {
-      alive = false
-    }
-  }, [open, date])
+      alive = false;
+    };
+  }, [open, date]);
 
   const submit = async () => {
-    setBusy(true)
+    setBusy(true);
     try {
-      await api.saveReview({ date, mood, wins, blockers, tomorrow })
-      await saveSettings({ reviewDone: todayStr() })
-      onClose()
+      await api.saveReview({ date, mood, wins, blockers, tomorrow });
+      await saveSettings({ reviewDone: todayStr() });
+      onClose();
     } catch (e) {
       // 以前这里只有 finally：保存失败时弹窗原地不动、没有任何提示，
       // 而 busy 被复位后按钮看起来还能点，用户会以为"已经存上了"。
-      toast(e instanceof Error && e.message ? e.message : '日省保存失败，请重试', 'error')
+      toast(e instanceof Error && e.message ? e.message : '日省保存失败，请重试', 'error');
     } finally {
-      setBusy(false)
+      setBusy(false);
     }
-  }
+  };
 
-  const done = stats?.doneToday ?? 0
-  const open_ = stats ? stats.dueToday - stats.dueTodayDone : 0
+  const done = stats?.doneToday ?? 0;
+  const open_ = stats ? stats.dueToday - stats.dueTodayDone : 0;
 
   return (
     <Modal
@@ -593,7 +640,9 @@ function DailyReview({ open, onClose }: { open: boolean; onClose: () => void }) 
       width={560}
       footer={
         <>
-          <span className="mr-auto text-[0.71875rem] text-ink-3">复盘只对自己可见，可随时补写或修改</span>
+          <span className="mr-auto text-[0.71875rem] text-ink-3">
+            复盘只对自己可见，可随时补写或修改
+          </span>
           <Button variant="ghost" onClick={onClose}>
             稍后
           </Button>
@@ -615,7 +664,7 @@ function DailyReview({ open, onClose }: { open: boolean; onClose: () => void }) 
             value={date}
             max={todayStr()}
             onChange={(e) => setDate(e.target.value || todayStr())}
-            className="rounded-lg border border-control-line bg-surface px-2 py-1 text-[0.75rem] tabular-nums text-ink outline-none focus:border-seal"
+            className="rounded-lg border border-control-line bg-surface px-2 py-1 text-[0.75rem] text-ink tabular-nums outline-none focus:border-seal"
           />
           {date !== todayStr() ? (
             <button
@@ -635,7 +684,9 @@ function DailyReview({ open, onClose }: { open: boolean; onClose: () => void }) 
         </div>
 
         {date !== todayStr() ? (
-          <p className="text-[0.6875rem] text-ink-3">上方三项与结语始终是「今天」的口径，不随复盘日期变化。</p>
+          <p className="text-[0.6875rem] text-ink-3">
+            上方三项与结语始终是「今天」的口径，不随复盘日期变化。
+          </p>
         ) : null}
 
         <p className="brand-serif rounded-xl border border-line bg-surface-2/50 px-3.5 py-2.5 text-[0.8125rem] leading-relaxed text-ink-2">
@@ -643,7 +694,9 @@ function DailyReview({ open, onClose }: { open: boolean; onClose: () => void }) 
         </p>
 
         <div>
-          <span className="mb-1.5 block text-[0.71875rem] font-medium tracking-wide text-ink-3">今日状态</span>
+          <span className="mb-1.5 block text-[0.71875rem] font-medium tracking-wide text-ink-3">
+            今日状态
+          </span>
           <div className="flex flex-wrap gap-1.5">
             {MOODS.map((m) => (
               <button
@@ -653,7 +706,9 @@ function DailyReview({ open, onClose }: { open: boolean; onClose: () => void }) 
                 onClick={() => setMood(mood === m ? '' : m)}
                 className={cx(
                   'brand-serif h-9 w-9 rounded-lg border text-[0.875rem] transition-colors',
-                  mood === m ? 'border-seal bg-seal/10 text-seal' : 'border-line text-ink-2 hover:bg-surface-2',
+                  mood === m
+                    ? 'border-seal bg-seal/10 text-seal'
+                    : 'border-line text-ink-2 hover:bg-surface-2'
                 )}
               >
                 {m}
@@ -682,34 +737,41 @@ function DailyReview({ open, onClose }: { open: boolean; onClose: () => void }) 
         />
       </div>
     </Modal>
-  )
+  );
 }
 
 function Stat({ label, value, tone }: { label: string; value: string | number; tone?: 'accent' }) {
   return (
     <div className="rounded-xl border border-line bg-surface px-3 py-2">
       <div className="text-[0.6875rem] text-ink-3">{label}</div>
-      <div className={cx('text-[1.125rem] font-semibold tabular-nums', tone === 'accent' ? 'text-seal' : 'text-ink')}>
+      <div
+        className={cx(
+          'text-[1.125rem] font-semibold tabular-nums',
+          tone === 'accent' ? 'text-seal' : 'text-ink'
+        )}
+      >
         {value}
       </div>
     </div>
-  )
+  );
 }
 
 function ReviewField({
   label,
   value,
   onChange,
-  placeholder,
+  placeholder
 }: {
-  label: string
-  value: string
-  onChange: (v: string) => void
-  placeholder?: string
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-[0.71875rem] font-medium tracking-wide text-ink-3">{label}</span>
+      <span className="mb-1.5 block text-[0.71875rem] font-medium tracking-wide text-ink-3">
+        {label}
+      </span>
       <textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -718,7 +780,7 @@ function ReviewField({
         className={cx(inputClass, 'resize-none leading-6')}
       />
     </label>
-  )
+  );
 }
 
 /* ---------------- 专注 ---------------- */
@@ -726,23 +788,23 @@ function ReviewField({
 const FOCUS_PRESETS = [
   { minutes: 25, label: '25 分钟 · 一番茄' },
   { minutes: 45, label: '45 分钟 · 深度一段' },
-  { minutes: 15, label: '15 分钟 · 启动一下' },
-]
+  { minutes: 15, label: '15 分钟 · 启动一下' }
+];
 
 function FocusPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { focus, startFocus, stopFocus, tasks } = useStore()
-  const [taskId, setTaskId] = useState<number | ''>('')
-  const [minutes, setMinutes] = useState(25)
+  const { focus, startFocus, stopFocus, tasks } = useStore();
+  const [taskId, setTaskId] = useState<number | ''>('');
+  const [minutes, setMinutes] = useState(25);
 
   useEffect(() => {
-    if (open && focus.taskId) setTaskId(focus.taskId)
+    if (open && focus.taskId) setTaskId(focus.taskId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
+  }, [open]);
 
-  const mm = String(Math.floor(focus.remaining / 60)).padStart(2, '0')
-  const ss = String(focus.remaining % 60).padStart(2, '0')
-  const progress = focus.running ? 1 - focus.remaining / (focus.minutes * 60) : 0
-  const current = tasks.find((t) => t.id === focus.taskId) ?? tasks.find((t) => t.id === taskId)
+  const mm = String(Math.floor(focus.remaining / 60)).padStart(2, '0');
+  const ss = String(focus.remaining % 60).padStart(2, '0');
+  const progress = focus.running ? 1 - focus.remaining / (focus.minutes * 60) : 0;
+  const current = tasks.find((t) => t.id === focus.taskId) ?? tasks.find((t) => t.id === taskId);
 
   return (
     <Modal
@@ -786,7 +848,7 @@ function FocusPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
         <div className="flex flex-col items-center gap-3 py-2">
           <ProgressRing value={progress} size={148} stroke={8}>
             <div className="text-center">
-              <div className="brand-serif text-[1.875rem] font-semibold tabular-nums leading-none text-ink">
+              <div className="brand-serif text-[1.875rem] leading-none font-semibold text-ink tabular-nums">
                 {mm}:{ss}
               </div>
               <div className="mt-1 text-[0.6875rem] text-ink-3">共 {focus.minutes} 分钟</div>
@@ -800,7 +862,9 @@ function FocusPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
       ) : (
         <div className="space-y-4">
           <div>
-            <span className="mb-1.5 block text-[0.71875rem] font-medium tracking-wide text-ink-3">专注时长</span>
+            <span className="mb-1.5 block text-[0.71875rem] font-medium tracking-wide text-ink-3">
+              专注时长
+            </span>
             <div className="space-y-1.5">
               {FOCUS_PRESETS.map((p) => (
                 <button
@@ -809,7 +873,9 @@ function FocusPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
                   onClick={() => setMinutes(p.minutes)}
                   className={cx(
                     'flex w-full items-center justify-between rounded-lg border px-3 py-2 text-[0.8125rem] transition-colors',
-                    minutes === p.minutes ? 'border-seal bg-seal/10 text-seal' : 'border-line text-ink-2 hover:bg-surface-2',
+                    minutes === p.minutes
+                      ? 'border-seal bg-seal/10 text-seal'
+                      : 'border-line text-ink-2 hover:bg-surface-2'
                   )}
                 >
                   {p.label}
@@ -847,21 +913,30 @@ function FocusPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
         </div>
       )}
     </Modal>
-  )
+  );
 }
 
 /* ---------------- 提醒中心 ---------------- */
 
 function ReminderCenter() {
-  const { reminders, dismissReminder, snoozeReminder, toggleTask, updateSubtask, setSelectedTask, setView, select } = useStore()
+  const {
+    reminders,
+    dismissReminder,
+    snoozeReminder,
+    toggleTask,
+    updateSubtask,
+    setSelectedTask,
+    setView,
+    select
+  } = useStore();
   // 权限状态跟着浏览器实时走：用户在站点设置里改过之后，这里的文案不会再停留在旧值。
-  const { diag, request } = useNotifyDiagnosis()
-  const [collapsed, setCollapsed] = useState(false)
+  const { diag, request } = useNotifyDiagnosis();
+  const [collapsed, setCollapsed] = useState(false);
 
   // 这个浮层此前没有任何键盘退出方式：补一个 Esc 收起
-  useEscapeLayer(reminders.length > 0 && !collapsed, () => setCollapsed(true))
+  useEscapeLayer(reminders.length > 0 && !collapsed, () => setCollapsed(true));
 
-  if (reminders.length === 0) return null
+  if (reminders.length === 0) return null;
 
   return (
     // 提醒是异步冒出来的：接一个 live region，读屏才会念出新到的提醒。
@@ -871,12 +946,14 @@ function ReminderCenter() {
     <div
       aria-live="polite"
       aria-atomic="false"
-      className="kb-lift fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] right-3 z-40 w-[330px] max-w-[calc(100vw-1.5rem)] animate-rise lg:bottom-4 lg:right-4"
+      className="kb-lift fixed right-3 bottom-[calc(6rem+env(safe-area-inset-bottom))] z-40 w-[330px] max-w-[calc(100vw-1.5rem)] animate-rise lg:right-4 lg:bottom-4"
     >
       <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-lg)]">
         <header className="flex items-center gap-2 border-b border-line bg-seal/8 px-3 py-2">
           <IconBell size={15} className="text-seal" />
-          <span className="brand-serif flex-1 text-[0.8125rem] font-semibold text-ink">提醒 · {reminders.length} 条</span>
+          <span className="brand-serif flex-1 text-[0.8125rem] font-semibold text-ink">
+            提醒 · {reminders.length} 条
+          </span>
           <button
             type="button"
             aria-expanded={!collapsed}
@@ -890,10 +967,13 @@ function ReminderCenter() {
         {!collapsed ? (
           <div className="max-h-[320px] space-y-1 overflow-y-auto p-2">
             {reminders.map((h) => {
-              const key = `${h.ackId}|${h.fireAt}`
-              const title = h.subtask ? `${h.task.title} · ${h.subtask.title}` : h.task.title
+              const key = `${h.ackId}|${h.fireAt}`;
+              const title = h.subtask ? `${h.task.title} · ${h.subtask.title}` : h.task.title;
               return (
-                <div key={key} className="rounded-xl border border-line bg-surface-2/40 px-2.5 py-2">
+                <div
+                  key={key}
+                  className="rounded-xl border border-line bg-surface-2/40 px-2.5 py-2"
+                >
                   <div className="flex items-start gap-2">
                     {/* 这里本质是"完成这一项"，不是"标记为已完成 / 未完成"的开关。
                         原先用 checked={false} 的 RoundCheck，读屏恒读作「未按下」，
@@ -904,9 +984,9 @@ function ReminderCenter() {
                       title="完成并关闭提醒"
                       onClick={() => {
                         // 子任务提醒勾选的是子步骤本身，不是父任务。
-                        if (h.subtask) void updateSubtask(h.subtask.id, { done: true })
-                        else void toggleTask(h.task.id)
-                        dismissReminder(key)
+                        if (h.subtask) void updateSubtask(h.subtask.id, { done: true });
+                        else void toggleTask(h.task.id);
+                        dismissReminder(key);
                       }}
                       className="mt-[2px] grid h-[18px] w-[18px] shrink-0 place-items-center rounded-full border border-control-line text-ink-3 transition-colors hover:border-seal hover:text-seal"
                     >
@@ -925,10 +1005,10 @@ function ReminderCenter() {
                   <div className="mt-1.5 flex flex-wrap items-center gap-1 pl-[26px]">
                     <MiniButton
                       onClick={() => {
-                        select({ kind: 'smart', key: 'all' })
-                        setView('list')
-                        setSelectedTask(h.task.id)
-                        dismissReminder(key)
+                        select({ kind: 'smart', key: 'all' });
+                        setView('list');
+                        setSelectedTask(h.task.id);
+                        dismissReminder(key);
                       }}
                     >
                       查看
@@ -945,7 +1025,7 @@ function ReminderCenter() {
                     </button>
                   </div>
                 </div>
-              )
+              );
             })}
           </div>
         ) : null}
@@ -967,17 +1047,17 @@ function ReminderCenter() {
         ) : null}
       </div>
     </div>
-  )
+  );
 }
 
 /* ---------------- 确认框 ---------------- */
 
 function ConfirmHost() {
-  const { confirmState, resolveConfirm } = useStore()
-  if (!confirmState) return null
+  const { confirmState, resolveConfirm } = useStore();
+  if (!confirmState) return null;
   // 危险操作的初始焦点必须落在「取消」上：否则焦点留在触发按钮上，
   // 用户顺手再按一次 Enter 就把刚弹出的确认框直接确认掉了。
-  const cancelFirst = !!confirmState.danger
+  const cancelFirst = !!confirmState.danger;
   return (
     <Modal
       open
@@ -1016,13 +1096,13 @@ function ConfirmHost() {
         <p className="text-[0.8125rem] leading-relaxed text-ink-2">{confirmState.message}</p>
       )}
     </Modal>
-  )
+  );
 }
 
 /* ---------------- 轻提示 ---------------- */
 
 function ToastHost() {
-  const { toasts, dismissToast } = useStore()
+  const { toasts, dismissToast } = useStore();
   // 容器常驻：live region 必须在使用之前就存在于 DOM 里，
   // 若等第一条提示出现才挂载容器，读屏不会播报那一条。
   return (
@@ -1030,7 +1110,7 @@ function ToastHost() {
       role="status"
       aria-live="polite"
       aria-atomic="false"
-      className="pointer-events-none fixed left-1/2 top-4 z-50 flex -translate-x-1/2 flex-col items-center gap-2"
+      className="pointer-events-none fixed top-4 left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-2"
     >
       {toasts.map((t) => (
         <button
@@ -1043,7 +1123,7 @@ function ToastHost() {
               ? 'border-p-high/30 bg-p-high/10 text-ink'
               : t.kind === 'info'
                 ? 'border-line bg-surface/95 text-ink-2'
-                : 'border-seal/25 bg-surface/95 text-ink',
+                : 'border-seal/25 bg-surface/95 text-ink'
           )}
         >
           {t.kind === 'error' ? (
@@ -1055,7 +1135,7 @@ function ToastHost() {
         </button>
       ))}
     </div>
-  )
+  );
 }
 
 /* ---------------- 新版本提示（右上角浮卡片） ---------------- */
@@ -1076,48 +1156,46 @@ function ToastHost() {
  *      否则用户手贱点过一次 ×，就再也不会知道界面是旧的了。
  */
 function UpdateToast() {
-  const { updateReady, updateKey, applyUpdate } = useStore()
-  const [dismissedKey, setDismissedKey] = useState<string | null>(null)
-  const [top, setTop] = useState(16)
+  const { updateReady, updateKey, applyUpdate } = useStore();
+  const [dismissedKey, setDismissedKey] = useState<string | null>(null);
+  const [top, setTop] = useState(16);
 
   useEffect(() => {
-    if (!updateReady) return
-    const header = document.querySelector<HTMLElement>('[data-app-header]')
+    if (!updateReady) return;
+    const header = document.querySelector<HTMLElement>('[data-app-header]');
     // 顶栏不存在（锁屏 / 首屏）时退回视口顶端的常规留白。
     const measure = () => {
-      const bottom = header?.getBoundingClientRect().bottom ?? 0
-      setTop(bottom > 0 ? bottom + 8 : 16)
-    }
-    measure()
+      const bottom = header?.getBoundingClientRect().bottom ?? 0;
+      setTop(bottom > 0 ? bottom + 8 : 16);
+    };
+    measure();
     if (!header || typeof ResizeObserver === 'undefined') {
-      window.addEventListener('resize', measure)
-      return () => window.removeEventListener('resize', measure)
+      window.addEventListener('resize', measure);
+      return () => window.removeEventListener('resize', measure);
     }
-    const ro = new ResizeObserver(measure)
-    ro.observe(header)
-    return () => ro.disconnect()
-  }, [updateReady])
+    const ro = new ResizeObserver(measure);
+    ro.observe(header);
+    return () => ro.disconnect();
+  }, [updateReady]);
 
   // 这一版已经关掉过，且没等到下一版 —— 不再打扰。
-  if (!updateReady || (updateKey !== null && updateKey === dismissedKey)) return null
+  if (!updateReady || (updateKey !== null && updateKey === dismissedKey)) return null;
 
   return (
     <div
       role="status"
       data-update-toast
-      className="animate-rise fixed right-3 top-0 z-[60] w-[calc(100vw-1.5rem)] max-w-[19rem] sm:right-5"
+      className="fixed top-0 right-3 z-[60] w-[calc(100vw-1.5rem)] max-w-[19rem] animate-rise sm:right-5"
       style={{ top }}
     >
       <div className="rounded-xl border border-seal/30 bg-surface/95 p-3 shadow-[var(--shadow-lg)] backdrop-blur">
         <div className="flex items-start gap-2">
           <IconRefresh size={15} className="mt-0.5 shrink-0 text-seal" />
           <div className="min-w-0 flex-1">
-            <p className="whitespace-nowrap text-[0.8125rem] font-medium text-ink">慎始有新版了</p>
+            <p className="text-[0.8125rem] font-medium whitespace-nowrap text-ink">慎始有新版了</p>
             <p className="mt-0.5 text-[0.6875rem] leading-relaxed text-ink-3">
               换用新版本并重载页面
-              {isIOS()
-                ? '。iPhone 上若切不过来，把应用从后台划掉再打开一次即可'
-                : ''}
+              {isIOS() ? '。iPhone 上若切不过来，把应用从后台划掉再打开一次即可' : ''}
             </p>
           </div>
           <button
@@ -1136,6 +1214,5 @@ function UpdateToast() {
         </div>
       </div>
     </div>
-  )
+  );
 }
-

@@ -1,13 +1,14 @@
-import { writeFileSync, readFileSync, existsSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { defineConfig, type Plugin } from 'vite'
-import react from '@vitejs/plugin-react'
-import tailwindcss from '@tailwindcss/vite'
+import { writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { defineConfig, type Plugin } from 'vite';
+import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 // 开发模式下把 /api 代理到 Go 服务（默认 :8787），
 // 生产构建产物由 Go 进程直接托管，无需额外 Web 服务器。
 // 可用 SHENSHI_API 覆盖后端地址：SHENSHI_API=http://127.0.0.1:9000 pnpm run dev
-const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {}
+const env =
+  (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
 
 /**
  * 把构建号打进 sw.js。
@@ -23,13 +24,17 @@ function swBuildStamp(outDir: string): Plugin {
     name: 'shenshi-sw-build-stamp',
     apply: 'build',
     writeBundle() {
-      const swPath = resolve(outDir, 'sw.js')
-      if (!existsSync(swPath)) return
+      const swPath = resolve(outDir, 'sw.js');
+      if (!existsSync(swPath)) return;
       // 用时间戳而非内容哈希：同一天内连续发两次构建也要被认成新版本。
-      const stamp = Date.now().toString(36)
-      writeFileSync(swPath, readFileSync(swPath, 'utf8').replace('__SHENSHI_BUILD__', stamp), 'utf8')
-    },
-  }
+      const stamp = Date.now().toString(36);
+      writeFileSync(
+        swPath,
+        readFileSync(swPath, 'utf8').replace('__SHENSHI_BUILD__', stamp),
+        'utf8'
+      );
+    }
+  };
 }
 
 export default defineConfig({
@@ -40,14 +45,14 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: env.SHENSHI_API || 'http://127.0.0.1:8787',
-        changeOrigin: true,
-      },
-    },
+        changeOrigin: true
+      }
+    }
   },
   build: {
     outDir: 'dist',
     emptyOutDir: true,
     sourcemap: false,
-    chunkSizeWarningLimit: 1500,
-  },
-})
+    chunkSizeWarningLimit: 1500
+  }
+});

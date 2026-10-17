@@ -1,46 +1,46 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react';
 
-import { api } from '../api/client'
-import { todayStr } from '../lib/date'
-import { QUOTES, reviewLine } from '../lib/quotes'
-import { useStore } from '../store/AppStore'
-import type { CountByKey, Review, Stats } from '../types'
-import { IconBook, IconChart, IconRepeat, IconSparkle, IconTimer } from './icons'
-import { ProgressRing, cx } from './ui'
+import { api } from '../api/client';
+import { todayStr } from '../lib/date';
+import { QUOTES, reviewLine } from '../lib/quotes';
+import { useStore } from '../store/AppStore';
+import type { CountByKey, Review } from '../types';
+import { IconBook, IconChart, IconRepeat, IconSparkle, IconTimer } from './icons';
+import { ProgressRing, cx } from './ui';
 
 const RANGES = [
   { days: 14, label: '近 14 天' },
   { days: 30, label: '近 30 天' },
-  { days: 90, label: '近 90 天' },
-]
+  { days: 90, label: '近 90 天' }
+];
 
 export function StatsView() {
-  const { stats, statsError, loadStats, version } = useStore()
-  const [days, setDays] = useState(30)
-  const [reviews, setReviews] = useState<Review[]>([])
-  const [focusTotal, setFocusTotal] = useState(0)
+  const { stats, statsError, loadStats, version } = useStore();
+  const [days, setDays] = useState(30);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [focusTotal, setFocusTotal] = useState(0);
 
   useEffect(() => {
-    void loadStats(days)
-  }, [days, loadStats, version])
+    void loadStats(days);
+  }, [days, loadStats, version]);
 
   useEffect(() => {
     api
       .listReviews(12)
       .then((r) => setReviews(r.reviews))
-      .catch(() => undefined)
+      .catch(() => undefined);
     api
       .listFocus(200)
       .then((r) => setFocusTotal(r.sessions.reduce((sum, s) => sum + s.minutes, 0)))
-      .catch(() => undefined)
-  }, [version])
+      .catch(() => undefined);
+  }, [version]);
 
   const chart = useMemo(() => {
-    if (!stats) return { rows: [], max: 1 }
-    const rows = stats.trend.slice(-days)
-    const max = Math.max(1, ...rows.map((r) => Math.max(r.created, r.done)))
-    return { rows, max }
-  }, [stats, days])
+    if (!stats) return { rows: [], max: 1 };
+    const rows = stats.trend.slice(-days);
+    const max = Math.max(1, ...rows.map((r) => Math.max(r.created, r.done)));
+    return { rows, max };
+  }, [stats, days]);
 
   if (statsError && !stats) {
     // 接口挂了就明说「加载失败」，别把故障渲染成「正在统计…」再永久卡住。
@@ -58,7 +58,7 @@ export function StatsView() {
           </button>
         </div>
       </div>
-    )
+    );
   }
 
   if (!stats) {
@@ -66,18 +66,18 @@ export function StatsView() {
       <div className="grid h-full place-items-center text-[0.8125rem] text-ink-3">
         <span>正在统计…</span>
       </div>
-    )
+    );
   }
 
-  const todayDone = stats.doneToday
-  const openToday = stats.dueToday - stats.dueTodayDone
+  const todayDone = stats.doneToday;
+  const openToday = stats.dueToday - stats.dueTodayDone;
   // 柱状图是纯视觉的，读屏读不到柱子高低 —— 这里算好概述给它当文本替代。
-  const trendDone = chart.rows.reduce((n, r) => n + r.done, 0)
-  const trendCreated = chart.rows.reduce((n, r) => n + r.created, 0)
+  const trendDone = chart.rows.reduce((n, r) => n + r.done, 0);
+  const trendCreated = chart.rows.reduce((n, r) => n + r.created, 0);
   const trendPeak = chart.rows.reduce<{ date: string; done: number }>(
     (best, r) => (r.done > best.done ? { date: r.date, done: r.done } : best),
-    { date: '', done: 0 },
-  )
+    { date: '', done: 0 }
+  );
 
   return (
     <div className="h-full overflow-y-auto px-5 py-4">
@@ -96,7 +96,12 @@ export function StatsView() {
           hint={`其中今日到期 ${stats.dueToday} 件`}
           tone={stats.overdue > 0 ? 'danger' : 'normal'}
         />
-        <Kpi label="今日完成" value={todayDone} hint={`待办还剩 ${Math.max(0, openToday)} 件`} tone="accent" />
+        <Kpi
+          label="今日完成"
+          value={todayDone}
+          hint={`待办还剩 ${Math.max(0, openToday)} 件`}
+          tone="accent"
+        />
         <Kpi
           label="连续完成"
           value={`${stats.streakDays} 天`}
@@ -112,11 +117,15 @@ export function StatsView() {
       {/* 完成率与结语 */}
       <div className="mt-3 flex flex-col gap-3 rounded-2xl border border-line bg-surface/60 p-4 sm:flex-row sm:items-center">
         <ProgressRing value={stats.completion / 100} size={72} stroke={5}>
-          <span className="text-[0.8125rem] font-medium tabular-nums text-ink">{stats.completion.toFixed(0)}%</span>
+          <span className="text-[0.8125rem] font-medium text-ink tabular-nums">
+            {stats.completion.toFixed(0)}%
+          </span>
         </ProgressRing>
         <div className="min-w-0 flex-1">
           <div className="brand-serif text-[0.875rem] text-ink">全部完成率</div>
-          <p className="mt-1 text-[0.78125rem] leading-relaxed text-ink-2">{reviewLine(todayDone, Math.max(0, openToday))}</p>
+          <p className="mt-1 text-[0.78125rem] leading-relaxed text-ink-2">
+            {reviewLine(todayDone, Math.max(0, openToday))}
+          </p>
           <p className="mt-1 text-[0.71875rem] text-ink-3">
             累计 {stats.totalAll} 件 · 已完成 {stats.totalDone} 件 · 逾期 {stats.overdue} 件
           </p>
@@ -143,7 +152,7 @@ export function StatsView() {
                 onClick={() => setDays(r.days)}
                 className={cx(
                   'rounded-md px-2.5 py-1 text-[0.75rem] transition-colors',
-                  days === r.days ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:text-ink',
+                  days === r.days ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:text-ink'
                 )}
               >
                 {r.label}
@@ -171,8 +180,8 @@ export function StatsView() {
           className="mt-3 flex h-[150px] items-end gap-[3px] overflow-x-auto"
         >
           {chart.rows.map((r) => {
-            const doneH = (r.done / chart.max) * 100
-            const createdH = (r.created / chart.max) * 100
+            const doneH = (r.done / chart.max) * 100;
+            const createdH = (r.created / chart.max) * 100;
             return (
               <div
                 key={r.date}
@@ -189,21 +198,38 @@ export function StatsView() {
                     style={{ height: `${Math.max(createdH, r.created ? 3 : 0)}%` }}
                   />
                 </div>
-                <span className="truncate text-[0.5625rem] tabular-nums text-ink-3">
+                <span className="truncate text-[0.5625rem] text-ink-3 tabular-nums">
                   {days <= 30 ? r.date.slice(8) : ''}
                 </span>
               </div>
-            )
+            );
           })}
         </div>
-        <p className="mt-2 text-[0.6875rem] text-ink-3">横轴为日期，纵轴为条数；悬停可看当日明细。</p>
+        <p className="mt-2 text-[0.6875rem] text-ink-3">
+          横轴为日期，纵轴为条数；悬停可看当日明细。
+        </p>
       </section>
 
       {/* 分布 */}
       <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
-        <Distribution title="按清单" icon={IconChart} rows={stats.byList} emptyText="暂无未完成任务" />
-        <Distribution title="按优先级" icon={IconSparkle} rows={stats.byPriority} emptyText="暂无未完成任务" />
-        <Distribution title="按四象限" icon={IconSparkle} rows={stats.byQuadrant} emptyText="暂无未完成任务" />
+        <Distribution
+          title="按清单"
+          icon={IconChart}
+          rows={stats.byList}
+          emptyText="暂无未完成任务"
+        />
+        <Distribution
+          title="按优先级"
+          icon={IconSparkle}
+          rows={stats.byPriority}
+          emptyText="暂无未完成任务"
+        />
+        <Distribution
+          title="按四象限"
+          icon={IconSparkle}
+          rows={stats.byQuadrant}
+          emptyText="暂无未完成任务"
+        />
       </div>
 
       {/* 复盘 */}
@@ -230,11 +256,17 @@ export function StatsView() {
             {reviews.map((r) => (
               <li key={r.id} className="rounded-xl border border-line bg-surface-2/40 px-3 py-2.5">
                 <div className="flex items-center gap-2">
-                  <span className="text-[0.78125rem] font-medium text-ink tabular-nums">{r.date}</span>
+                  <span className="text-[0.78125rem] font-medium text-ink tabular-nums">
+                    {r.date}
+                  </span>
                   {r.mood ? (
-                    <span className="rounded-md bg-seal/10 px-1.5 py-0.5 text-[0.71875rem] text-seal">{r.mood}</span>
+                    <span className="rounded-md bg-seal/10 px-1.5 py-0.5 text-[0.71875rem] text-seal">
+                      {r.mood}
+                    </span>
                   ) : null}
-                  {r.date === todayStr() ? <span className="text-[0.6875rem] text-ink-3">今日</span> : null}
+                  {r.date === todayStr() ? (
+                    <span className="text-[0.6875rem] text-ink-3">今日</span>
+                  ) : null}
                 </div>
                 <div className="mt-1 space-y-0.5 text-[0.78125rem] leading-relaxed text-ink-2">
                   {r.wins ? <p>成：{r.wins}</p> : null}
@@ -247,55 +279,55 @@ export function StatsView() {
         )}
       </section>
 
-      <div className="pointer-events-none fixed bottom-3 right-4 flex items-center gap-1 text-[0.65625rem] text-ink-3/70">
+      <div className="pointer-events-none fixed right-4 bottom-3 flex items-center gap-1 text-[0.65625rem] text-ink-3/70">
         <IconTimer size={11} />
         {stats.focusMinutes} 分钟专注 · 近 {days} 天
         <IconRepeat size={11} className="ml-2" />
         {stats.streakDays} 天连续
       </div>
     </div>
-  )
+  );
 }
 
 function Kpi({
   label,
   value,
   hint,
-  tone = 'normal',
+  tone = 'normal'
 }: {
-  label: string
-  value: string | number
-  hint?: string
-  tone?: 'normal' | 'accent' | 'danger'
+  label: string;
+  value: string | number;
+  hint?: string;
+  tone?: 'normal' | 'accent' | 'danger';
 }) {
   return (
     <div className="rounded-2xl border border-line bg-surface/60 px-3.5 py-3">
       <div className="text-[0.71875rem] tracking-wide text-ink-3">{label}</div>
       <div
         className={cx(
-          'mt-0.5 text-[1.375rem] font-semibold leading-8 tabular-nums',
-          tone === 'danger' ? 'text-p-high' : tone === 'accent' ? 'text-seal' : 'text-ink',
+          'mt-0.5 text-[1.375rem] leading-8 font-semibold tabular-nums',
+          tone === 'danger' ? 'text-p-high' : tone === 'accent' ? 'text-seal' : 'text-ink'
         )}
       >
         {value}
       </div>
       {hint ? <div className="text-[0.71875rem] text-ink-3">{hint}</div> : null}
     </div>
-  )
+  );
 }
 
 function Distribution({
   title,
   icon: Icon,
   rows,
-  emptyText,
+  emptyText
 }: {
-  title: string
-  icon: (p: { size?: number; className?: string }) => React.ReactNode
-  rows: CountByKey[]
-  emptyText: string
+  title: string;
+  icon: (p: { size?: number; className?: string }) => React.ReactNode;
+  rows: CountByKey[];
+  emptyText: string;
 }) {
-  const max = Math.max(1, ...rows.map((r) => r.count))
+  const max = Math.max(1, ...rows.map((r) => r.count));
   return (
     <section className="rounded-2xl border border-line bg-surface/60 p-4">
       <header className="mb-3 flex items-center gap-2">
@@ -308,18 +340,22 @@ function Distribution({
         <ul className="space-y-2">
           {rows.map((r) => (
             <li key={r.key} className="flex items-center gap-2.5">
-              <span className="w-[76px] shrink-0 truncate text-[0.75rem] text-ink-2">{r.label}</span>
+              <span className="w-[76px] shrink-0 truncate text-[0.75rem] text-ink-2">
+                {r.label}
+              </span>
               <span className="h-2 flex-1 overflow-hidden rounded-full bg-surface-2">
                 <span
                   className="block h-full rounded-full bg-seal/70"
                   style={{ width: `${(r.count / max) * 100}%` }}
                 />
               </span>
-              <span className="w-6 shrink-0 text-right text-[0.71875rem] tabular-nums text-ink-3">{r.count}</span>
+              <span className="w-6 shrink-0 text-right text-[0.71875rem] text-ink-3 tabular-nums">
+                {r.count}
+              </span>
             </li>
           ))}
         </ul>
       )}
     </section>
-  )
+  );
 }

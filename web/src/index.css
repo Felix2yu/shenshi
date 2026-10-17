@@ -67,14 +67,30 @@
 }
 
 /* 印章色可换：不改结构，只换一处色相。 */
-[data-accent='azure'] { --seal: #4a6386; }
-[data-accent='jade'] { --seal: #4f7358; }
-[data-accent='violet'] { --seal: #6f4f74; }
-[data-accent='ink'] { --seal: #4a4741; }
-[data-theme='dark'][data-accent='azure'] { --seal: #8aa3c8; }
-[data-theme='dark'][data-accent='jade'] { --seal: #86ac8e; }
-[data-theme='dark'][data-accent='violet'] { --seal: #b28cb6; }
-[data-theme='dark'][data-accent='ink'] { --seal: #b0aaa2; }
+[data-accent='azure'] {
+  --seal: #4a6386;
+}
+[data-accent='jade'] {
+  --seal: #4f7358;
+}
+[data-accent='violet'] {
+  --seal: #6f4f74;
+}
+[data-accent='ink'] {
+  --seal: #4a4741;
+}
+[data-theme='dark'][data-accent='azure'] {
+  --seal: #8aa3c8;
+}
+[data-theme='dark'][data-accent='jade'] {
+  --seal: #86ac8e;
+}
+[data-theme='dark'][data-accent='violet'] {
+  --seal: #b28cb6;
+}
+[data-theme='dark'][data-accent='ink'] {
+  --seal: #b0aaa2;
+}
 
 @theme inline {
   --color-paper: var(--paper);
@@ -101,8 +117,9 @@
 
   --font-serif: 'Songti SC', 'Noto Serif SC', 'Source Han Serif SC', 'STSong', serif;
   --font-lishu: 'ShenshiLishu', 'Libian SC', 'Baoli SC', 'Songti SC', serif;
-  --font-sans: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB',
-    'Microsoft YaHei', 'Segoe UI', Roboto, system-ui, sans-serif;
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+    'Segoe UI', Roboto, system-ui, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
 
   --radius-card: 12px;
@@ -114,24 +131,50 @@
 }
 
 @keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 @keyframes rise {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: none; }
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 @keyframes slide-left {
-  from { opacity: 0; transform: translateX(14px); }
-  to { opacity: 1; transform: none; }
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 @keyframes pop {
-  from { opacity: 0; transform: scale(0.96); }
-  to { opacity: 1; transform: none; }
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 @keyframes check-sweep {
-  from { stroke-dashoffset: 22; }
-  to { stroke-dashoffset: 0; }
+  from {
+    stroke-dashoffset: 22;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
 }
 
 /* ============================================================
@@ -139,10 +182,17 @@
    ============================================================ */
 
 /* 表单与通配符重置必须放进 @layer base：未分层规则优先级高于 @layer utilities，
-   若写在外层会把 button/input 上的 text-*/leading-*/font-*、元素上的 border-*/bg-*
-   等工具类静默盖掉（见项目记忆「index.css 未分层重置陷阱」）。
-   放进 base 后，它们仍作为默认值生效，但任何显式工具类都能正确覆盖。 */
-@layer base {
+   若写在外层会把 button/input 上的 text-*/
+leading-*/font-*、元素上的
+  border-*/bg-*
+  等工具类静默盖掉（见项目记忆「index.css
+  未分层重置陷阱」）。
+  放进
+  base
+  后，它们仍作为默认值生效，但任何显式工具类都能正确覆盖。
+  */
+  @layer
+  base {
   * {
     border-color: var(--line);
   }
@@ -276,10 +326,10 @@ textarea {
 /* 纸面质感：极淡的斜向纹理，仅在浅色下出现 */
 .paper-grain {
   background-image: repeating-linear-gradient(
-      135deg,
-      color-mix(in oklab, var(--ink) 1.6%, transparent) 0 1px,
-      transparent 1px 4px
-    );
+    135deg,
+    color-mix(in oklab, var(--ink) 1.6%, transparent) 0 1px,
+    transparent 1px 4px
+  );
 }
 
 .drag-ghost {
