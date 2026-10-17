@@ -34,9 +34,9 @@ const (
 const (
 	SmartInbox      = "inbox"
 	SmartToday      = "today"
-	SmartTomorrow   = "tomorrow"   // 明天到期
-	SmartWeek       = "week"       // 本周内（至本周日）
-	SmartNext7      = "next7"      // 未来 7 天（含今天，至 today+7）
+	SmartTomorrow   = "tomorrow" // 明天到期
+	SmartWeek       = "week"     // 本周内（至本周日）
+	SmartNext7      = "next7"    // 未来 7 天（含今天，至 today+7）
 	SmartOverdue    = "overdue"
 	SmartAll        = "all"
 	SmartDone       = "done"
@@ -67,15 +67,15 @@ func Offset(days int) string {
 // Folder 清单分组：用于把若干清单归入同一主题（如「工作」「生活」）。
 // 分组可以再嵌套分组（ParentID），Children 是查询时装配出来的子树。
 type Folder struct {
-	ID        int64  `json:"id"`
-	ParentID  *int64 `json:"parentId"`
-	Name      string `json:"name"`
-	Color     string `json:"color"`
-	Icon      string `json:"icon"`
-	SortOrder int    `json:"sortOrder"`
-	Collapsed bool   `json:"collapsed"`
-	Archived  bool   `json:"archived"`
-	CreatedAt string `json:"createdAt"`
+	ID        int64    `json:"id"`
+	ParentID  *int64   `json:"parentId"`
+	Name      string   `json:"name"`
+	Color     string   `json:"color"`
+	Icon      string   `json:"icon"`
+	SortOrder int      `json:"sortOrder"`
+	Collapsed bool     `json:"collapsed"`
+	Archived  bool     `json:"archived"`
+	CreatedAt string   `json:"createdAt"`
 	Lists     []List   `json:"lists"`
 	Children  []Folder `json:"children"`
 }
@@ -96,21 +96,21 @@ type List struct {
 
 // Task 任务。
 type Task struct {
-	ID         int64   `json:"id"`
-	ListID     int64   `json:"listId"`
-	Title      string  `json:"title"`
-	Notes      string  `json:"notes"`
-	Status     string  `json:"status"`
-	Priority   int     `json:"priority"`
-	StartDate  *string `json:"startDate"` // YYYY-MM-DD，计划开始日
-	DueDate    *string `json:"dueDate"`   // YYYY-MM-DD
-	DueTime    *string `json:"dueTime"`   // HH:MM
-	EndTime    *string `json:"endTime"`   // HH:MM
-	URL        string  `json:"url"`       // 关联链接（会议、文档、单号）
-	Reminders  []int   `json:"reminders"`
+	ID        int64   `json:"id"`
+	ListID    int64   `json:"listId"`
+	Title     string  `json:"title"`
+	Notes     string  `json:"notes"`
+	Status    string  `json:"status"`
+	Priority  int     `json:"priority"`
+	StartDate *string `json:"startDate"` // YYYY-MM-DD，计划开始日
+	DueDate   *string `json:"dueDate"`   // YYYY-MM-DD
+	DueTime   *string `json:"dueTime"`   // HH:MM
+	EndTime   *string `json:"endTime"`   // HH:MM
+	URL       string  `json:"url"`       // 关联链接（会议、文档、单号）
+	Reminders []int   `json:"reminders"`
 	// 绝对时刻提醒：RFC3339（本地时区）。与 Reminders 的「相对到期提前量」互补 ——
 	// 「今晚九点半提醒我复盘」这类与到期日无关的提醒只能用它表达。
-	RemindAt *string `json:"remindAt"`
+	RemindAt   *string `json:"remindAt"`
 	RepeatRule *string `json:"repeatRule"`
 	// 重复任务的续期基准：due（默认，从原到期日推）| done（从实际完成日推）。
 	RepeatFrom string `json:"repeatFrom"`
@@ -128,8 +128,8 @@ type Task struct {
 	// updated_at 只到秒，同一秒内的两次改动看不出来。
 	Version   int64   `json:"version"`
 	SortOrder float64 `json:"sortOrder"`
-	CreatedAt   string  `json:"createdAt"`
-	UpdatedAt   string  `json:"updatedAt"`
+	CreatedAt string  `json:"createdAt"`
+	UpdatedAt string  `json:"updatedAt"`
 
 	// 关联数据（查询时装配）
 	Subtasks    []Subtask    `json:"subtasks"`

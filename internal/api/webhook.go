@@ -118,9 +118,9 @@ func (d *dispatcher) record(h model.Webhook, kind string, code int, ok bool, msg
 // test 立即投递一条测试事件，用于验证地址与签名是否配对了。
 func (d *dispatcher) test(h model.Webhook) {
 	d.send(h, "webhook.test", &model.Task{
-		ID:    0,
-		Title: "慎始 · Webhook 测试",
-		Notes: "这是一条测试投递，不代表真实任务变更。",
+		ID:     0,
+		Title:  "慎始 · Webhook 测试",
+		Notes:  "这是一条测试投递，不代表真实任务变更。",
 		Status: model.StatusTodo,
 	})
 }

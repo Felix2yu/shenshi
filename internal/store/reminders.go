@@ -12,13 +12,13 @@ import (
 
 // ReminderHit 是一条待投递的提醒。
 type ReminderHit struct {
-	Task     model.Task    `json:"task"`
+	Task     model.Task     `json:"task"`
 	Subtask  *model.Subtask `json:"subtask,omitempty"` // 非空表示这是子任务自己的提醒
-	AckID    int64         `json:"ackId"`             // 回执 id：任务为正 id，子任务为 -子任务ID（与台账 key 一致）
-	FireAt   string        `json:"fireAt"`            // RFC3339
-	Offset   int           `json:"offset"`            // 提前分钟数，0 表示准点
-	Overdue  bool          `json:"overdue"`           // 触发时刻已过
-	DueLabel string        `json:"dueLabel"`          // 人类可读的到期描述
+	AckID    int64          `json:"ackId"`             // 回执 id：任务为正 id，子任务为 -子任务ID（与台账 key 一致）
+	FireAt   string         `json:"fireAt"`            // RFC3339
+	Offset   int            `json:"offset"`            // 提前分钟数，0 表示准点
+	Overdue  bool           `json:"overdue"`           // 触发时刻已过
+	DueLabel string         `json:"dueLabel"`          // 人类可读的到期描述
 }
 
 // resolveDueTime 把「日期 + 可选时间」解析为本地时间点。
