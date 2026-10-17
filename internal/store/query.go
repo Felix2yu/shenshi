@@ -113,8 +113,8 @@ type queryToken struct {
 func splitQueryTokens(s string) []queryToken {
 	var out []queryToken
 	var cur strings.Builder
-	quoted := false  // 当前是否在引号内
-	has := false     // 当前是否已攒到字符
+	quoted := false    // 当前是否在引号内
+	has := false       // 当前是否已攒到字符
 	wasQuoted := false // 本词是否始于引号内
 	flush := func() {
 		if has {

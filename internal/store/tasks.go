@@ -284,6 +284,7 @@ func (f TaskFilter) build(countOnly bool) (string, []any) {
 	// 纯计数场景不需要 ORDER BY，交由调用方决定。
 	return strings.Join(where, " AND "), args
 }
+
 // CountTasks 返回满足条件的任务数量（未完成口径，用于角标）。
 func (s *Store) CountTasks(f TaskFilter) (int, error) {
 	where, args := f.whereCount()
@@ -1172,22 +1173,22 @@ func (s *Store) DuplicateTask(id int64) (*model.Task, error) {
 	}
 	subs := clearSubtaskDone(cur.Subtasks)
 	in := model.TaskInput{
-		Title:      optOf(cur.Title + "（副本）"),
-		Notes:      optOf(cur.Notes),
-		ListID:     optOf(cur.ListID),
-		Priority:   optOf(cur.Priority),
-		StartDate:  optOfPtr(cur.StartDate),
-		DueDate:    optOfPtr(cur.DueDate),
-		DueTime:    optOfPtr(cur.DueTime),
-		EndTime:    optOfPtr(cur.EndTime),
-		URL:        optOf(cur.URL),
-		Reminders:  optOf(cur.Reminders),
-		RepeatRule: optOfPtr(cur.RepeatRule),
-		RepeatFrom: optOf(cur.RepeatFrom),
-		Important:  optOf(cur.Important),
-		Urgent:     optOf(cur.Urgent),
-		Starred:    optOf(cur.Starred),
-		Subtasks:   optOf(subs),
+		Title:           optOf(cur.Title + "（副本）"),
+		Notes:           optOf(cur.Notes),
+		ListID:          optOf(cur.ListID),
+		Priority:        optOf(cur.Priority),
+		StartDate:       optOfPtr(cur.StartDate),
+		DueDate:         optOfPtr(cur.DueDate),
+		DueTime:         optOfPtr(cur.DueTime),
+		EndTime:         optOfPtr(cur.EndTime),
+		URL:             optOf(cur.URL),
+		Reminders:       optOf(cur.Reminders),
+		RepeatRule:      optOfPtr(cur.RepeatRule),
+		RepeatFrom:      optOf(cur.RepeatFrom),
+		Important:       optOf(cur.Important),
+		Urgent:          optOf(cur.Urgent),
+		Starred:         optOf(cur.Starred),
+		Subtasks:        optOf(subs),
 		EstimateMinutes: optOf(cur.EstimateMinutes),
 		Progress:        optOf(cur.Progress),
 	}

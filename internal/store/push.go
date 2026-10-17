@@ -57,12 +57,12 @@ func (s *Store) PrunePushLog(cutoff time.Time) error {
 
 // PushEntry 是台账里的一条记录，供「推送自检」查看最近发生了什么。
 type PushEntry struct {
-	Key     string `json:"key"`
-	Kind    string `json:"kind"` // reminder（提醒）/ daily（每日概览）
-	OK      bool   `json:"ok"`
-	Error   string `json:"error"`
-	SentAt  string `json:"sentAt"`
-	Attempts int   `json:"attempts"`
+	Key      string `json:"key"`
+	Kind     string `json:"kind"` // reminder（提醒）/ daily（每日概览）
+	OK       bool   `json:"ok"`
+	Error    string `json:"error"`
+	SentAt   string `json:"sentAt"`
+	Attempts int    `json:"attempts"`
 }
 
 // RecentPushes 返回最近若干条推送记录，新的在前。

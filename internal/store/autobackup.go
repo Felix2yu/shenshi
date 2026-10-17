@@ -16,9 +16,9 @@ import (
 
 // 自动备份的设置项与默认值。
 const (
-	SetAutoBackup      = "autoBackup"      // "1" 启用
-	SetAutoBackupHour  = "autoBackupHour"  // 一天中几点备份，0-23
-	SetAutoBackupKeep  = "autoBackupKeep"  // 保留份数
+	SetAutoBackup      = "autoBackup"     // "1" 启用
+	SetAutoBackupHour  = "autoBackupHour" // 一天中几点备份，0-23
+	SetAutoBackupKeep  = "autoBackupKeep" // 保留份数
 	SetBackupLastAt    = "autoBackupLastAt"
 	SetBackupLastFile  = "autoBackupLastFile"
 	SetBackupLastError = "autoBackupLastError"
