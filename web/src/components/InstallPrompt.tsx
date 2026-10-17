@@ -1,15 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react';
 
-import { IconInstall, IconMore, IconPlusSquare, IconShare, IconX } from './icons'
-import { Button, IconButton } from './ui'
+import { IconInstall, IconMore, IconPlusSquare, IconShare, IconX } from './icons';
+import { Button, IconButton } from './ui';
 import {
   canInstallDirectly,
   dismissInstallPrompt,
   installPlatform,
   promptInstall,
   shouldShowInstallPrompt,
-  subscribeInstallPrompt,
-} from '../lib/pwa'
+  subscribeInstallPrompt
+} from '../lib/pwa';
 
 /**
  * 主屏幕安装引导。
@@ -22,33 +22,33 @@ import {
  * 关掉后一个月内不再打扰。桌面浏览器不显示——那是地址栏图标的活。
  */
 export function InstallPrompt() {
-  const [visible, setVisible] = useState(false)
-  const [platform, setPlatform] = useState(() => installPlatform())
+  const [visible, setVisible] = useState(false);
+  const [platform, setPlatform] = useState(() => installPlatform());
 
   // 安装在别处发生后（拿到事件 / 装好）要重新判定一次。
   useEffect(() => {
     const sync = () => {
-      setPlatform(installPlatform())
-      setVisible(shouldShowInstallPrompt())
-    }
+      setPlatform(installPlatform());
+      setVisible(shouldShowInstallPrompt());
+    };
     // 首帧之后再看一次：beforeinstallprompt 可能比组件挂载来得更晚。
-    const timer = window.setTimeout(sync, 1200)
-    const off = subscribeInstallPrompt(sync)
-    sync()
+    const timer = window.setTimeout(sync, 1200);
+    const off = subscribeInstallPrompt(sync);
+    sync();
     return () => {
-      window.clearTimeout(timer)
-      off()
-    }
-  }, [])
+      window.clearTimeout(timer);
+      off();
+    };
+  }, []);
 
   const close = () => {
-    dismissInstallPrompt()
-    setVisible(false)
-  }
+    dismissInstallPrompt();
+    setVisible(false);
+  };
 
-  if (!visible) return null
+  if (!visible) return null;
 
-  const direct = canInstallDirectly()
+  const direct = canInstallDirectly();
 
   return (
     <div
@@ -57,7 +57,7 @@ export function InstallPrompt() {
       // 冒上 dialog 会让「弹窗」的定位（含测试脚本按 role=dialog 取第一个弹窗）认错对象。
       role="region"
       aria-label="装成应用"
-      className="animate-rise kb-lift fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] right-3 z-40 w-[320px] max-w-[calc(100vw-1.5rem)] rounded-xl border border-line bg-surface p-3 shadow-[var(--shadow-lg)] lg:bottom-[calc(4.5rem+env(safe-area-inset-bottom))]"
+      className="kb-lift fixed right-3 bottom-[calc(6rem+env(safe-area-inset-bottom))] z-40 w-[320px] max-w-[calc(100vw-1.5rem)] animate-rise rounded-xl border border-line bg-surface p-3 shadow-[var(--shadow-lg)] lg:bottom-[calc(4.5rem+env(safe-area-inset-bottom))]"
     >
       <div className="flex items-start gap-2.5">
         <div className="min-w-0 flex-1">
@@ -66,7 +66,13 @@ export function InstallPrompt() {
             装成应用后是独立窗口，断网也能记，不必每次先开浏览器。
           </p>
         </div>
-        <IconButton icon={IconX} label="关闭" size={14} onClick={close} className="-mr-1 -mt-1 shrink-0" />
+        <IconButton
+          icon={IconX}
+          label="关闭"
+          size={14}
+          onClick={close}
+          className="-mt-1 -mr-1 shrink-0"
+        />
       </div>
 
       {direct ? (
@@ -75,7 +81,7 @@ export function InstallPrompt() {
             variant="primary"
             className="flex-1"
             onClick={() => {
-              void promptInstall().then(() => setVisible(false))
+              void promptInstall().then(() => setVisible(false));
             }}
           >
             <IconInstall size={14} />
@@ -144,7 +150,7 @@ export function InstallPrompt() {
         </>
       )}
     </div>
-  )
+  );
 }
 
 function StepIcon({ n }: { n: number }) {
@@ -152,5 +158,5 @@ function StepIcon({ n }: { n: number }) {
     <span className="grid h-[18px] w-[18px] flex-none place-items-center rounded-full bg-seal text-[0.6875rem] text-seal-contrast">
       {n}
     </span>
-  )
+  );
 }

@@ -10,81 +10,110 @@
  *     宁可少识别，也不篡改用户的输入。
  */
 
-import type { Priority } from '../types'
-import { addDays, addMonths, daysInMonth, dayDiff, fromDateStr, humanDay, nowHM, todayStr, toDateStr, toMinutes, weekday, weekdayName } from './date'
+import type { Priority } from '../types';
+import {
+  addDays,
+  addMonths,
+  daysInMonth,
+  dayDiff,
+  humanDay,
+  nowHM,
+  todayStr,
+  toMinutes,
+  weekday,
+  weekdayName
+} from './date';
 
 export interface Chip {
-  kind: 'date' | 'time' | 'repeat' | 'priority' | 'tag' | 'list' | 'quadrant'
-  label: string
+  kind: 'date' | 'time' | 'repeat' | 'priority' | 'tag' | 'list' | 'quadrant';
+  label: string;
 }
 
 export interface ParsedInput {
-  title: string
-  dueDate: string | null
-  dueTime: string | null
-  repeatRule: string | null
-  priority: Priority | null
-  important: boolean | null
-  urgent: boolean | null
-  tagNames: string[]
-  listId: number | null
-  chips: Chip[]
+  title: string;
+  dueDate: string | null;
+  dueTime: string | null;
+  repeatRule: string | null;
+  priority: Priority | null;
+  important: boolean | null;
+  urgent: boolean | null;
+  tagNames: string[];
+  listId: number | null;
+  chips: Chip[];
 }
 
 export interface ParseContext {
-  today?: string
+  today?: string;
   /** 当前时刻 HH:MM，仅用于判断「只写了时间」的任务是否已过期。 */
-  now?: string
-  lists?: { id: number; name: string }[]
+  now?: string;
+  lists?: { id: number; name: string }[];
 }
 
 const CN_DIGITS: Record<string, number> = {
-  零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5,
-  六: 6, 七: 7, 八: 8, 九: 9, 十: 10,
-}
+  零: 0,
+  〇: 0,
+  一: 1,
+  二: 2,
+  两: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  七: 7,
+  八: 8,
+  九: 9,
+  十: 10
+};
 
 /** 中文数字转阿拉伯数字，支持 1~99 的常见写法。 */
 export function cn2num(s: string): number | null {
-  if (/^\d+$/.test(s)) return Number(s)
-  if (!s) return null
-  if (s === '半') return null
-  const chars = [...s]
+  if (/^\d+$/.test(s)) return Number(s);
+  if (!s) return null;
+  if (s === '半') return null;
+  const chars = [...s];
   if (chars.length === 1) {
-    const v = CN_DIGITS[chars[0]]
-    return v === undefined ? null : v
+    const v = CN_DIGITS[chars[0]];
+    return v === undefined ? null : v;
   }
-  const tenIdx = chars.indexOf('十')
+  const tenIdx = chars.indexOf('十');
   if (tenIdx === -1) {
     // 逐位拼接，如「二三」
-    let v = 0
+    let v = 0;
     for (const c of chars) {
-      const d = CN_DIGITS[c]
-      if (d === undefined || d === 10) return null
-      v = v * 10 + d
+      const d = CN_DIGITS[c];
+      if (d === undefined || d === 10) return null;
+      v = v * 10 + d;
     }
-    return v
+    return v;
   }
-  const head = chars.slice(0, tenIdx).join('')
-  const tail = chars.slice(tenIdx + 1).join('')
-  const h = head === '' ? 1 : CN_DIGITS[head]
-  const t = tail === '' ? 0 : CN_DIGITS[tail]
-  if (h === undefined || t === undefined) return null
-  return h * 10 + t
+  const head = chars.slice(0, tenIdx).join('');
+  const tail = chars.slice(tenIdx + 1).join('');
+  const h = head === '' ? 1 : CN_DIGITS[head];
+  const t = tail === '' ? 0 : CN_DIGITS[tail];
+  if (h === undefined || t === undefined) return null;
+  return h * 10 + t;
 }
 
 const WEEKDAY_MAP: Record<string, number> = {
-  一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 0, 天: 0,
-}
+  一: 1,
+  二: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  日: 0,
+  天: 0
+};
 
 /**
  * 剥离片段后的占位符。用不换行空格而非普通空格：它同样被 `\s` 认作词边界，
  * 后续片段的正则不受影响，又能和「用户真的敲了空格」区分开——标题收尾时，
  * 夹在两个汉字之间的它会被抹掉，中文词中间不该被我们撕开一道缝。
  */
-const GAP = '\u00a0'
+const GAP = '\u00a0';
 
 function removeSpan(src: string, m: RegExpExecArray): string {
-  return `${src.slice(0, m.index)}${GAP}${src.slice(m.index + m[0].length)}`
+  return `${src.slice(0, m.index)}${GAP}${src.slice(m.index + m[0].length)}`;
 }
 
 function tidyTitle(s: string): string {
@@ -93,16 +122,16 @@ function tidyTitle(s: string): string {
     .replace(/\u00a0/g, ' ')
     .replace(/\s+/g, ' ')
     .replace(/\s+([,，、;；:：])/g, '$1')
-    .replace(/^[\s,，。.、;；:：\-]+/, '')
-    .replace(/[\s,，、;；:：\-]+$/, '')
-    .trim()
+    .replace(/^[\s,，。.、;；:：-]+/, '')
+    .replace(/[\s,，、;；:：-]+$/, '')
+    .trim();
 }
 
 /** 解析一句话。ctx.today 可注入固定「今天」，便于测试。 */
 export function parseQuickAdd(input: string, ctx: ParseContext = {}): ParsedInput {
-  const base = ctx.today || todayStr()
-  let src = ` ${input} `
-  const chips: Chip[] = []
+  const base = ctx.today || todayStr();
+  let src = ` ${input} `;
+  const chips: Chip[] = [];
 
   const out: ParsedInput = {
     title: '',
@@ -114,65 +143,69 @@ export function parseQuickAdd(input: string, ctx: ParseContext = {}): ParsedInpu
     urgent: null,
     tagNames: [],
     listId: null,
-    chips,
-  }
+    chips
+  };
 
   // ① 标签：#工作 / ＃工作（中文输入法常给出全角符号，半角全角一并认）
   for (;;) {
-    const m = /[#＃]([^\s#@!＃！＠]{1,24})/u.exec(src)
-    if (!m) break
-    const name = m[1].trim()
+    const m = /[#＃]([^\s#@!＃！＠]{1,24})/u.exec(src);
+    if (!m) break;
+    const name = m[1].trim();
     if (name && !out.tagNames.includes(name)) {
-      out.tagNames.push(name)
-      chips.push({ kind: 'tag', label: `#${name}` })
+      out.tagNames.push(name);
+      chips.push({ kind: 'tag', label: `#${name}` });
     }
-    src = removeSpan(src, m)
+    src = removeSpan(src, m);
   }
 
   // ② 清单：/项目推进 / ／项目推进（只有确实命中清单名时才剥离，避免吃掉正文里的斜杠）
-  const listMatch = /(?:^|\s)[/／]([^\s/@!,，、／＠！]{1,24})/u.exec(src)
+  const listMatch = /(?:^|\s)[/／]([^\s/@!,，、／＠！]{1,24})/u.exec(src);
   if (listMatch) {
-    const name = listMatch[1].trim()
-    const hit = ctx.lists?.find((l) => l.name === name)
+    const name = listMatch[1].trim();
+    const hit = ctx.lists?.find((l) => l.name === name);
     if (hit) {
-      out.listId = hit.id
-      chips.push({ kind: 'list', label: `/${hit.name}` })
-      src = removeSpan(src, listMatch)
+      out.listId = hit.id;
+      chips.push({ kind: 'list', label: `/${hit.name}` });
+      src = removeSpan(src, listMatch);
     }
   }
 
   // ③ 四象限：@重要 / @紧急（全角＠同样有效）
   for (;;) {
-    const m = /[@＠](重要|紧急)/u.exec(src)
-    if (!m) break
-    if (m[1] === '重要') out.important = true
-    else out.urgent = true
-    chips.push({ kind: 'quadrant', label: `@${m[1]}` })
-    src = removeSpan(src, m)
+    const m = /[@＠](重要|紧急)/u.exec(src);
+    if (!m) break;
+    if (m[1] === '重要') out.important = true;
+    else out.urgent = true;
+    chips.push({ kind: 'quadrant', label: `@${m[1]}` });
+    src = removeSpan(src, m);
   }
 
   // ④ 优先级：!!! / !! / ! / !高 / !3（全角！按个数等价换算，可混写如「!!！」）
   for (;;) {
-    const m = /(?:^|\s)[!！]{1,3}(?![\p{Script=Han}\w])/u.exec(src)
-    if (!m) break
-    const n = (m[0].match(/[!！]/g) || []).length
-    out.priority = (n >= 3 ? 3 : n === 2 ? 2 : 1) as Priority
-    chips.push({ kind: 'priority', label: `优先级${['无', '低', '中', '高'][out.priority]}` })
-    src = removeSpan(src, m)
+    const m = /(?:^|\s)[!！]{1,3}(?![\p{Script=Han}\w])/u.exec(src);
+    if (!m) break;
+    const n = (m[0].match(/[!！]/g) || []).length;
+    out.priority = (n >= 3 ? 3 : n === 2 ? 2 : 1) as Priority;
+    chips.push({ kind: 'priority', label: `优先级${['无', '低', '中', '高'][out.priority]}` });
+    src = removeSpan(src, m);
   }
   if (out.priority === null) {
-    const m = /(?:^|\s)[!！]([高中低123])(?![\p{Script=Han}\w])/u.exec(src)
+    const m = /(?:^|\s)[!！]([高中低123])(?![\p{Script=Han}\w])/u.exec(src);
     if (m) {
-      const map: Record<string, Priority> = { '1': 1, 低: 1, '2': 2, 中: 2, '3': 3, 高: 3 }
-      out.priority = map[m[1]]
-      chips.push({ kind: 'priority', label: `优先级${['无', '低', '中', '高'][out.priority]}` })
-      src = removeSpan(src, m)
+      const map: Record<string, Priority> = { '1': 1, 低: 1, '2': 2, 中: 2, '3': 3, 高: 3 };
+      out.priority = map[m[1]];
+      chips.push({ kind: 'priority', label: `优先级${['无', '低', '中', '高'][out.priority]}` });
+      src = removeSpan(src, m);
     }
   }
 
   // ⑤ 重复规则。顺序即优先级：越具体的写法必须越靠前，
   //    否则「每月15日」会被「每月」抢先吞掉。
-  const repeatPatterns: { re: RegExp; build: (m: RegExpExecArray) => string | null; label: string }[] = [
+  const repeatPatterns: {
+    re: RegExp;
+    build: (m: RegExpExecArray) => string | null;
+    label: string;
+  }[] = [
     { re: /艾宾浩斯/u, build: () => 'ebbinghaus:0', label: '艾宾浩斯记忆曲线' },
     // 农历与节假日：这几条必须排在「每月 / 每年 / 每周」之前，
     // 否则「农历每月」会被裸的「每月」先吞掉。
@@ -182,25 +215,29 @@ export function parseQuickAdd(input: string, ctx: ParseContext = {}): ParsedInpu
     { re: /法定节假日|每个?节假日/u, build: () => 'legalholiday', label: '每个法定节假日' },
     { re: /每个?周末/u, build: () => 'weekends', label: '每个周末' },
     { re: /每个?工作日/u, build: () => 'weekdays', label: '每个工作日' },
-    { re: /每月(?:的)?最后一个工作日/u, build: () => 'monthly:lastworkday', label: '每月最后一个工作日' },
+    {
+      re: /每月(?:的)?最后一个工作日/u,
+      build: () => 'monthly:lastworkday',
+      label: '每月最后一个工作日'
+    },
     {
       // 「每月第三个周日」这类「第 n 个某星期几」，与具体的某日不同，要单独成规则。
       re: /每月(?:的)?第(\d{1,2}|[一二三四五六七八九十]{1,3})个?(周[一二三四五六日天])/u,
       build: (m) => {
-        const n = cn2num(m[1])
-        const wd = WEEKDAY_MAP[m[2].slice(1)]
-        return n && n >= 1 && n <= 5 && wd !== undefined ? `monthly:nth:${n}:${wd}` : null
+        const n = cn2num(m[1]);
+        const wd = WEEKDAY_MAP[m[2].slice(1)];
+        return n && n >= 1 && n <= 5 && wd !== undefined ? `monthly:nth:${n}:${wd}` : null;
       },
-      label: '每月第几个星期几',
+      label: '每月第几个星期几'
     },
     { re: /每月(最后一天|末)/u, build: () => 'monthly:last', label: '每月最后一天' },
     {
       re: /每月(\d{1,2}|[一二三四五六七八九十]{1,3})[日号]/u,
       build: (m) => {
-        const d = cn2num(m[1])
-        return d && d >= 1 && d <= 31 ? `monthly:${d}` : 'monthly'
+        const d = cn2num(m[1]);
+        return d && d >= 1 && d <= 31 ? `monthly:${d}` : 'monthly';
       },
-      label: '每月某日',
+      label: '每月某日'
     },
     {
       re: /每周([一二三四五六日天](?:[、,和][一二三四五六日天])*)/u,
@@ -208,74 +245,74 @@ export function parseQuickAdd(input: string, ctx: ParseContext = {}): ParsedInpu
         const days = m[1]
           .split(/[、,和]/)
           .map((c) => WEEKDAY_MAP[c])
-          .filter((v) => v !== undefined) as number[]
-        return days.length ? `weekly:${days.join(',')}` : 'weekly'
+          .filter((v) => v !== undefined) as number[];
+        return days.length ? `weekly:${days.join(',')}` : 'weekly';
       },
-      label: '每周某几日',
+      label: '每周某几日'
     },
     {
       re: /每(\d+|[一二三四五六七八九十两]+)天/u,
       build: (m) => {
-        const n = cn2num(m[1])
-        return n && n > 1 ? `every:${n}:day` : 'daily'
+        const n = cn2num(m[1]);
+        return n && n > 1 ? `every:${n}:day` : 'daily';
       },
-      label: '每隔若干天',
+      label: '每隔若干天'
     },
     {
       re: /每(\d+|[一二三四五六七八九十两]+)周(?![一二三四五六日天])/u,
       build: (m) => {
-        const n = cn2num(m[1])
-        return n && n > 1 ? `every:${n}:week` : 'weekly'
+        const n = cn2num(m[1]);
+        return n && n > 1 ? `every:${n}:week` : 'weekly';
       },
-      label: '每隔若干周',
+      label: '每隔若干周'
     },
     { re: /每(?:个)?天|每日/u, build: () => 'daily', label: '每天' },
     { re: /每(?:个)?周(?![\p{Script=Han}])/u, build: () => 'weekly', label: '每周' },
     { re: /每(?:个)?月/u, build: () => 'monthly', label: '每月' },
-    { re: /每(?:个)?年/u, build: () => 'yearly', label: '每年' },
-  ]
+    { re: /每(?:个)?年/u, build: () => 'yearly', label: '每年' }
+  ];
   for (const p of repeatPatterns) {
-    if (out.repeatRule) break
-    const m = p.re.exec(src)
+    if (out.repeatRule) break;
+    const m = p.re.exec(src);
     if (m) {
-      const rule = p.build(m)
+      const rule = p.build(m);
       if (rule) {
-        out.repeatRule = rule
-        chips.push({ kind: 'repeat', label: p.label })
-        src = removeSpan(src, m)
+        out.repeatRule = rule;
+        chips.push({ kind: 'repeat', label: p.label });
+        src = removeSpan(src, m);
       }
     }
   }
 
   // ⑥ 日期
-  const dateSpan = extractDateSpan(src, base)
+  const dateSpan = extractDateSpan(src, base);
   if (dateSpan) {
-    out.dueDate = dateSpan.date
-    chips.push({ kind: 'date', label: dateSpan.label })
-    src = dateSpan.src
+    out.dueDate = dateSpan.date;
+    chips.push({ kind: 'date', label: dateSpan.label });
+    src = dateSpan.src;
   }
 
   // ⑦ 时间（可能带时段前缀）
-  const timeInfo = extractTime(src)
+  const timeInfo = extractTime(src);
   if (timeInfo) {
-    out.dueTime = timeInfo.time
-    chips.push({ kind: 'time', label: timeInfo.time })
-    src = timeInfo.src
+    out.dueTime = timeInfo.time;
+    chips.push({ kind: 'time', label: timeInfo.time });
+    src = timeInfo.src;
   }
 
   // 只有时间没有日期时，日期该落在哪一天？先看重复规则：「每周五下午两点」
   // 说的是周五，今天在周二就不该排今天；规则锚不到具体日子（每天 / 每 N 天 /
   // 农历 / 节假日）才退回今天，已过时刻顺延到明天。
   if (out.dueTime && !out.dueDate) {
-    const past = toMinutes(out.dueTime) <= toMinutes(ctx.now || nowHM())
-    const from = past ? addDays(base, 1) : base
-    const anchored = out.repeatRule ? repeatAnchorDate(out.repeatRule, from) : null
-    out.dueDate = anchored ?? from
-    chips.push({ kind: 'date', label: anchorLabel(out.dueDate, base, out.repeatRule) })
+    const past = toMinutes(out.dueTime) <= toMinutes(ctx.now || nowHM());
+    const from = past ? addDays(base, 1) : base;
+    const anchored = out.repeatRule ? repeatAnchorDate(out.repeatRule, from) : null;
+    out.dueDate = anchored ?? from;
+    chips.push({ kind: 'date', label: anchorLabel(out.dueDate, base, out.repeatRule) });
   }
 
-  out.title = tidyTitle(src)
-  return out
+  out.title = tidyTitle(src);
+  return out;
 }
 
 /**
@@ -285,182 +322,187 @@ export function parseQuickAdd(input: string, ctx: ParseContext = {}): ParsedInpu
  * 要么依赖节假日数据，一律返回 null 交给调用方按今天兜底。
  */
 function repeatAnchorDate(rule: string, from: string): string | null {
-  const [head, ...rest] = rule.split(':')
-  const arg = rest.join(':')
+  const [head, ...rest] = rule.split(':');
+  const arg = rest.join(':');
 
-  let days: Set<number> | null = null
-  let monthDay: number | null = null
+  let days: Set<number> | null = null;
+  let monthDay: number | null = null;
   if (head === 'weekly' && arg) {
     const picked = arg
       .split(',')
       .map((s) => Number(s))
-      .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6)
-    if (!picked.length) return null
-    days = new Set(picked)
+      .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6);
+    if (!picked.length) return null;
+    days = new Set(picked);
   } else if (head === 'weekdays') {
-    days = new Set([1, 2, 3, 4, 5])
+    days = new Set([1, 2, 3, 4, 5]);
   } else if (head === 'weekends') {
-    days = new Set([0, 6])
+    days = new Set([0, 6]);
   } else if (head === 'monthly' && /^\d+$/.test(arg)) {
-    monthDay = Number(arg)
+    monthDay = Number(arg);
   } else {
-    return null
+    return null;
   }
 
   // 每月某日最远要等到下个月之后，其余规则一周内必有结果。
   for (let i = 0; i < (days ? 7 : 400); i++) {
-    const d = addDays(from, i)
+    const d = addDays(from, i);
     if (days) {
-      if (days.has(weekday(d))) return d
+      if (days.has(weekday(d))) return d;
     } else {
-      const [y, m] = d.split('-').map(Number)
-      if (Number(d.slice(8)) === Math.min(monthDay!, daysInMonth(y, m - 1))) return d
+      const [y, m] = d.split('-').map(Number);
+      if (Number(d.slice(8)) === Math.min(monthDay!, daysInMonth(y, m - 1))) return d;
     }
   }
-  return null
+  return null;
 }
 
 /** 锚定日期的芯片文案：近三天说相对说法，按星期的规则说「周五」，其余说「10月2日」。 */
 function anchorLabel(date: string, base: string, rule: string | null): string {
-  const diff = dayDiff(date, base)
-  if (diff <= 2) return humanDay(date, base)
-  if (rule && /^(weekly:|weekdays$|weekends$)/.test(rule)) return weekdayName(date)
-  return humanDay(date, base)
+  const diff = dayDiff(date, base);
+  if (diff <= 2) return humanDay(date, base);
+  if (rule && /^(weekly:|weekdays$|weekends$)/.test(rule)) return weekdayName(date);
+  return humanDay(date, base);
 }
 
 interface DateSpan {
-  src: string
-  date: string
-  label: string
+  src: string;
+  date: string;
+  label: string;
 }
 
 /** 识别日期片段并返回剥离后的字符串。 */
 function extractDateSpan(source: string, base: string): DateSpan | null {
-  let src = source
-  const curWd = (weekday(base) - 1 + 7) % 7 // 以周一为 0
+  const src = source;
+  const curWd = (weekday(base) - 1 + 7) % 7; // 以周一为 0
 
   const relative: { re: RegExp; days?: number; label: string }[] = [
     { re: /(?:^|\s)今天|今日/u, days: 0, label: '今天' },
     { re: /(?:^|\s)(?:明天|明日)/u, days: 1, label: '明天' },
     { re: /(?:^|\s)大后天/u, days: 3, label: '大后天' },
     { re: /(?:^|\s)后天/u, days: 2, label: '后天' },
-    { re: /(?:^|\s)(?:昨天|昨日)/u, days: -1, label: '昨天' },
-  ]
+    { re: /(?:^|\s)(?:昨天|昨日)/u, days: -1, label: '昨天' }
+  ];
   for (const r of relative) {
-    const m = r.re.exec(src)
+    const m = r.re.exec(src);
     if (m) {
-      const d = addDays(base, r.days!)
-      return { src: removeSpan(src, m), date: d, label: r.label }
+      const d = addDays(base, r.days!);
+      return { src: removeSpan(src, m), date: d, label: r.label };
     }
   }
 
   // 「N 天后 / N 周后 / 一个月后」
-  let m = /(\d+|[一二三四五六七八九十两]{1,3})\s*(?:天|日)后/u.exec(src)
+  let m = /(\d+|[一二三四五六七八九十两]{1,3})\s*(?:天|日)后/u.exec(src);
   if (m) {
-    const n = cn2num(m[1]) ?? 1
-    return { src: removeSpan(src, m), date: addDays(base, n), label: `${n} 天后` }
+    const n = cn2num(m[1]) ?? 1;
+    return { src: removeSpan(src, m), date: addDays(base, n), label: `${n} 天后` };
   }
-  m = /(\d+|[一二三四五六七八九十两]{1,3})\s*(?:周|星期)后/u.exec(src)
+  m = /(\d+|[一二三四五六七八九十两]{1,3})\s*(?:周|星期)后/u.exec(src);
   if (m) {
-    const n = cn2num(m[1]) ?? 1
-    return { src: removeSpan(src, m), date: addDays(base, n * 7), label: `${n} 周后` }
+    const n = cn2num(m[1]) ?? 1;
+    return { src: removeSpan(src, m), date: addDays(base, n * 7), label: `${n} 周后` };
   }
   if (/一(?:个)?月后/u.test(src)) {
-    const mm = /一(?:个)?月后/u.exec(src)!
-    return { src: removeSpan(src, mm), date: addMonths(base, 1), label: '一个月后' }
+    const mm = /一(?:个)?月后/u.exec(src)!;
+    return { src: removeSpan(src, mm), date: addMonths(base, 1), label: '一个月后' };
   }
 
   // 「下个月 5 号」
-  m = /下(?:个)?月(\d{1,2}|[一二三四五六七八九十]{1,3})?[日号]?/u.exec(src)
+  m = /下(?:个)?月(\d{1,2}|[一二三四五六七八九十]{1,3})?[日号]?/u.exec(src);
   if (m) {
-    const next = addMonths(base, 1)
-    const [y, mo] = next.split('-').map(Number)
-    const day = m[1] ? Math.min(cn2num(m[1]) ?? 1, daysInMonth(y, mo - 1)) : 1
-    const date = `${next.slice(0, 7)}-${String(day).padStart(2, '0')}`
-    return { src: removeSpan(src, m), date, label: `下月${day}日` }
+    const next = addMonths(base, 1);
+    const [y, mo] = next.split('-').map(Number);
+    const day = m[1] ? Math.min(cn2num(m[1]) ?? 1, daysInMonth(y, mo - 1)) : 1;
+    const date = `${next.slice(0, 7)}-${String(day).padStart(2, '0')}`;
+    return { src: removeSpan(src, m), date, label: `下月${day}日` };
   }
   if (/月末|月底|本月末|本月底/u.test(src)) {
-    const mm = /(?:本月|这个月)?(?:月末|月底)/u.exec(src)!
-    const [y, mo] = base.split('-').map(Number)
-    const day = daysInMonth(y, mo - 1)
-    return { src: removeSpan(src, mm), date: `${base.slice(0, 7)}-${String(day).padStart(2, '0')}`, label: '本月底' }
+    const mm = /(?:本月|这个月)?(?:月末|月底)/u.exec(src)!;
+    const [y, mo] = base.split('-').map(Number);
+    const day = daysInMonth(y, mo - 1);
+    return {
+      src: removeSpan(src, mm),
+      date: `${base.slice(0, 7)}-${String(day).padStart(2, '0')}`,
+      label: '本月底'
+    };
   }
 
   // 「下周三」「本周五」「上周三」「下下周三」「周三」
   // 前缀按最长优先交替排（上上/下下 要先于 上/下），否则「下下周三」
   // 只吃掉一个「下」，标题里会残留半个词。
-  m = /(上上|下下|下个|下|本|这|上)?\s*(?:周|星期|礼拜)([一二三四五六日天])/u.exec(src)
+  m = /(上上|下下|下个|下|本|这|上)?\s*(?:周|星期|礼拜)([一二三四五六日天])/u.exec(src);
   if (m) {
-    const prefix = m[1] || ''
+    const prefix = m[1] || '';
     // WEEKDAY_MAP 用的是 JS 的「周日=0」，这里统一换算成「周一=0」再算差值。
-    const targetIdx = (WEEKDAY_MAP[m[2]] - 1 + 7) % 7
-    const baseDelta = targetIdx - curWd // 「本周」口径，已过则为负
-    let delta: number
-    if (prefix === '上' || prefix === '上上') delta = baseDelta - (prefix === '上上' ? 14 : 7)
-    else if (prefix === '下' || prefix === '下个' || prefix === '下下') delta = baseDelta + (prefix === '下下' ? 14 : 7)
-    else delta = (baseDelta + 7) % 7
-    const date = addDays(base, delta)
-    return { src: removeSpan(src, m), date, label: `周${m[2]}` }
+    const targetIdx = (WEEKDAY_MAP[m[2]] - 1 + 7) % 7;
+    const baseDelta = targetIdx - curWd; // 「本周」口径，已过则为负
+    let delta: number;
+    if (prefix === '上' || prefix === '上上') delta = baseDelta - (prefix === '上上' ? 14 : 7);
+    else if (prefix === '下' || prefix === '下个' || prefix === '下下')
+      delta = baseDelta + (prefix === '下下' ? 14 : 7);
+    else delta = (baseDelta + 7) % 7;
+    const date = addDays(base, delta);
+    return { src: removeSpan(src, m), date, label: `周${m[2]}` };
   }
 
   // 完整日期：2026年9月30日 / 2026-09-30 / 2026.9.30
-  m = /(\d{4})\s*[年\-/.]\s*(\d{1,2})\s*[月\-/.]\s*(\d{1,2})\s*[日号]?/u.exec(src)
+  m = /(\d{4})\s*[年\-/.]\s*(\d{1,2})\s*[月\-/.]\s*(\d{1,2})\s*[日号]?/u.exec(src);
   if (m) {
-    const y = Number(m[1])
-    const mo = Number(m[2])
-    const d = Number(m[3])
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
     if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
-      const date = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-      return { src: removeSpan(src, m), date, label: `${mo}月${d}日` }
+      const date = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      return { src: removeSpan(src, m), date, label: `${mo}月${d}日` };
     }
   }
 
   // 月日：9月30日 / 9月30。
   // 刻意不支持裸写「9/30」「9-30」——那和「阅读 3/5 章节」这类正文无法区分，
   // 而静默吃掉用户标题里的内容，比少识别一个日期要糟糕得多。
-  m = /(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?/u.exec(src)
+  m = /(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?/u.exec(src);
   if (m) {
-    const mo = Number(m[1])
-    const d = Number(m[2])
+    const mo = Number(m[1]);
+    const d = Number(m[2]);
     if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
-      const [cy] = base.split('-').map(Number)
+      const [cy] = base.split('-').map(Number);
       // 若今年的该日期已过，落到明年 —— 「9月1日」在 9 月 20 日的常见预期。
-      const thisYear = `${cy}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-      const year = thisYear < base ? cy + 1 : cy
+      const thisYear = `${cy}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const year = thisYear < base ? cy + 1 : cy;
       return {
         src: removeSpan(src, m),
         date: `${year}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`,
-        label: `${mo}月${d}日`,
-      }
+        label: `${mo}月${d}日`
+      };
     }
   }
 
   // 单独的「15号」「15日」：本月内若已过则顺延到下月
-  m = /(?:^|\s)(\d{1,2}|[一二三四五六七八九十]{1,3})[日号]/u.exec(src)
+  m = /(?:^|\s)(\d{1,2}|[一二三四五六七八九十]{1,3})[日号]/u.exec(src);
   if (m) {
-    const d = cn2num(m[1])
+    const d = cn2num(m[1]);
     if (d && d >= 1 && d <= 31) {
-      const [cy, cm] = base.split('-').map(Number)
+      const [cy, cm] = base.split('-').map(Number);
       if (d <= daysInMonth(cy, cm - 1)) {
-        const same = `${cy}-${String(cm).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-        if (same >= base) return { src: removeSpan(src, m), date: same, label: `${d}日` }
+        const same = `${cy}-${String(cm).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        if (same >= base) return { src: removeSpan(src, m), date: same, label: `${d}日` };
       }
-      const next = addMonths(base, 1)
-      const [ny, nm] = next.split('-').map(Number)
-      const nd = Math.min(d, daysInMonth(ny, nm - 1))
+      const next = addMonths(base, 1);
+      const [ny, nm] = next.split('-').map(Number);
+      const nd = Math.min(d, daysInMonth(ny, nm - 1));
       return {
         src: removeSpan(src, m),
         date: `${ny}-${String(nm).padStart(2, '0')}-${String(nd).padStart(2, '0')}`,
-        label: `${nd}日`,
-      }
+        label: `${nd}日`
+      };
     }
   }
-  return null
+  return null;
 }
 
 interface TimeSpan {
-  src: string
-  time: string
+  src: string;
+  time: string;
 }
 
 const PERIOD_DEFAULT: Record<string, string> = {
@@ -472,104 +514,121 @@ const PERIOD_DEFAULT: Record<string, string> = {
   下午: '14:00',
   傍晚: '18:00',
   晚上: '20:00',
-  夜里: '21:00',
-}
+  夜里: '21:00'
+};
 
 /** 识别时间片段。识别不出具体时刻但出现了时段词时，采用该时段的默认时刻。 */
 function extractTime(source: string): TimeSpan | null {
-  const src = source
-  const period = '(凌晨|早上|早晨|上午|中午|下午|傍晚|晚上|夜里)'
+  const src = source;
+  const period = '(凌晨|早上|早晨|上午|中午|下午|傍晚|晚上|夜里)';
 
   // 一条正则覆盖「下午三点半 / 晚上 8 点 / 16:30 / 下午3:30 / 9：05」，
   // 分流越多越容易漏，合并后时段换算只需一处。
   const re = new RegExp(
     `${period}?\\s*([一二三四五六七八九十两]{1,3}|\\d{1,2})\\s*[点時时:：]\\s*(半|[一二三四五六七八九十]{1,3}|\\d{1,2})?\\s*分?`,
-    'u',
-  )
-  const m = re.exec(src)
+    'u'
+  );
+  const m = re.exec(src);
   if (m) {
-    const word = m[1] || ''
-    const raw = cn2num(m[2])
+    const word = m[1] || '';
+    const raw = cn2num(m[2]);
     if (raw !== null && raw <= 24) {
-      let h = raw
-      let mm = 0
-      if (m[3] === '半') mm = 30
-      else if (m[3]) mm = cn2num(m[3]) ?? 0
+      let h = raw;
+      let mm = 0;
+      if (m[3] === '半') mm = 30;
+      else if (m[3]) mm = cn2num(m[3]) ?? 0;
 
-      const pm = word === '下午' || word === '傍晚' || word === '晚上' || word === '夜里'
-      const noon = word === '中午'
-      const am = word === '凌晨' || word === '早上' || word === '早晨' || word === '上午'
+      const pm = word === '下午' || word === '傍晚' || word === '晚上' || word === '夜里';
+      const noon = word === '中午';
+      const am = word === '凌晨' || word === '早上' || word === '早晨' || word === '上午';
 
       // 时段词负责消歧；12 点与 24 点在「凌晨 / 夜里」下要归零。
-      if ((pm || noon) && h < 12 && h > 0) h += 12
-      if ((word === '凌晨' || word === '夜里' || word === '晚上') && h === 12) h = 0
-      if ((am || pm || noon) && h === 24) h = 0
-      if (h === 24) h = 0
+      if ((pm || noon) && h < 12 && h > 0) h += 12;
+      if ((word === '凌晨' || word === '夜里' || word === '晚上') && h === 12) h = 0;
+      if ((am || pm || noon) && h === 24) h = 0;
+      if (h === 24) h = 0;
 
       if (h >= 0 && h <= 23 && mm >= 0 && mm <= 59) {
-        return { src: removeSpan(src, m), time: `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}` }
+        return {
+          src: removeSpan(src, m),
+          time: `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
+        };
       }
     }
   }
 
   // 只有时段词时，取该时段的默认时刻（如「下午」→ 14:00）。
   // 这里不加「后面必须是空格」之类的限制：中文里时段词后面直接跟正文是常态。
-  const only = new RegExp(`${period}(?![饭餐茶])`, 'u').exec(src)
+  const only = new RegExp(`${period}(?![饭餐茶])`, 'u').exec(src);
   if (only) {
-    return { src: removeSpan(src, only), time: PERIOD_DEFAULT[only[1]] }
+    return { src: removeSpan(src, only), time: PERIOD_DEFAULT[only[1]] };
   }
-  return null
+  return null;
 }
 
 /** 把重复规则转成中文描述。与后端 repeat.go 的语法保持一致。 */
 export function describeRepeat(rule: string | null | undefined): string {
-  if (!rule) return '不重复'
-  const [head, ...rest] = rule.split(':')
-  const arg = rest.join(':')
+  if (!rule) return '不重复';
+  const [head, ...rest] = rule.split(':');
+  const arg = rest.join(':');
   switch (head) {
     case 'daily':
-      return '每天'
+      return '每天';
     case 'weekdays':
-      return '每个工作日'
+      return '每个工作日';
     case 'weekends':
-      return '每个周末'
+      return '每个周末';
     case 'legalworkday':
-      return '每个法定工作日'
+      return '每个法定工作日';
     case 'legalholiday':
-      return '每个法定节假日'
+      return '每个法定节假日';
     case 'lunar':
-      return arg === 'yearly' ? '农历每年' : '农历每月'
+      return arg === 'yearly' ? '农历每年' : '农历每月';
     case 'weekly':
-      if (!arg) return '每周'
-      return `每周${arg.split(',').map((n) => '日一二三四五六'[Number(n)] ?? n).join('、')}`
+      if (!arg) return '每周';
+      return `每周${arg
+        .split(',')
+        .map((n) => '日一二三四五六'[Number(n)] ?? n)
+        .join('、')}`;
     case 'monthly':
-      if (!arg) return '每月'
-      if (arg === 'last') return '每月最后一天'
-      if (arg === 'lastworkday') return '每月最后一个工作日'
+      if (!arg) return '每月';
+      if (arg === 'last') return '每月最后一天';
+      if (arg === 'lastworkday') return '每月最后一个工作日';
       if (arg.startsWith('nth:')) {
-        const [, n, wd] = arg.split(':')
-        const idx = Number(n)
-        const wdName = '日一二三四五六'[Number(wd)] ?? wd
-        const ord: Record<number, string> = { 1: '第一', 2: '第二', 3: '第三', 4: '第四', 5: '第五' }
-        return `每月${ord[idx] ?? `第 ${idx}`}个周${wdName}`
+        const [, n, wd] = arg.split(':');
+        const idx = Number(n);
+        const wdName = '日一二三四五六'[Number(wd)] ?? wd;
+        const ord: Record<number, string> = {
+          1: '第一',
+          2: '第二',
+          3: '第三',
+          4: '第四',
+          5: '第五'
+        };
+        return `每月${ord[idx] ?? `第 ${idx}`}个周${wdName}`;
       }
-      return `每月 ${arg} 日`
+      return `每月 ${arg} 日`;
     case 'yearly':
-      if (!arg) return '每年'
-      return `每年 ${arg.replace('-', ' 月 ')} 日`
+      if (!arg) return '每年';
+      return `每年 ${arg.replace('-', ' 月 ')} 日`;
     case 'every': {
-      const [n, unit] = arg.split(':')
-      const unitLabel: Record<string, string> = { day: '天', week: '周', month: '个月', year: '年' }
-      return `每 ${n} ${unitLabel[unit] ?? unit}`
+      const [n, unit] = arg.split(':');
+      const unitLabel: Record<string, string> = {
+        day: '天',
+        week: '周',
+        month: '个月',
+        year: '年'
+      };
+      return `每 ${n} ${unitLabel[unit] ?? unit}`;
     }
     case 'ebbinghaus': {
-      const idx = Number(arg || 0)
-      const gaps = [1, 2, 4, 7, 15, 30, 60]
-      if (idx === 0) return '艾宾浩斯记忆曲线'
-      return `艾宾浩斯（第 ${idx + 1} 轮，间隔 ${gaps[idx] ?? '—'} 天）`
+      const idx = Number(arg || 0);
+      const gaps = [1, 2, 4, 7, 15, 30, 60];
+      if (idx === 0) return '艾宾浩斯记忆曲线';
+      return `艾宾浩斯（第 ${idx + 1} 轮，间隔 ${gaps[idx] ?? '—'} 天）`;
     }
     default:
-      return rule
+      return rule;
   }
 }
 
@@ -581,5 +640,5 @@ export const QUICK_ADD_HINTS = [
   { syntax: '!高', desc: '设定优先级（! / !! / !!!）' },
   { syntax: '@重要 @紧急', desc: '标记四象限' },
   { syntax: '＃标签 ／清单 ！高', desc: '全角符号同样识别' },
-  { syntax: '每天 / 每周一 / 农历每月', desc: '设定重复' },
-]
+  { syntax: '每天 / 每周一 / 农历每月', desc: '设定重复' }
+];

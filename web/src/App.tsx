@@ -1,34 +1,55 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent
+} from 'react';
 
-import { InstallPrompt } from './components/InstallPrompt'
-import { Sidebar } from './components/Sidebar'
-import { TaskDetail } from './components/TaskDetail'
-import { AppOverlays } from './components/Overlays'
-import { BatchBar, TaskListView } from './components/TaskViews'
+import { InstallPrompt } from './components/InstallPrompt';
+import { Sidebar } from './components/Sidebar';
+import { TaskDetail } from './components/TaskDetail';
+import { AppOverlays } from './components/Overlays';
+import { BatchBar, TaskListView } from './components/TaskViews';
 
 /**
  * 首屏只打包「列表」这一条主路径：日历、看板、四象限、统计、习惯、表格
  * 都在切过去时才下载。手机上第一次打开要的是「记下一件事」，
  * 为六个不立刻用的视图多下载两三百 KB 不划算。
  */
-const BoardView = lazy(() => import('./components/BoardView').then((m) => ({ default: m.BoardView })))
-const CalendarView = lazy(() => import('./components/CalendarView').then((m) => ({ default: m.CalendarView })))
-const QuadrantView = lazy(() => import('./components/QuadrantView').then((m) => ({ default: m.QuadrantView })))
-const StatsView = lazy(() => import('./components/StatsView').then((m) => ({ default: m.StatsView })))
-const HabitsView = lazy(() => import('./components/HabitsView').then((m) => ({ default: m.HabitsView })))
-const TableView = lazy(() => import('./components/TableView').then((m) => ({ default: m.TableView })))
-import { SealLogo } from './components/icons'
-import { MobileTabBar, Toolbar } from './components/Toolbar'
-import { IconRefresh } from './components/icons'
-import { Button, cx } from './components/ui'
-import { applyFilter } from './lib/filter'
-import { useEscapeArbiter } from './lib/escStack'
-import { useModalLayerActive } from './lib/modalLayer'
-import { useSwRevalidated } from './lib/offline'
-import { pullArmed, usePullToRefresh } from './lib/touch'
-import { useKeyboardInset } from './lib/viewport'
-import { useStore } from './store/AppStore'
-import type { Selection, Task, ViewKind } from './types'
+const BoardView = lazy(() =>
+  import('./components/BoardView').then((m) => ({ default: m.BoardView }))
+);
+const CalendarView = lazy(() =>
+  import('./components/CalendarView').then((m) => ({ default: m.CalendarView }))
+);
+const QuadrantView = lazy(() =>
+  import('./components/QuadrantView').then((m) => ({ default: m.QuadrantView }))
+);
+const StatsView = lazy(() =>
+  import('./components/StatsView').then((m) => ({ default: m.StatsView }))
+);
+const HabitsView = lazy(() =>
+  import('./components/HabitsView').then((m) => ({ default: m.HabitsView }))
+);
+const TableView = lazy(() =>
+  import('./components/TableView').then((m) => ({ default: m.TableView }))
+);
+import { SealLogo } from './components/icons';
+import { MobileTabBar, Toolbar } from './components/Toolbar';
+import { IconRefresh } from './components/icons';
+import { Button, cx } from './components/ui';
+import { applyFilter } from './lib/filter';
+import { useEscapeArbiter } from './lib/escStack';
+import { useModalLayerActive } from './lib/modalLayer';
+import { useSwRevalidated } from './lib/offline';
+import { pullArmed, usePullToRefresh } from './lib/touch';
+import { useKeyboardInset } from './lib/viewport';
+import { useStore } from './store/AppStore';
+import type { Selection, Task, ViewKind } from './types';
 
 /**
  * 「慎始」主装配。
@@ -52,109 +73,116 @@ export default function App() {
     locked,
     filters,
     setFilters,
-    reconcile,
-  } = useStore()
+    reconcile
+  } = useStore();
   // iOS 上键盘弹出不缩布局视口，底部固定元素会被压在键盘下面：
   // 把键盘高度转成 CSS 变量，浮层抬起来、底部标签栏让位。
-  const keyboardInset = useKeyboardInset()
+  const keyboardInset = useKeyboardInset();
   // 装成应用后没有刷新按钮，列表下拉即重新拉一次数据。
-  const pull = usePullToRefresh(() => reconcile(), true)
+  const pull = usePullToRefresh(() => reconcile(), true);
   // 弱网时 SW 先给了缓存，网络随后到位会通知一次：这时再对一次账，
   // 免得用户一直看着上次打开时的旧列表。
-  useSwRevalidated(() => reconcile())
-  const [navOpen, setNavOpen] = useState(false)
+  useSwRevalidated(() => reconcile());
+  const [navOpen, setNavOpen] = useState(false);
   // 窄屏（<lg，1024px）判定：抽屉的对话框语义只在这一档生效；
   // 768–1023px 的窄窗口/平板竖屏也归入移动档 —— 常驻侧栏会吃掉约四成宽度，
   // 主区被挤压、信息密度过低（2026-09-24 用户截图确认）。桌面档 ≥1024px。
-  const isMobile = useMediaQuery('(max-width: 1023px)')
-  const drawerRef = useRef<HTMLDivElement>(null)
+  const isMobile = useMediaQuery('(max-width: 1023px)');
+  const drawerRef = useRef<HTMLDivElement>(null);
 
   // document 上唯一的 Esc 仲裁器：让浮层之间的 Esc 处理"最上层优先"
-  useEscapeArbiter()
+  useEscapeArbiter();
   // 有弹窗打开时把背景标记为 inert
-  const modalOpen = useModalLayerActive()
+  const modalOpen = useModalLayerActive();
 
-  const openTask = useCallback((t: Task) => setSelectedTask(t.id), [setSelectedTask])
-  const closeTask = useCallback(() => setSelectedTask(null), [setSelectedTask])
+  const openTask = useCallback((t: Task) => setSelectedTask(t.id), [setSelectedTask]);
+  const closeTask = useCallback(() => setSelectedTask(null), [setSelectedTask]);
 
-  const visible = useMemo(() => applyFilter(tasks, filters), [tasks, filters])
-  const emptyKey = emptyKeyFor(selection)
+  const visible = useMemo(() => applyFilter(tasks, filters), [tasks, filters]);
+  const emptyKey = emptyKeyFor(selection);
 
   // 切视图 / 清单时收起移动端抽屉，避免遮住内容
   useEffect(() => {
-    setNavOpen(false)
-  }, [selection, view])
+    setNavOpen(false);
+  }, [selection, view]);
 
   // 视口回到桌面宽度（≥lg）时抽屉语义失效，收掉状态，避免残留 lg:static 的"幽灵对话框"
   useEffect(() => {
-    if (!isMobile) setNavOpen(false)
-  }, [isMobile])
+    if (!isMobile) setNavOpen(false);
+  }, [isMobile]);
 
   // 打开抽屉时把焦点移进去（对话框惯例），读屏用户能立刻感知"进入了导航层"
   useEffect(() => {
-    if (navOpen && isMobile) drawerRef.current?.focus()
-  }, [navOpen, isMobile])
+    if (navOpen && isMobile) drawerRef.current?.focus();
+  }, [navOpen, isMobile]);
 
   // 全局快捷键（与设置面板中的说明保持一致）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null
+      const target = e.target as HTMLElement | null;
       const typing =
-        target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
 
       if (e.key === 'Escape') {
         // 输入中的 Esc 归输入组件自己处理（取消候选 / 还原草稿），不触发全局上下文动作。
         // 浮层（Modal / Popover）已在各自的层里消费并 stopPropagation，不会走到这里。
-        if (typing) return
+        if (typing) return;
         if (multiSelect) {
-          clearSelected()
-          return
+          clearSelected();
+          return;
         }
         if (selectedTaskId !== null) {
-          closeTask()
-          return
+          closeTask();
+          return;
         }
-        setNavOpen(false)
-        return
+        setNavOpen(false);
+        return;
       }
 
       // 带修饰键的组合交给浏览器
-      if (typing || e.metaKey || e.ctrlKey || e.altKey) return
+      if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
 
-      const key = e.key.toLowerCase()
+      const key = e.key.toLowerCase();
       if (key === '/') {
-        e.preventDefault()
-        document.getElementById('shenshi-search')?.focus()
-        return
+        e.preventDefault();
+        document.getElementById('shenshi-search')?.focus();
+        return;
       }
 
-      const goView: Record<string, ViewKind> = { c: 'calendar', q: 'quadrant', b: 'board', s: 'stats', h: 'habits' }
+      const goView: Record<string, ViewKind> = {
+        c: 'calendar',
+        q: 'quadrant',
+        b: 'board',
+        s: 'stats',
+        h: 'habits'
+      };
       if (key in goView) {
-        e.preventDefault()
-        setView(goView[key])
-        return
+        e.preventDefault();
+        setView(goView[key]);
+        return;
       }
 
       if (key === 't' || key === 'i') {
-        e.preventDefault()
-        selectSmart(key === 't' ? 'today' : 'inbox')
-        setView('list')
-        return
+        e.preventDefault();
+        selectSmart(key === 't' ? 'today' : 'inbox');
+        setView('list');
+        return;
       }
 
       if (key === 'n') {
-        e.preventDefault()
-        setView('list')
+        e.preventDefault();
+        setView('list');
         // 等列表渲染完成后再聚焦输入框
-        window.setTimeout(() => document.getElementById('shenshi-quickadd')?.focus(), 0)
+        window.setTimeout(() => document.getElementById('shenshi-quickadd')?.focus(), 0);
       }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [selectedTaskId, closeTask, multiSelect, clearSelected, setView, selectSmart])
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedTaskId, closeTask, multiSelect, clearSelected, setView, selectSmart]);
 
   if (locked) {
-    return <LockScreen />
+    return <LockScreen />;
   }
 
   if (loading) {
@@ -164,7 +192,7 @@ export default function App() {
         <p className="brand-serif text-[0.9375rem] tracking-[0.14em] text-ink-2">慎始而敬终</p>
         <p className="text-[0.75rem] text-ink-3">正在整理今日的案头…</p>
       </div>
-    )
+    );
   }
 
   return (
@@ -177,121 +205,131 @@ export default function App() {
           弹窗已 portal 到 body，不在此子树内，因此不受影响；
           提醒中心 / 专注指示 / Toast 等自绘浮层留在外面，仍可交互。 */}
       <div className="contents" inert={modalOpen}>
-      {/* 清单树：桌面（≥lg）常驻，窄屏为抽屉。
+        {/* 清单树：桌面（≥lg）常驻，窄屏为抽屉。
           抽屉态按对话框语义暴露给读屏（role=dialog + aria-modal），
           桌面常驻态不带任何角色，就是普通布局块。 */}
-      <div
-        id="shenshi-nav-drawer"
-        ref={drawerRef}
-        tabIndex={-1}
-        role={navOpen && isMobile ? 'dialog' : undefined}
-        aria-modal={navOpen && isMobile ? true : undefined}
-        aria-label="清单导航"
-        className={
-          navOpen
-            ? 'pt-safe px-safe fixed inset-y-0 left-0 z-40 shadow-[var(--shadow-lg)] outline-none lg:static lg:z-auto lg:shadow-none'
-            : 'hidden h-full lg:block'
-        }
-      >
-        <Sidebar onCloseRequest={() => setNavOpen(false)} />
-      </div>
-      {navOpen ? (
         <div
-          className="fixed inset-0 z-30 bg-ink/25 backdrop-blur-[1px] lg:hidden"
-          onClick={() => setNavOpen(false)}
-          aria-hidden="true"
-        />
-      ) : null}
-
-      {/* 主区。pt-safe 让内容避开状态栏（装成主屏幕应用后页面延伸到状态栏之下）；
-          桌面浏览器里 env() 为 0，不留多余空白。 */}
-      <main className="pt-safe relative flex min-w-0 flex-1 flex-col" aria-busy={tasksLoading || undefined}>
-        {/* 任务列表刷新指示：absolute 贴在工具栏上沿，不占布局、不加文案；
-            aria-busy 一并告诉读屏「内容正在刷新」。 */}
-        <div
-          aria-hidden="true"
-          className={cx(
-            'pointer-events-none absolute inset-x-0 top-0 z-20 h-0.5 overflow-hidden transition-opacity duration-300',
-            tasksLoading ? 'opacity-100' : 'opacity-0',
-          )}
-        >
-          <div className="h-full w-1/3 animate-pulse bg-seal" />
-        </div>
-
-        {/* 窄屏的汉堡入口直接并入工具栏标题行（见 Toolbar），不再单设一条顶栏 ——
-            顶部 chrome 少占一行，标题/搜索/页签全部留在一条紧凑头部里。 */}
-
-        <Toolbar filters={filters} onFilters={setFilters} onOpenNav={() => setNavOpen(true)} />
-        {/* 多选批处理条全局挂一份：各视图（含看板/表格/四象限）进入多选后都能操作 */}
-        <BatchBar />
-
-        <div
-          {...pull.handlers}
+          id="shenshi-nav-drawer"
+          ref={drawerRef}
+          tabIndex={-1}
+          role={navOpen && isMobile ? 'dialog' : undefined}
+          aria-modal={navOpen && isMobile ? true : undefined}
+          aria-label="清单导航"
           className={
-            view === 'list' || view === 'table' ? 'min-h-0 flex-1 overflow-y-auto' : 'min-h-0 flex-1 overflow-hidden'
+            navOpen
+              ? 'pt-safe px-safe fixed inset-y-0 left-0 z-40 shadow-[var(--shadow-lg)] outline-none lg:static lg:z-auto lg:shadow-none'
+              : 'hidden h-full lg:block'
           }
         >
-          <PullIndicator distance={pull.distance} refreshing={pull.refreshing} />
-          <Suspense fallback={<ViewLoading />}>
-          {view === 'list' ? (
-            <TaskListView tasks={visible} onOpen={openTask} emptyKey={emptyKey} />
-          ) : view === 'table' ? (
-            <TableView tasks={visible} onOpen={openTask} />
-          ) : view === 'board' ? (
-            <BoardView onOpen={openTask} filter={filters} />
-          ) : view === 'calendar' ? (
-            <CalendarView onOpen={openTask} filter={filters} />
-          ) : view === 'quadrant' ? (
-            <QuadrantView onOpen={openTask} filter={filters} />
-          ) : view === 'habits' ? (
-            <HabitsView />
-          ) : (
-            <StatsView />
-          )}
-          </Suspense>
+          <Sidebar onCloseRequest={() => setNavOpen(false)} />
         </div>
+        {navOpen ? (
+          <div
+            className="fixed inset-0 z-30 bg-ink/25 backdrop-blur-[1px] lg:hidden"
+            onClick={() => setNavOpen(false)}
+            aria-hidden="true"
+          />
+        ) : null}
 
-        {/* 移动端底部视图标签栏（lg:hidden）：视图切换下沉到拇指区，
+        {/* 主区。pt-safe 让内容避开状态栏（装成主屏幕应用后页面延伸到状态栏之下）；
+          桌面浏览器里 env() 为 0，不留多余空白。 */}
+        <main
+          className="pt-safe relative flex min-w-0 flex-1 flex-col"
+          aria-busy={tasksLoading || undefined}
+        >
+          {/* 任务列表刷新指示：absolute 贴在工具栏上沿，不占布局、不加文案；
+            aria-busy 一并告诉读屏「内容正在刷新」。 */}
+          <div
+            aria-hidden="true"
+            className={cx(
+              'pointer-events-none absolute inset-x-0 top-0 z-20 h-0.5 overflow-hidden transition-opacity duration-300',
+              tasksLoading ? 'opacity-100' : 'opacity-0'
+            )}
+          >
+            <div className="h-full w-1/3 animate-pulse bg-seal" />
+          </div>
+
+          {/* 窄屏的汉堡入口直接并入工具栏标题行（见 Toolbar），不再单设一条顶栏 ——
+            顶部 chrome 少占一行，标题/搜索/页签全部留在一条紧凑头部里。 */}
+
+          <Toolbar filters={filters} onFilters={setFilters} onOpenNav={() => setNavOpen(true)} />
+          {/* 多选批处理条全局挂一份：各视图（含看板/表格/四象限）进入多选后都能操作 */}
+          <BatchBar />
+
+          <div
+            {...pull.handlers}
+            className={
+              view === 'list' || view === 'table'
+                ? 'min-h-0 flex-1 overflow-y-auto'
+                : 'min-h-0 flex-1 overflow-hidden'
+            }
+          >
+            <PullIndicator distance={pull.distance} refreshing={pull.refreshing} />
+            <Suspense fallback={<ViewLoading />}>
+              {view === 'list' ? (
+                <TaskListView tasks={visible} onOpen={openTask} emptyKey={emptyKey} />
+              ) : view === 'table' ? (
+                <TableView tasks={visible} onOpen={openTask} />
+              ) : view === 'board' ? (
+                <BoardView onOpen={openTask} filter={filters} />
+              ) : view === 'calendar' ? (
+                <CalendarView onOpen={openTask} filter={filters} />
+              ) : view === 'quadrant' ? (
+                <QuadrantView onOpen={openTask} filter={filters} />
+              ) : view === 'habits' ? (
+                <HabitsView />
+              ) : (
+                <StatsView />
+              )}
+            </Suspense>
+          </div>
+
+          {/* 移动端底部视图标签栏（lg:hidden）：视图切换下沉到拇指区，
             布局内占位，主内容区自然让出高度。 */}
-        <MobileTabBar />
+          <MobileTabBar />
 
-        {/* data-app-footer：Popover 量测时要把常驻底栏从可用高度里扣掉，
+          {/* data-app-footer：Popover 量测时要把常驻底栏从可用高度里扣掉，
             否则浮层向下展开停在它下面等于被遮住（见 ui.tsx 的 Popover）。
             底部标签栏与这条状态栏都带 data-app-footer，但同一时刻只有一个可见
             （标签栏 lg:hidden / 状态栏 hidden lg:flex），量测取可见者的高度。 */}
-        <footer
-          data-app-footer
-          className="hidden shrink-0 items-center gap-3 border-t border-line px-5 py-1.5 text-[0.65625rem] text-ink-3 lg:flex"
-        >
-          <span>{boot?.app ?? '慎始'} · {boot?.motto ?? '慎始而敬终，行稳致远'}</span>
-          <span className="ml-auto tabular-nums">
-            {visible.filter((t) => t.status !== 'done').length} 待办 / 共 {visible.length} 项
-          </span>
-          <span className="text-ink-3/70">按 / 搜索 · Esc 退出</span>
-        </footer>
-      </main>
-
-      {/* 任务详情：桌面（≥lg）右栏，窄屏整屏浮层（自带关闭按钮，无需顶栏兜底） */}
-      {selectedTaskId !== null ? (
-        <>
-          <div className="fixed inset-0 z-30 bg-ink/20 lg:hidden" onClick={closeTask} aria-hidden="true" />
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label="任务详情"
-            className="pt-safe fixed inset-y-0 right-0 z-40 w-full max-w-[400px] lg:static lg:z-auto lg:w-auto lg:max-w-none"
+          <footer
+            data-app-footer
+            className="hidden shrink-0 items-center gap-3 border-t border-line px-5 py-1.5 text-[0.65625rem] text-ink-3 lg:flex"
           >
-            <TaskDetail taskId={selectedTaskId} onClose={closeTask} />
-          </div>
-        </>
-      ) : null}
+            <span>
+              {boot?.app ?? '慎始'} · {boot?.motto ?? '慎始而敬终，行稳致远'}
+            </span>
+            <span className="ml-auto tabular-nums">
+              {visible.filter((t) => t.status !== 'done').length} 待办 / 共 {visible.length} 项
+            </span>
+            <span className="text-ink-3/70">按 / 搜索 · Esc 退出</span>
+          </footer>
+        </main>
 
+        {/* 任务详情：桌面（≥lg）右栏，窄屏整屏浮层（自带关闭按钮，无需顶栏兜底） */}
+        {selectedTaskId !== null ? (
+          <>
+            <div
+              className="fixed inset-0 z-30 bg-ink/20 lg:hidden"
+              onClick={closeTask}
+              aria-hidden="true"
+            />
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="任务详情"
+              className="pt-safe fixed inset-y-0 right-0 z-40 w-full max-w-[400px] lg:static lg:z-auto lg:w-auto lg:max-w-none"
+            >
+              <TaskDetail taskId={selectedTaskId} onClose={closeTask} />
+            </div>
+          </>
+        ) : null}
       </div>
       <AppOverlays />
       {/* 装成主屏幕应用的引导：只在未安装时浮出，关掉后一个月内不再提 */}
       <InstallPrompt />
     </div>
-  )
+  );
 }
 
 /**
@@ -299,7 +337,7 @@ export default function App() {
  * 加载通常在几十毫秒内结束，闪一句「加载中」反而更吵。
  */
 function ViewLoading() {
-  return <div className="min-h-[8rem] w-full" aria-busy="true" />
+  return <div className="min-h-[8rem] w-full" aria-busy="true" />;
 }
 
 /**
@@ -307,19 +345,19 @@ function ViewLoading() {
  * 越过阈值后文案从「下拉刷新」切成「松手刷新」。
  */
 function PullIndicator({ distance, refreshing }: { distance: number; refreshing: boolean }) {
-  if (distance <= 0 && !refreshing) return null
+  if (distance <= 0 && !refreshing) return null;
   return (
     <div
       aria-hidden="true"
       className="pointer-events-none flex items-end justify-center overflow-hidden text-[0.6875rem] text-ink-3"
       style={{ height: refreshing ? 44 : distance }}
     >
-      <span className={cx('pb-1.5 flex items-center gap-1.5', refreshing && 'text-seal')}>
+      <span className={cx('flex items-center gap-1.5 pb-1.5', refreshing && 'text-seal')}>
         <IconRefresh size={13} className={cx(refreshing && 'animate-spin')} />
         {refreshing ? '正在刷新…' : pullArmed(distance) ? '松手刷新' : '下拉刷新'}
       </span>
     </div>
-  )
+  );
 }
 
 /**
@@ -328,37 +366,41 @@ function PullIndicator({ distance, refreshing }: { distance: number; refreshing:
  * 这里负责「已经开着页面、中途失效」的场景，两者说辞保持一致。
  */
 function LockScreen() {
-  const { unlock } = useStore()
-  const [token, setToken] = useState('')
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
+  const { unlock } = useStore();
+  const [token, setToken] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const submit = async (e: FormEvent) => {
-    e.preventDefault()
-    const value = token.trim()
-    if (!value || busy) return
-    setBusy(true)
-    setError('')
-    const ok = await unlock(value)
+    e.preventDefault();
+    const value = token.trim();
+    if (!value || busy) return;
+    setBusy(true);
+    setError('');
+    const ok = await unlock(value);
     if (!ok) {
-      setError('口令不正确')
-      setBusy(false)
+      setError('口令不正确');
+      setBusy(false);
     }
-  }
+  };
 
   return (
-    <div
-      data-lock-screen
-      className="grid h-dvh w-full place-items-center bg-paper px-4 text-ink"
-    >
+    <div data-lock-screen className="grid h-dvh w-full place-items-center bg-paper px-4 text-ink">
       <form onSubmit={submit} className="w-full max-w-[21rem]">
         <div className="mb-4 flex justify-center">
           <SealLogo size={44} />
         </div>
-        <h1 className="brand-serif text-center text-[1.0625rem] font-semibold tracking-[0.14em]">慎始而敬终</h1>
-        <p className="mt-1.5 mb-5 text-center text-[0.78125rem] text-ink-3">访问口令已失效，请重新输入</p>
+        <h1 className="brand-serif text-center text-[1.0625rem] font-semibold tracking-[0.14em]">
+          慎始而敬终
+        </h1>
+        <p className="mt-1.5 mb-5 text-center text-[0.78125rem] text-ink-3">
+          访问口令已失效，请重新输入
+        </p>
 
-        <label className="mb-1.5 block text-[0.71875rem] font-medium tracking-wide text-ink-3" htmlFor="shenshi-token">
+        <label
+          className="mb-1.5 block text-[0.71875rem] font-medium tracking-wide text-ink-3"
+          htmlFor="shenshi-token"
+        >
           访问口令
         </label>
         <input
@@ -368,45 +410,54 @@ function LockScreen() {
           autoComplete="current-password"
           value={token}
           onChange={(e) => setToken(e.target.value)}
-          className="w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-[0.875rem] text-ink outline-none transition-colors focus:border-seal/60"
+          className="w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-[0.875rem] text-ink transition-colors outline-none focus:border-seal/60"
         />
 
-        <Button type="submit" variant="primary" disabled={busy || !token.trim()} className="mt-3 w-full">
+        <Button
+          type="submit"
+          variant="primary"
+          disabled={busy || !token.trim()}
+          className="mt-3 w-full"
+        >
           {busy ? '正在验证…' : '进入'}
         </Button>
         <p className="mt-2 min-h-[1.2rem] text-center text-[0.75rem] text-p-high">{error}</p>
-        <p className="mt-4 text-center text-[0.6875rem] text-ink-3">口令由服务端环境变量 SHENSHI_TOKEN 设定</p>
+        <p className="mt-4 text-center text-[0.6875rem] text-ink-3">
+          口令由服务端环境变量 SHENSHI_TOKEN 设定
+        </p>
       </form>
     </div>
-  )
+  );
 }
 
 function emptyKeyFor(selection: Selection): string {
   switch (selection.kind) {
     case 'smart':
-      return selection.key
+      return selection.key;
     case 'list':
-      return 'list'
+      return 'list';
     case 'folder':
-      return 'folder'
+      return 'folder';
     case 'tag':
-      return 'tag'
+      return 'tag';
     case 'search':
-      return 'search'
+      return 'search';
   }
 }
 
 /** 响应式媒体查询钩子：SSR/无窗口环境安全降级为 false。 */
 function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(() =>
-    typeof window !== 'undefined' && 'matchMedia' in window ? window.matchMedia(query).matches : false,
-  )
+    typeof window !== 'undefined' && 'matchMedia' in window
+      ? window.matchMedia(query).matches
+      : false
+  );
   useEffect(() => {
-    const mq = window.matchMedia(query)
-    const onChange = () => setMatches(mq.matches)
-    onChange()
-    mq.addEventListener('change', onChange)
-    return () => mq.removeEventListener('change', onChange)
-  }, [query])
-  return matches
+    const mq = window.matchMedia(query);
+    const onChange = () => setMatches(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, [query]);
+  return matches;
 }

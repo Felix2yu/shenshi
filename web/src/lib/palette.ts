@@ -10,19 +10,19 @@ export const PALETTE = [
   '#8a6d3b',
   '#a8455c',
   '#4f7f9e',
-  '#8a8f98',
-]
+  '#8a8f98'
+];
 
 export const ACCENTS: { value: string; label: string; color: string }[] = [
   { value: 'seal', label: '朱砂', color: '#b4553d' },
   { value: 'azure', label: '黛青', color: '#4a6386' },
   { value: 'jade', label: '竹青', color: '#4f7358' },
   { value: 'violet', label: '绛紫', color: '#6f4f74' },
-  { value: 'ink', label: '松烟', color: '#4a4741' },
-]
+  { value: 'ink', label: '松烟', color: '#4a4741' }
+];
 
 export function paletteAt(index: number): string {
-  return PALETTE[index % PALETTE.length]
+  return PALETTE[index % PALETTE.length];
 }
 
 /**
@@ -41,10 +41,10 @@ const COLOR_NAMES: Record<string, string> = {
   '#a8455c': '胭脂',
   '#4f7f9e': '天青',
   '#8a8f98': '烟灰',
-  '#8a7c66': '土褐',
-}
+  '#8a7c66': '土褐'
+};
 
 /** 取颜色的中文名；未登记的颜色退回原值，避免漏配时读成空白。 */
 export function colorName(hex: string): string {
-  return COLOR_NAMES[hex.toLowerCase()] ?? hex
+  return COLOR_NAMES[hex.toLowerCase()] ?? hex;
 }

@@ -5,8 +5,8 @@
  */
 
 export interface Quote {
-  text: string
-  source: string
+  text: string;
+  source: string;
 }
 
 export const QUOTES = {
@@ -25,10 +25,10 @@ export const QUOTES = {
   review: { text: '吾日三省吾身。', source: '《论语·学而》' },
   focus: { text: '譬如为山，未成一篑，止，吾止也。', source: '《论语·子罕》' },
   board: { text: '物有本末，事有终始。', source: '《礼记·大学》' },
-  emptyList: { text: '始条理者，智之事也。', source: '《孟子·万章下》' },
-} as const
+  emptyList: { text: '始条理者，智之事也。', source: '《孟子·万章下》' }
+} as const;
 
-export type QuoteKey = keyof typeof QUOTES
+export type QuoteKey = keyof typeof QUOTES;
 
 /** 善始善终 · 页脚随笔，每日轮换。 */
 export const FOOTNOTES: Quote[] = [
@@ -37,28 +37,28 @@ export const FOOTNOTES: Quote[] = [
   { text: '慎终如始，则无败事。', source: '《老子·六十四章》' },
   { text: '锲而不舍，金石可镂。', source: '《荀子·劝学》' },
   { text: '凡事豫则立，不豫则废。', source: '《礼记·中庸》' },
-  { text: '知所先后，则近道矣。', source: '《礼记·大学》' },
-]
+  { text: '知所先后，则近道矣。', source: '《礼记·大学》' }
+];
 
 export function footnoteOfTheDay(): Quote {
-  const idx = new Date().getDate() % FOOTNOTES.length
-  return FOOTNOTES[idx]
+  const idx = new Date().getDate() % FOOTNOTES.length;
+  return FOOTNOTES[idx];
 }
 
 /** 晨省的问候语，按时段给一句短句。 */
 export function morningLine(pending: number, overdue: number, done: number): string {
-  if (overdue > 0) return `有 ${overdue} 件事已过原定之日，先安顿它们，再谈其他。`
-  if (pending === 0 && done > 0) return `今日已了 ${done} 件，始末相顾，很好。`
-  if (pending === 0) return '今日无待办。不妨添一件真正要紧的事。'
-  if (pending <= 3) return `今日 ${pending} 件事，皆为要务，宜一次做透。`
-  return `今日 ${pending} 件事，先择其三，余者可缓。`
+  if (overdue > 0) return `有 ${overdue} 件事已过原定之日，先安顿它们，再谈其他。`;
+  if (pending === 0 && done > 0) return `今日已了 ${done} 件，始末相顾，很好。`;
+  if (pending === 0) return '今日无待办。不妨添一件真正要紧的事。';
+  if (pending <= 3) return `今日 ${pending} 件事，皆为要务，宜一次做透。`;
+  return `今日 ${pending} 件事，先择其三，余者可缓。`;
 }
 
 /** 日省的结语，按当日完成情况给回应。 */
 export function reviewLine(done: number, open: number): string {
-  if (done === 0 && open === 0) return '今日无记录。留白也是一种节奏。'
-  if (done === 0) return '今日尚未收束一件事。择其一，先做成。'
-  if (open === 0) return '今日诸事皆了，善始善终，可谓敬终。'
-  if (done >= open) return '今日所成多于所余，节奏尚好。'
-  return '今日所成少于所余，明日宜先清要务。'
+  if (done === 0 && open === 0) return '今日无记录。留白也是一种节奏。';
+  if (done === 0) return '今日尚未收束一件事。择其一，先做成。';
+  if (open === 0) return '今日诸事皆了，善始善终，可谓敬终。';
+  if (done >= open) return '今日所成多于所余，节奏尚好。';
+  return '今日所成少于所余，明日宜先清要务。';
 }

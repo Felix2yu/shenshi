@@ -7,17 +7,24 @@ import {
   useState,
   type DragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
-  type SyntheticEvent,
-} from 'react'
+  type SyntheticEvent
+} from 'react';
 
-import { dayDiff, dueLabel, isOverdue, relativeTime, todayStr, addDays } from '../lib/date'
-import { QUOTES } from '../lib/quotes'
-import { parseQuickAdd, describeRepeat, QUICK_ADD_HINTS, type Chip } from '../lib/nlp'
-import { useIMEGuard } from '../lib/ime'
-import { coarsePointer, useRowTouch } from '../lib/touch'
-import { SEARCH_HINT, describeOperator, isQueryOperator, removeToken, splitQueryTokens } from '../lib/query'
-import { useStore } from '../store/AppStore'
-import type { Folder, List, Priority, Selection, Tag, Task, TaskPatch } from '../types'
+import { dayDiff, dueLabel, isOverdue, relativeTime, todayStr, addDays } from '../lib/date';
+import { QUOTES } from '../lib/quotes';
+import { parseQuickAdd, describeRepeat, QUICK_ADD_HINTS, type Chip } from '../lib/nlp';
+import { useIMEGuard } from '../lib/ime';
+import { coarsePointer, useRowTouch } from '../lib/touch';
+import { useLatest } from '../lib/useLatest';
+import {
+  SEARCH_HINT,
+  describeOperator,
+  isQueryOperator,
+  removeToken,
+  splitQueryTokens
+} from '../lib/query';
+import { useStore } from '../store/AppStore';
+import type { Folder, List, Priority, Tag, Task, TaskPatch } from '../types';
 import {
   IconArrowDown,
   IconArrowUp,
@@ -46,49 +53,49 @@ import {
   IconTag,
   IconTrash,
   IconX,
-  type IconProps,
-} from './icons'
-import { Button, Checkbox, EmptyState, IconButton, Popover, RoundCheck, cx } from './ui'
+  type IconProps
+} from './icons';
+import { Button, Checkbox, EmptyState, IconButton, Popover, RoundCheck, cx } from './ui';
 
-export const DRAG_MIME = 'application/x-shenshi-task'
+export const DRAG_MIME = 'application/x-shenshi-task';
 
 /** 手动排序专用：与跨清单拖拽区分开，避免拖动行时误触发移动语义。 */
-export const SORT_MIME = 'application/x-shenshi-sort'
+export const SORT_MIME = 'application/x-shenshi-sort';
 
-type IconCmp = (p: IconProps) => React.ReactNode
+type IconCmp = (p: IconProps) => React.ReactNode;
 
 /* ---------------- 小组件 ---------------- */
 
 export function PriorityFlag({ priority, size = 13 }: { priority: Priority; size?: number }) {
-  if (!priority) return null
-  const color = priority === 3 ? 'var(--p-high)' : priority === 2 ? 'var(--p-mid)' : 'var(--p-low)'
+  if (!priority) return null;
+  const color = priority === 3 ? 'var(--p-high)' : priority === 2 ? 'var(--p-mid)' : 'var(--p-low)';
   return (
     <span title={`优先级：${['无', '低', '中', '高'][priority]}`} className="inline-flex shrink-0">
       <IconFlag size={size} style={{ color }} strokeWidth={priority === 3 ? 2.2 : 1.7} />
     </span>
-  )
+  );
 }
 
 export function DuePill({ task, className }: { task: Task; className?: string }) {
-  if (!task.dueDate) return null
-  const overdue = isOverdue(task.dueDate, task.status)
-  const today = dayDiff(task.dueDate, todayStr()) === 0
+  if (!task.dueDate) return null;
+  const overdue = isOverdue(task.dueDate, task.status);
+  const today = dayDiff(task.dueDate, todayStr()) === 0;
   return (
     <span
       className={cx(
-        'inline-flex items-center gap-1 whitespace-nowrap text-[0.71875rem] tabular-nums',
+        'inline-flex items-center gap-1 text-[0.71875rem] whitespace-nowrap tabular-nums',
         overdue ? 'font-medium text-p-high' : today ? 'text-seal' : 'text-ink-3',
-        className,
+        className
       )}
     >
       <IconClock size={11.5} />
       {dueLabel(task.dueDate, task.dueTime)}
     </span>
-  )
+  );
 }
 
 export function TaskMeta({ task }: { task: Task }) {
-  const repeatLabel = describeRepeat(task.repeatRule)
+  const repeatLabel = describeRepeat(task.repeatRule);
   return (
     <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-1">
       {task.notes ? (
@@ -97,41 +104,68 @@ export function TaskMeta({ task }: { task: Task }) {
         </span>
       ) : null}
       {task.dueDate ? <DuePill task={task} /> : null}
-      {task.endTime ? <span className="text-[0.71875rem] text-ink-3 tabular-nums">→ {task.endTime}</span> : null}
+      {task.endTime ? (
+        <span className="text-[0.71875rem] text-ink-3 tabular-nums">→ {task.endTime}</span>
+      ) : null}
       {task.repeatRule ? (
-        <span title={repeatLabel} className="inline-flex items-center gap-1 text-[0.71875rem] text-ink-3">
+        <span
+          title={repeatLabel}
+          className="inline-flex items-center gap-1 text-[0.71875rem] text-ink-3"
+        >
           <IconRepeat size={11.5} />
           <span className="hidden sm:inline">{repeatLabel}</span>
         </span>
       ) : null}
       {task.reminders.length > 0 && task.dueDate ? (
-        <span title="已设提醒" className="inline-flex items-center gap-1 text-[0.71875rem] text-ink-3">
+        <span
+          title="已设提醒"
+          className="inline-flex items-center gap-1 text-[0.71875rem] text-ink-3"
+        >
           <IconBell size={11.5} />
-          {task.reminders.some((r) => r > 0) ? task.reminders.filter((r) => r > 0).map((r) => (r >= 60 ? `${r / 60}时` : `${r}分`)).join('/') : '准点'}
+          {task.reminders.some((r) => r > 0)
+            ? task.reminders
+                .filter((r) => r > 0)
+                .map((r) => (r >= 60 ? `${r / 60}时` : `${r}分`))
+                .join('/')
+            : '准点'}
         </span>
       ) : null}
       {task.estimateMinutes > 0 ? (
-        <span title="预计时长" className="inline-flex items-center gap-1 text-[0.71875rem] text-ink-3 tabular-nums">
+        <span
+          title="预计时长"
+          className="inline-flex items-center gap-1 text-[0.71875rem] text-ink-3 tabular-nums"
+        >
           <IconClock size={11.5} />
-          {task.estimateMinutes >= 60 && task.estimateMinutes % 60 === 0 ? `${task.estimateMinutes / 60}时` : `${task.estimateMinutes}分`}
+          {task.estimateMinutes >= 60 && task.estimateMinutes % 60 === 0
+            ? `${task.estimateMinutes / 60}时`
+            : `${task.estimateMinutes}分`}
         </span>
       ) : null}
       {task.progress > 0 ? (
         <span
           title="进度"
-          className={cx('inline-flex items-center gap-1 text-[0.71875rem] tabular-nums', task.progress >= 100 ? 'text-jade' : 'text-ink-3')}
+          className={cx(
+            'inline-flex items-center gap-1 text-[0.71875rem] tabular-nums',
+            task.progress >= 100 ? 'text-jade' : 'text-ink-3'
+          )}
         >
           {task.progress}%
         </span>
       ) : null}
       {task.links?.some((l) => l.kind === 'blocked_by' && l.status !== 'done') ? (
-        <span title="有未完成的依赖" className="inline-flex items-center gap-1 text-[0.71875rem] font-medium text-p-high">
+        <span
+          title="有未完成的依赖"
+          className="inline-flex items-center gap-1 text-[0.71875rem] font-medium text-p-high"
+        >
           <IconLink size={11.5} />
           被依赖阻塞
         </span>
       ) : null}
       {task.status === 'in_progress' ? (
-        <span title="进行中" className="inline-flex items-center rounded-full bg-jade/12 px-1.5 text-[0.65625rem] font-medium text-jade">
+        <span
+          title="进行中"
+          className="inline-flex items-center rounded-full bg-jade/12 px-1.5 text-[0.65625rem] font-medium text-jade"
+        >
           进行中
         </span>
       ) : null}
@@ -140,7 +174,7 @@ export function TaskMeta({ task }: { task: Task }) {
           title="子任务进度"
           className={cx(
             'inline-flex items-center gap-1 text-[0.71875rem] tabular-nums',
-            task.subtaskOpen === 0 ? 'text-jade' : 'text-ink-3',
+            task.subtaskOpen === 0 ? 'text-jade' : 'text-ink-3'
           )}
         >
           <IconSubtask size={11.5} />
@@ -148,12 +182,16 @@ export function TaskMeta({ task }: { task: Task }) {
         </span>
       ) : null}
       {task.tags.map((t) => (
-        <span key={t.id} className="inline-flex items-center gap-1 text-[0.71875rem]" style={{ color: t.color }}>
+        <span
+          key={t.id}
+          className="inline-flex items-center gap-1 text-[0.71875rem]"
+          style={{ color: t.color }}
+        >
           <IconTag size={11} />#{t.name}
         </span>
       ))}
     </div>
-  )
+  );
 }
 
 /* ---------------- 任务行 ---------------- */
@@ -175,64 +213,72 @@ export const TaskRow = memo(function TaskRow({
   showList,
   sortable,
   onSortStart,
-  onSortEnd,
+  onSortEnd
 }: {
-  task: Task
-  onOpen: (t: Task) => void
-  draggable?: boolean
-  dense?: boolean
-  showList?: boolean
+  task: Task;
+  onOpen: (t: Task) => void;
+  draggable?: boolean;
+  dense?: boolean;
+  showList?: boolean;
   /** 手动排序模式：行首出现拖拽手柄。 */
-  sortable?: boolean
-  onSortStart?: (id: number) => void
-  onSortEnd?: () => void
+  sortable?: boolean;
+  onSortStart?: (id: number) => void;
+  onSortEnd?: () => void;
 }) {
-  const { toggleTask, updateTask, deleteTask, multiSelect, selectedIds, toggleSelected, selectedTaskId, toast } =
-    useStore()
-  const { compositionProps, isComposing } = useIMEGuard()
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(task.title)
-  const [menuOpen, setMenuOpen] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const done = task.status === 'done'
+  const {
+    toggleTask,
+    updateTask,
+    deleteTask,
+    multiSelect,
+    selectedIds,
+    toggleSelected,
+    selectedTaskId,
+    toast
+  } = useStore();
+  const { compositionProps, isComposing } = useIMEGuard();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(task.title);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const done = task.status === 'done';
   // 触屏手势：右滑完成 / 恢复，左滑或长按打开更多。桌面（鼠标）不启用，
   // 那里有拖拽排序与悬停操作条，再叠一层滑动会互相打架。
-  const [touchEnabled] = useState(coarsePointer)
+  const [touchEnabled] = useState(coarsePointer);
   const swipe = useRowTouch({
     enabled: touchEnabled && !editing,
     onSwipeRight: () => void toggleTask(task.id),
     onSwipeLeft: () => setMenuOpen(true),
-    onLongPress: () => setMenuOpen(true),
-  })
+    onLongPress: () => setMenuOpen(true)
+  });
 
   useEffect(() => {
-    if (editing) inputRef.current?.select()
-  }, [editing])
+    if (editing) inputRef.current?.select();
+  }, [editing]);
 
   useEffect(() => {
-    if (!editing) setDraft(task.title)
-  }, [task.title, editing])
+    if (!editing) setDraft(task.title);
+  }, [task.title, editing]);
 
   const commit = async () => {
-    const value = draft.trim()
-    setEditing(false)
+    const value = draft.trim();
+    setEditing(false);
     if (!value) {
       // 空标题没有意义。原先只是静默还原，用户看到的是「改了但没生效」；
       // 这里明确说一句，并把输入框内容恢复成原标题。
-      if (draft !== task.title) toast('标题不能为空，已还原', 'info')
-      setDraft(task.title)
-      return
+      if (draft !== task.title) toast('标题不能为空，已还原', 'info');
+      setDraft(task.title);
+      return;
     }
-    if (value !== task.title) await updateTask(task.id, { title: value })
-  }
+    if (value !== task.title) await updateTask(task.id, { title: value });
+  };
 
   const onDragStart = (e: DragEvent<HTMLDivElement>) => {
-    e.dataTransfer.setData(DRAG_MIME, String(task.id))
-    e.dataTransfer.setData('text/plain', task.title)
-    e.dataTransfer.effectAllowed = 'move'
-  }
+    e.dataTransfer.setData(DRAG_MIME, String(task.id));
+    e.dataTransfer.setData('text/plain', task.title);
+    e.dataTransfer.effectAllowed = 'move';
+  };
 
-  const swiping = swipe.offset !== 0
+  const swiping = swipe.offset !== 0;
 
   return (
     <div className="swipe-row relative overflow-hidden rounded-xl">
@@ -245,7 +291,7 @@ export const TaskRow = memo(function TaskRow({
           <span
             className={cx(
               'flex items-center gap-1 transition-opacity',
-              swiping && swipe.offset > 0 ? (swipe.armed ? 'text-jade' : 'text-ink-3') : 'opacity-0',
+              swiping && swipe.offset > 0 ? (swipe.armed ? 'text-jade' : 'text-ink-3') : 'opacity-0'
             )}
           >
             <IconCheckCircle size={14} />
@@ -254,7 +300,7 @@ export const TaskRow = memo(function TaskRow({
           <span
             className={cx(
               'flex items-center gap-1 transition-opacity',
-              swiping && swipe.offset < 0 ? (swipe.armed ? 'text-seal' : 'text-ink-3') : 'opacity-0',
+              swiping && swipe.offset < 0 ? (swipe.armed ? 'text-seal' : 'text-ink-3') : 'opacity-0'
             )}
           >
             <IconMore size={14} />
@@ -273,241 +319,270 @@ export const TaskRow = memo(function TaskRow({
         onClick={(e) => {
           // 长按刚刚触发过菜单，紧随其后的这一次 click 属于误触，吃掉它。
           if (swipe.consumeClick()) {
-            e.preventDefault()
-            return
+            e.preventDefault();
+            return;
           }
-          if (multiSelect) toggleSelected(task.id)
-          else onOpen(task)
+          if (multiSelect) toggleSelected(task.id);
+          else onOpen(task);
         }}
         {...swipe.handlers}
         style={{
           transform: swiping ? `translateX(${swipe.offset}px)` : undefined,
-          transition: swiping ? 'none' : 'transform 0.18s ease-out',
+          transition: swiping ? 'none' : 'transform 0.18s ease-out'
         }}
-      onKeyDown={(e) => {
-        // 只处理落在行本身上的按键；子控件（勾选框、操作按钮）的按键由它们自己处理。
-        if (e.target !== e.currentTarget) return
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault()
-          if (multiSelect) toggleSelected(task.id)
-          else onOpen(task)
-          return
-        }
-        // 双击改名对键盘不可达，补一个 F2（与文件管理器、任务类工具的习惯一致）
-        if (e.key === 'F2') {
-          e.preventDefault()
-          setEditing(true)
-        }
-      }}
-      className={cx(
-        'group/row relative flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 transition-colors',
-        dense ? 'py-1.5' : 'py-2.5',
-        multiSelect && selectedIds.includes(task.id)
-          ? 'border-seal/45 bg-seal/10'
-          : selectedTaskId === task.id
-            ? 'border-seal/35 bg-seal/6'
-            : 'border-transparent hover:border-line hover:bg-surface-2/70',
-      )}
-    >
-      {sortable && !multiSelect ? (
-        <span
-          draggable
-          onDragStart={(e) => {
-            // 与整行拖拽区分开：手柄只表达「排序」，不携带跨清单移动语义。
-            e.stopPropagation()
-            e.dataTransfer.setData(SORT_MIME, String(task.id))
-            e.dataTransfer.effectAllowed = 'move'
-            onSortStart?.(task.id)
-          }}
-          onDragEnd={() => onSortEnd?.()}
-          onClick={(e) => e.stopPropagation()}
-          title="拖动调整顺序"
-          className="mt-[2px] cursor-grab text-ink-3/60 opacity-0 transition-opacity hover:text-ink-2 group-hover/row:opacity-100 active:cursor-grabbing"
-        >
-          <IconGrip size={13} />
-        </span>
-      ) : null}
-
-      {multiSelect ? (
-        <div className="pt-[3px]">
-          <Checkbox checked={selectedIds.includes(task.id)} onChange={() => toggleSelected(task.id)} />
-        </div>
-      ) : (
-        <div className="pt-[1px]">
-          <RoundCheck
-            checked={done}
-            color={task.priority === 3 ? 'var(--p-high)' : undefined}
-            onChange={() => void toggleTask(task.id)}
-          />
-        </div>
-      )}
-
-      <div className="min-w-0 flex-1">
-        <div className="flex items-start gap-1.5">
-          <div className="flex min-w-0 flex-1 items-center gap-1.5">
-            <PriorityFlag priority={task.priority} />
-            {task.pinned ? (
-              <span title="已置顶" className="inline-flex shrink-0 text-seal">
-                <IconPin size={12} />
-              </span>
-            ) : null}
-            {task.starred ? (
-              <span title="已收藏" className="inline-flex shrink-0 text-[var(--p-mid)]">
-                <IconStar size={12} />
-              </span>
-            ) : null}
-            {editing ? (
-              <input
-                ref={inputRef}
-                {...compositionProps}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onBlur={() => void commit()}
-                onClick={(e) => e.stopPropagation()}
-                onKeyDown={(e) => {
-                  if (isComposing(e)) return
-                  if (e.key === 'Enter') void commit()
-                  if (e.key === 'Escape') {
-                    setDraft(task.title)
-                    setEditing(false)
-                  }
-                }}
-                className="min-w-0 flex-1 rounded border border-seal/40 bg-surface px-1.5 py-0.5 text-[0.84375rem] outline-none"
-              />
-            ) : (
-              <span
-                title="双击改名（键盘：F2）"
-                onDoubleClick={(e) => {
-                  e.stopPropagation()
-                  setEditing(true)
-                }}
-                className={cx(
-                  'min-w-0 break-words text-[0.84375rem] leading-6',
-                  done ? 'text-ink-3 line-through decoration-ink-3/50' : 'text-ink',
-                )}
-              >
-                {task.title}
-              </span>
-            )}
-          </div>
-
-          <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/row:opacity-100">
-            <IconButton
-              icon={IconPin}
-              label={task.pinned ? '取消置顶' : '置顶'}
-              size={13}
-              onClick={(e) => {
-                e.stopPropagation()
-                void updateTask(task.id, { pinned: !task.pinned })
-              }}
-            />
-            <IconButton
-              icon={IconStar}
-              label={task.starred ? '取消收藏' : '收藏'}
-              size={13}
-              onClick={(e) => {
-                e.stopPropagation()
-                void updateTask(task.id, { starred: !task.starred })
-              }}
-            />
-            <IconButton
-              icon={IconPencil}
-              label="重命名"
-              size={13}
-              onClick={(e) => {
-                e.stopPropagation()
-                setEditing(true)
-              }}
-            />
-            <div className="relative">
-              <IconButton
-                icon={IconMore}
-                label="更多"
-                size={13}
-                // 可访问名带上任务标题，读屏逐行浏览时能分辨是哪个任务的菜单；
-                // title 保持「更多」不变 —— 冒烟脚本按 button[title="更多"] 定位。
-                aria-label={`「${task.title}」的更多操作`}
-                aria-haspopup="true"
-                aria-expanded={menuOpen}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setMenuOpen((v) => !v)
-                }}
-                onKeyDown={(e) => {
-                  // 选单约定的「↓ 打开并落到第一项」；其余按键交给全局处理
-                  if (e.key === 'ArrowDown') {
-                    e.preventDefault()
-                    setMenuOpen(true)
-                  }
-                }}
-              />
-              <Popover open={menuOpen} onClose={() => setMenuOpen(false)} align="right" width={200} menu>
-                <RowMenuItems task={task} onClose={() => setMenuOpen(false)} onOpen={() => onOpen(task)} onDelete={() => void deleteTask(task.id)} />
-              </Popover>
-            </div>
-          </div>
-        </div>
-
-        {showList && task.listName ? (
-          <div className="mt-0.5 text-[0.71875rem] text-ink-3">{task.listName}</div>
+        onKeyDown={(e) => {
+          // 只处理落在行本身上的按键；子控件（勾选框、操作按钮）的按键由它们自己处理。
+          if (e.target !== e.currentTarget) return;
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            if (multiSelect) toggleSelected(task.id);
+            else onOpen(task);
+            return;
+          }
+          // 双击改名对键盘不可达，补一个 F2（与文件管理器、任务类工具的习惯一致）
+          if (e.key === 'F2') {
+            e.preventDefault();
+            setEditing(true);
+          }
+        }}
+        className={cx(
+          'group/row relative flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 transition-colors',
+          dense ? 'py-1.5' : 'py-2.5',
+          multiSelect && selectedIds.includes(task.id)
+            ? 'border-seal/45 bg-seal/10'
+            : selectedTaskId === task.id
+              ? 'border-seal/35 bg-seal/6'
+              : 'border-transparent hover:border-line hover:bg-surface-2/70'
+        )}
+      >
+        {sortable && !multiSelect ? (
+          <span
+            draggable
+            onDragStart={(e) => {
+              // 与整行拖拽区分开：手柄只表达「排序」，不携带跨清单移动语义。
+              e.stopPropagation();
+              e.dataTransfer.setData(SORT_MIME, String(task.id));
+              e.dataTransfer.effectAllowed = 'move';
+              onSortStart?.(task.id);
+            }}
+            onDragEnd={() => onSortEnd?.()}
+            onClick={(e) => e.stopPropagation()}
+            title="拖动调整顺序"
+            className="mt-[2px] cursor-grab text-ink-3/60 opacity-0 transition-opacity group-hover/row:opacity-100 hover:text-ink-2 active:cursor-grabbing"
+          >
+            <IconGrip size={13} />
+          </span>
         ) : null}
 
-        {done ? (
-          <div className="mt-0.5 text-[0.71875rem] text-ink-3">完成于 {relativeTime(task.completedAt)}</div>
+        {multiSelect ? (
+          <div className="pt-[3px]">
+            <Checkbox
+              checked={selectedIds.includes(task.id)}
+              onChange={() => toggleSelected(task.id)}
+            />
+          </div>
         ) : (
-          <TaskMeta task={task} />
+          <div className="pt-[1px]">
+            <RoundCheck
+              checked={done}
+              color={task.priority === 3 ? 'var(--p-high)' : undefined}
+              onChange={() => void toggleTask(task.id)}
+            />
+          </div>
         )}
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start gap-1.5">
+            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+              <PriorityFlag priority={task.priority} />
+              {task.pinned ? (
+                <span title="已置顶" className="inline-flex shrink-0 text-seal">
+                  <IconPin size={12} />
+                </span>
+              ) : null}
+              {task.starred ? (
+                <span title="已收藏" className="inline-flex shrink-0 text-[var(--p-mid)]">
+                  <IconStar size={12} />
+                </span>
+              ) : null}
+              {editing ? (
+                <input
+                  ref={inputRef}
+                  {...compositionProps}
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onBlur={() => void commit()}
+                  onClick={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => {
+                    if (isComposing(e)) return;
+                    if (e.key === 'Enter') void commit();
+                    if (e.key === 'Escape') {
+                      setDraft(task.title);
+                      setEditing(false);
+                    }
+                  }}
+                  className="min-w-0 flex-1 rounded border border-seal/40 bg-surface px-1.5 py-0.5 text-[0.84375rem] outline-none"
+                />
+              ) : (
+                <span
+                  title="双击改名（键盘：F2）"
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    setEditing(true);
+                  }}
+                  className={cx(
+                    'min-w-0 text-[0.84375rem] leading-6 break-words',
+                    done ? 'text-ink-3 line-through decoration-ink-3/50' : 'text-ink'
+                  )}
+                >
+                  {task.title}
+                </span>
+              )}
+            </div>
+
+            <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/row:opacity-100">
+              <IconButton
+                icon={IconPin}
+                label={task.pinned ? '取消置顶' : '置顶'}
+                size={13}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void updateTask(task.id, { pinned: !task.pinned });
+                }}
+              />
+              <IconButton
+                icon={IconStar}
+                label={task.starred ? '取消收藏' : '收藏'}
+                size={13}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void updateTask(task.id, { starred: !task.starred });
+                }}
+              />
+              <IconButton
+                icon={IconPencil}
+                label="重命名"
+                size={13}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEditing(true);
+                }}
+              />
+              <div className="relative">
+                <IconButton
+                  icon={IconMore}
+                  label="更多"
+                  size={13}
+                  // 可访问名带上任务标题，读屏逐行浏览时能分辨是哪个任务的菜单；
+                  // title 保持「更多」不变 —— 冒烟脚本按 button[title="更多"] 定位。
+                  aria-label={`「${task.title}」的更多操作`}
+                  aria-haspopup="true"
+                  aria-expanded={menuOpen}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMenuOpen((v) => !v);
+                  }}
+                  onKeyDown={(e) => {
+                    // 选单约定的「↓ 打开并落到第一项」；其余按键交给全局处理
+                    if (e.key === 'ArrowDown') {
+                      e.preventDefault();
+                      setMenuOpen(true);
+                    }
+                  }}
+                />
+                <Popover
+                  open={menuOpen}
+                  onClose={() => setMenuOpen(false)}
+                  align="right"
+                  width={200}
+                  menu
+                >
+                  <RowMenuItems
+                    task={task}
+                    onClose={() => setMenuOpen(false)}
+                    onOpen={() => onOpen(task)}
+                    onDelete={() => void deleteTask(task.id)}
+                  />
+                </Popover>
+              </div>
+            </div>
+          </div>
+
+          {showList && task.listName ? (
+            <div className="mt-0.5 text-[0.71875rem] text-ink-3">{task.listName}</div>
+          ) : null}
+
+          {done ? (
+            <div className="mt-0.5 text-[0.71875rem] text-ink-3">
+              完成于 {relativeTime(task.completedAt)}
+            </div>
+          ) : (
+            <TaskMeta task={task} />
+          )}
         </div>
       </div>
     </div>
-  )
-})
+  );
+});
 
 function RowMenuItems({
   task,
   onClose,
   onOpen,
-  onDelete,
+  onDelete
 }: {
-  task: Task
-  onClose: () => void
-  onOpen: () => void
-  onDelete: () => void
+  task: Task;
+  onClose: () => void;
+  onOpen: () => void;
+  onDelete: () => void;
 }) {
-  const { updateTask, confirm, moveTask, skipTask, duplicateTask, lists, folders, tasks, sortBy, reorderTasks } =
-    useStore()
-  const today = todayStr()
-  const menuRef = useRef<HTMLDivElement>(null)
+  const {
+    updateTask,
+    confirm,
+    moveTask,
+    skipTask,
+    duplicateTask,
+    lists,
+    folders,
+    tasks,
+    sortBy,
+    reorderTasks
+  } = useStore();
+  const today = todayStr();
+  const menuRef = useRef<HTMLDivElement>(null);
 
   /** 手动排序的键盘等价入口：拖拽之外，上下移动同一分区里的相邻两项。 */
   const moveWithinBucket = (delta: -1 | 1) => {
-    if (sortBy !== 'manual') return
-    const bucket = bucketize(tasks).find((b) => b.tasks.some((t) => t.id === task.id))
-    if (!bucket) return
-    const i = bucket.tasks.findIndex((t) => t.id === task.id)
-    const j = i + delta
-    if (i < 0 || j < 0 || j >= bucket.tasks.length) return
-    const ids = tasks.map((t) => t.id)
-    const a = ids.indexOf(bucket.tasks[i].id)
-    const c = ids.indexOf(bucket.tasks[j].id)
-    if (a < 0 || c < 0) return
-    ids[a] = bucket.tasks[j].id
-    ids[c] = bucket.tasks[i].id
-    void reorderTasks(ids)
-  }
+    if (sortBy !== 'manual') return;
+    const bucket = bucketize(tasks).find((b) => b.tasks.some((t) => t.id === task.id));
+    if (!bucket) return;
+    const i = bucket.tasks.findIndex((t) => t.id === task.id);
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= bucket.tasks.length) return;
+    const ids = tasks.map((t) => t.id);
+    const a = ids.indexOf(bucket.tasks[i].id);
+    const c = ids.indexOf(bucket.tasks[j].id);
+    if (a < 0 || c < 0) return;
+    ids[a] = bucket.tasks[j].id;
+    ids[c] = bucket.tasks[i].id;
+    void reorderTasks(ids);
+  };
 
   /** ↑↓ 在菜单项之间移动焦点（标准选单的键盘约定），省得一路 Tab 穿过十几项。 */
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
-    const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])
-    if (items.length === 0) return
-    e.preventDefault()
-    const i = items.indexOf(document.activeElement as HTMLElement)
-    const next = e.key === 'ArrowDown' ? (i + 1) % items.length : i <= 0 ? items.length - 1 : i - 1
-    items[next]?.focus()
-  }
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    const items = Array.from(
+      menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []
+    );
+    if (items.length === 0) return;
+    e.preventDefault();
+    const i = items.indexOf(document.activeElement as HTMLElement);
+    const next = e.key === 'ArrowDown' ? (i + 1) % items.length : i <= 0 ? items.length - 1 : i - 1;
+    items[next]?.focus();
+  };
 
-  const folderName = (l: List) => (l.folderId == null ? undefined : folders.find((f) => f.id === l.folderId)?.name)
+  const folderName = (l: List) =>
+    l.folderId == null ? undefined : folders.find((f) => f.id === l.folderId)?.name;
 
   return (
     <div ref={menuRef} role="menu" aria-label={`「${task.title}」的操作`} onKeyDown={onKeyDown}>
@@ -519,12 +594,14 @@ function RowMenuItems({
             type="button"
             aria-pressed={task.priority === p}
             onClick={() => {
-              void updateTask(task.id, { priority: p })
-              onClose()
+              void updateTask(task.id, { priority: p });
+              onClose();
             }}
             className={cx(
               'flex-1 rounded-md py-1 text-[0.75rem] transition-colors',
-              task.priority === p ? 'bg-seal/12 font-medium text-seal' : 'text-ink-2 hover:bg-surface-2',
+              task.priority === p
+                ? 'bg-seal/12 font-medium text-seal'
+                : 'text-ink-2 hover:bg-surface-2'
             )}
           >
             {['无', '低', '中', '高'][p]}
@@ -536,16 +613,16 @@ function RowMenuItems({
         icon={IconClock}
         label="今天"
         onClick={() => {
-          void moveTask(task.id, { dueDate: today })
-          onClose()
+          void moveTask(task.id, { dueDate: today });
+          onClose();
         }}
       />
       <RowAction
         icon={IconClock}
         label="明天"
         onClick={() => {
-          void moveTask(task.id, { dueDate: addDays(today, 1) })
-          onClose()
+          void moveTask(task.id, { dueDate: addDays(today, 1) });
+          onClose();
         }}
       />
       <RowAction
@@ -555,8 +632,8 @@ function RowMenuItems({
           // 清日期要一并清时刻，否则会留下"没有到期日、却还挂着 09:00"的脏数据，
           // 而且此后任何一次"设日期"都会让那个旧时刻悄然复活。
           // 后端 PATCH 是三态语义（未传的字段一律不动），联动必须由调用方显式表达。
-          void moveTask(task.id, { dueDate: null, dueTime: null })
-          onClose()
+          void moveTask(task.id, { dueDate: null, dueTime: null });
+          onClose();
         }}
       />
       {/* 任意日期改期：拖拽只能落到今天/明天两格，键盘与触屏用户需要一个完整入口
@@ -565,7 +642,7 @@ function RowMenuItems({
           （fontScale）放大——120% 字号下已达 ~136px，占满整行后会把文字标签压成逐字
           竖排（2026-09-28 修）。故改为：输入框铺满整行且视觉透明，点整行即弹出系统
           日期选择器；文字标签兜底 whitespace-nowrap，任何字号下都不再折行。 */}
-      <label className="relative flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[0.78125rem] text-ink transition-colors hover:bg-surface-2 focus-within:bg-surface-2 focus-within:ring-1 focus-within:ring-seal/40">
+      <label className="relative flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[0.78125rem] text-ink transition-colors focus-within:bg-surface-2 focus-within:ring-1 focus-within:ring-seal/40 hover:bg-surface-2">
         <IconCalendar size={13} className="shrink-0 text-ink-3" />
         <span className="flex-1 whitespace-nowrap">选择日期…</span>
         <input
@@ -577,18 +654,18 @@ function RowMenuItems({
             // （原生只在右侧日历图标上响应点击，对触屏/键盘用户太窄）。
             // 不支持 showPicker 的环境（老 Safari）退化：聚焦后 iOS 会自动弹原生选择器。
             try {
-              e.currentTarget.showPicker?.()
+              e.currentTarget.showPicker?.();
             } catch {
               /* 非用户激活等场景下浏览器会拒绝，忽略即可，输入本身仍可用 */
             }
           }}
           onChange={(e) => {
-            const v = e.target.value
-            if (v === (task.dueDate ?? '')) return
+            const v = e.target.value;
+            if (v === (task.dueDate ?? '')) return;
             // 与「清除日期」同口径：清日期必须一并清时刻，否则会留下"没有到期日、却还挂着
             // 09:00"的脏数据（系统日期选择器自带「清除」按钮，这条分支不是摆设）。
-            void moveTask(task.id, v ? { dueDate: v } : { dueDate: null, dueTime: null })
-            onClose()
+            void moveTask(task.id, v ? { dueDate: v } : { dueDate: null, dueTime: null });
+            onClose();
           }}
           className="absolute inset-0 h-full w-full cursor-pointer rounded-lg border border-control-line bg-surface px-1.5 text-[0.75rem] text-ink-2 opacity-0 focus:opacity-100"
         />
@@ -598,16 +675,16 @@ function RowMenuItems({
         icon={IconSparkle}
         label={task.important ? '取消「重要」' : '标为「重要」'}
         onClick={() => {
-          void updateTask(task.id, { important: !task.important })
-          onClose()
+          void updateTask(task.id, { important: !task.important });
+          onClose();
         }}
       />
       <RowAction
         icon={IconClock}
         label={task.urgent ? '取消「紧急」' : '标为「紧急」'}
         onClick={() => {
-          void updateTask(task.id, { urgent: !task.urgent })
-          onClose()
+          void updateTask(task.id, { urgent: !task.urgent });
+          onClose();
         }}
       />
       {/* 移动到其它清单：跨清单移动原先只能拖 —— 这里补的键盘等价入口 */}
@@ -621,17 +698,19 @@ function RowMenuItems({
               role="menuitem"
               aria-current={l.id === task.listId ? 'true' : undefined}
               onClick={() => {
-                if (l.id !== task.listId) void moveTask(task.id, { listId: l.id })
-                onClose()
+                if (l.id !== task.listId) void moveTask(task.id, { listId: l.id });
+                onClose();
               }}
               className={cx(
                 'flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-[0.78125rem] transition-colors',
-                l.id === task.listId ? 'bg-seal/10 text-seal' : 'text-ink-2 hover:bg-surface-2',
+                l.id === task.listId ? 'bg-seal/10 text-seal' : 'text-ink-2 hover:bg-surface-2'
               )}
             >
               <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: l.color }} />
               <span className="flex-1 truncate">{l.name}</span>
-              {folderName(l) ? <span className="shrink-0 text-[0.6875rem] text-ink-3">{folderName(l)}</span> : null}
+              {folderName(l) ? (
+                <span className="shrink-0 text-[0.6875rem] text-ink-3">{folderName(l)}</span>
+              ) : null}
               {l.id === task.listId ? <IconCheck size={12} className="shrink-0" /> : null}
             </button>
           ))}
@@ -641,32 +720,32 @@ function RowMenuItems({
         icon={IconPin}
         label={task.pinned ? '取消置顶' : '置顶'}
         onClick={() => {
-          void updateTask(task.id, { pinned: !task.pinned })
-          onClose()
+          void updateTask(task.id, { pinned: !task.pinned });
+          onClose();
         }}
       />
       <RowAction
         icon={IconStar}
         label={task.starred ? '取消收藏' : '收藏'}
         onClick={() => {
-          void updateTask(task.id, { starred: !task.starred })
-          onClose()
+          void updateTask(task.id, { starred: !task.starred });
+          onClose();
         }}
       />
       <RowAction
         icon={IconCopy}
         label="复制"
         onClick={() => {
-          void duplicateTask(task.id)
-          onClose()
+          void duplicateTask(task.id);
+          onClose();
         }}
       />
       <RowAction
         icon={IconPencil}
         label="编辑详情"
         onClick={() => {
-          onOpen()
-          onClose()
+          onOpen();
+          onClose();
         }}
       />
       {/* 手动排序的键盘等价：拖拽之外提供上移/下移（仅手动排序模式） */}
@@ -676,16 +755,16 @@ function RowMenuItems({
             icon={IconArrowUp}
             label="上移一位"
             onClick={() => {
-              moveWithinBucket(-1)
-              onClose()
+              moveWithinBucket(-1);
+              onClose();
             }}
           />
           <RowAction
             icon={IconArrowDown}
             label="下移一位"
             onClick={() => {
-              moveWithinBucket(1)
-              onClose()
+              moveWithinBucket(1);
+              onClose();
             }}
           />
         </>
@@ -696,8 +775,8 @@ function RowMenuItems({
           icon={IconRepeat}
           label="跳过本次"
           onClick={() => {
-            void skipTask(task.id)
-            onClose()
+            void skipTask(task.id);
+            onClose();
           }}
         />
       ) : null}
@@ -711,53 +790,53 @@ function RowMenuItems({
             title: `删除「${task.title}」`,
             message: '删除后可在底部状态栏撤销，超过 10 分钟才彻底消失。',
             confirmText: '删除',
-            danger: true,
-          })
-          onClose()
-          if (ok) onDelete()
+            danger: true
+          });
+          onClose();
+          if (ok) onDelete();
         }}
       />
     </div>
-  )
+  );
 }
 
 function RowAction({
   icon: Icon,
   label,
   onClick,
-  danger,
+  danger
 }: {
-  icon: IconCmp
-  label: string
-  onClick: () => void
-  danger?: boolean
+  icon: IconCmp;
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
 }) {
   return (
     <button
       type="button"
       role="menuitem"
       onClick={(e) => {
-        e.stopPropagation()
-        onClick()
+        e.stopPropagation();
+        onClick();
       }}
       className={cx(
         'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[0.78125rem] transition-colors',
-        danger ? 'text-p-high hover:bg-p-high/10' : 'text-ink hover:bg-surface-2',
+        danger ? 'text-p-high hover:bg-p-high/10' : 'text-ink hover:bg-surface-2'
       )}
     >
       <Icon size={13} className={danger ? '' : 'text-ink-3'} />
       {label}
     </button>
-  )
+  );
 }
 
 /* ---------------- 分组 ---------------- */
 
 interface Bucket {
-  key: string
-  label: string
-  tone?: 'danger' | 'accent' | 'normal'
-  tasks: Task[]
+  key: string;
+  label: string;
+  tone?: 'danger' | 'accent' | 'normal';
+  tasks: Task[];
 }
 
 const BUCKET_DEFS: { key: string; label: string; tone?: Bucket['tone'] }[] = [
@@ -766,36 +845,36 @@ const BUCKET_DEFS: { key: string; label: string; tone?: Bucket['tone'] }[] = [
   { key: 'tomorrow', label: '明天' },
   { key: 'soon', label: '本周内' },
   { key: 'later', label: '更远' },
-  { key: 'nodate', label: '无日期' },
-]
+  { key: 'nodate', label: '无日期' }
+];
 
 export function bucketize(tasks: Task[]): Bucket[] {
-  const today = todayStr()
-  const map = new Map<string, Task[]>()
+  const today = todayStr();
+  const map = new Map<string, Task[]>();
   for (const t of tasks) {
-    let key: string
-    if (t.status === 'done') key = 'done'
-    else if (!t.dueDate) key = 'nodate'
+    let key: string;
+    if (t.status === 'done') key = 'done';
+    else if (!t.dueDate) key = 'nodate';
     else {
-      const diff = dayDiff(t.dueDate, today)
-      if (diff < 0) key = 'overdue'
-      else if (diff === 0) key = 'today'
-      else if (diff === 1) key = 'tomorrow'
-      else if (diff <= 7) key = 'soon'
-      else key = 'later'
+      const diff = dayDiff(t.dueDate, today);
+      if (diff < 0) key = 'overdue';
+      else if (diff === 0) key = 'today';
+      else if (diff === 1) key = 'tomorrow';
+      else if (diff <= 7) key = 'soon';
+      else key = 'later';
     }
-    const arr = map.get(key)
-    if (arr) arr.push(t)
-    else map.set(key, [t])
+    const arr = map.get(key);
+    if (arr) arr.push(t);
+    else map.set(key, [t]);
   }
 
-  const order = [...BUCKET_DEFS, { key: 'done', label: '已完成' }]
-  const out: Bucket[] = []
+  const order = [...BUCKET_DEFS, { key: 'done', label: '已完成' }];
+  const out: Bucket[] = [];
   for (const def of order) {
-    const list = map.get(def.key)
-    if (list?.length) out.push({ key: def.key, label: def.label, tone: def.tone, tasks: list })
+    const list = map.get(def.key);
+    if (list?.length) out.push({ key: def.key, label: def.label, tone: def.tone, tasks: list });
   }
-  return out
+  return out;
 }
 
 /* ---------------- 快速添加 ---------------- */
@@ -806,57 +885,65 @@ type Sug =
   | { kind: 'tag'; key: string; value: string; label: string; color: string }
   | { kind: 'newTag'; key: string; value: string; label: string }
   | { kind: 'priority'; key: string; value: string; label: string; priority: number; desc: string }
-  | { kind: 'list'; key: string; value: string; label: string; color: string; folderName?: string }
+  | { kind: 'list'; key: string; value: string; label: string; color: string; folderName?: string };
 
 /** 全角触发符归一化：中文输入法下 # ! / 常被输入成 ＃ ！ ／，两者等价。 */
-const FULLWIDTH_TRIGGER: Record<string, string> = { '＃': '#', '！': '!', '／': '/' }
+const FULLWIDTH_TRIGGER: Record<string, string> = { '＃': '#', '！': '!', '／': '/' };
 
 /** 检测光标是否正处于某个符号触发的补全语境里，返回触发符与已输入的查询串。 */
 function detectToken(
   text: string,
-  caret: number,
+  caret: number
 ): { trigger: string; query: string; start: number; end: number } | null {
-  if (!text) return null
-  let i = Math.min(caret, text.length) - 1
-  let query = ''
+  if (!text) return null;
+  let i = Math.min(caret, text.length) - 1;
+  let query = '';
   while (i >= 0) {
-    const ch = text[i]
-    const trigger = ch === '#' || ch === '!' || ch === '/' ? ch : FULLWIDTH_TRIGGER[ch]
+    const ch = text[i];
+    const trigger = ch === '#' || ch === '!' || ch === '/' ? ch : FULLWIDTH_TRIGGER[ch];
     if (trigger) {
-      const prev = i > 0 ? text[i - 1] : ''
+      const prev = i > 0 ? text[i - 1] : '';
       // 触发符前必须是行首或空白，避免误伤「C#」「http://」这类正文。
-      if (i === 0 || /\s/.test(prev)) return { trigger, query, start: i, end: Math.min(caret, text.length) }
-      return null
+      if (i === 0 || /\s/.test(prev))
+        return { trigger, query, start: i, end: Math.min(caret, text.length) };
+      return null;
     }
-    if (/\s/.test(ch)) return null // 空白终止当前 token
-    query = ch + query
-    i--
+    if (/\s/.test(ch)) return null; // 空白终止当前 token
+    query = ch + query;
+    i--;
   }
-  return null
+  return null;
 }
 
 const PRIORITY_SUGS = [
   { value: '高', priority: 3, desc: '最高优先级' },
   { value: '中', priority: 2, desc: '中优先级' },
-  { value: '低', priority: 1, desc: '低优先级' },
-]
+  { value: '低', priority: 1, desc: '低优先级' }
+];
 
 function buildSuggestions(
   token: { trigger: string; query: string } | null,
   tags: Tag[],
   lists: List[],
-  folders: Folder[],
+  folders: Folder[]
 ): Sug[] {
-  if (!token) return []
-  const q = token.query.toLowerCase()
+  if (!token) return [];
+  const q = token.query.toLowerCase();
   if (token.trigger === '#') {
     const out: Sug[] = tags
       .filter((t) => t.name.toLowerCase().includes(q))
       .slice(0, 8)
-      .map((t) => ({ kind: 'tag', key: `tag-${t.id}`, value: t.name, label: t.name, color: t.color }))
-    const exact = tags.some((t) => t.name.toLowerCase() === q)
-    if (token.query && !exact) out.push({ kind: 'newTag', key: 'newtag', value: token.query, label: token.query })
-    return out
+      .map((t) => ({
+        kind: 'tag',
+        key: `tag-${t.id}`,
+        value: t.name,
+        label: t.name,
+        color: t.color
+      }));
+    const exact = tags.some((t) => t.name.toLowerCase() === q);
+    if (token.query && !exact)
+      out.push({ kind: 'newTag', key: 'newtag', value: token.query, label: token.query });
+    return out;
   }
   if (token.trigger === '!') {
     return PRIORITY_SUGS.filter((p) => p.value.toLowerCase().includes(q) || q === '').map((p) => ({
@@ -865,11 +952,12 @@ function buildSuggestions(
       value: p.value,
       label: p.value,
       priority: p.priority,
-      desc: p.desc,
-    }))
+      desc: p.desc
+    }));
   }
   if (token.trigger === '/') {
-    const folderName = (l: List) => (l.folderId == null ? undefined : folders.find((f) => f.id === l.folderId)?.name)
+    const folderName = (l: List) =>
+      l.folderId == null ? undefined : folders.find((f) => f.id === l.folderId)?.name;
     return lists
       .filter((l) => l.name.toLowerCase().includes(q))
       .slice(0, 8)
@@ -879,10 +967,10 @@ function buildSuggestions(
         value: l.name,
         label: l.name,
         color: l.color,
-        folderName: folderName(l),
-      }))
+        folderName: folderName(l)
+      }));
   }
-  return []
+  return [];
 }
 
 /* ---------------- 快速添加 ---------------- */
@@ -890,102 +978,110 @@ function buildSuggestions(
 export function QuickAdd({
   autoFocus,
   placeholder,
-  defaults,
+  defaults
 }: {
-  autoFocus?: boolean
-  placeholder?: string
+  autoFocus?: boolean;
+  placeholder?: string;
   /** 预填字段（列头新建用）。标题解析出的显式条件优先于 defaults。 */
-  defaults?: TaskPatch
+  defaults?: TaskPatch;
 }) {
-  const { createTask, ensureTags, lists, tags, folders, selection, toast, quickAddSeed, consumeQuickAddSeed } =
-    useStore()
-  const { compositionProps, isComposing } = useIMEGuard()
-  const [text, setText] = useState('')
+  const {
+    createTask,
+    ensureTags,
+    lists,
+    tags,
+    folders,
+    selection,
+    toast,
+    quickAddSeed,
+    consumeQuickAddSeed
+  } = useStore();
+  const { compositionProps, isComposing } = useIMEGuard();
+  const [text, setText] = useState('');
+  const [expanded, setExpanded] = useState(false);
   // 外部塞进来的草稿（快捷指令 / 分享的 ?add= 深链）：打开应用时已经把话写好，
   // 人只需看一眼解析结果再回车 —— 不替他直接落库，那是一条没有回退的写操作。
   useEffect(() => {
-    if (!quickAddSeed) return
-    setText(quickAddSeed)
-    setExpanded(true)
-    consumeQuickAddSeed()
+    if (!quickAddSeed) return;
+    setText(quickAddSeed);
+    setExpanded(true);
+    consumeQuickAddSeed();
     // 等输入框渲染出来再聚焦；移动端顺带把键盘叫起来。
-    window.setTimeout(() => inputRef.current?.focus(), 60)
-  }, [quickAddSeed, consumeQuickAddSeed])
-  const [expanded, setExpanded] = useState(false)
-  const [caret, setCaret] = useState(0)
-  const [activeIndex, setActiveIndex] = useState(0)
-  const [suppress, setSuppress] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const pendingCaret = useRef<number | null>(null)
+    window.setTimeout(() => inputRef.current?.focus(), 60);
+  }, [quickAddSeed, consumeQuickAddSeed]);
+  const [caret, setCaret] = useState(0);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [suppress, setSuppress] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const pendingCaret = useRef<number | null>(null);
 
   const parsed = useMemo(
     () => parseQuickAdd(text, { lists: lists.map((l) => ({ id: l.id, name: l.name })) }),
-    [text, lists],
-  )
+    [text, lists]
+  );
 
   // 当前光标处是否处于符号补全语境（# 标签 / ! 优先级 / / 清单）。
-  const token = useMemo(() => detectToken(text, caret), [text, caret])
-  const tokenKey = token ? `${token.start}:${token.trigger}:${token.query}` : ''
+  const token = useMemo(() => detectToken(text, caret), [text, caret]);
+  const tokenKey = token ? `${token.start}:${token.trigger}:${token.query}` : '';
   const suggestions = useMemo(
     () => buildSuggestions(token, tags, lists, folders),
-    [token, tags, lists, folders],
-  )
-  const showSuggest = token !== null && suggestions.length > 0 && !suppress
+    [token, tags, lists, folders]
+  );
+  const showSuggest = token !== null && suggestions.length > 0 && !suppress;
 
   // 每次进入新的补全语境都回到首项并解除抑制。
   useEffect(() => {
-    setActiveIndex(0)
-    setSuppress(false)
-  }, [tokenKey])
+    setActiveIndex(0);
+    setSuppress(false);
+  }, [tokenKey]);
 
   // 程序化改写文本后，把光标复位到插入点。
   useEffect(() => {
     if (pendingCaret.current != null && inputRef.current) {
-      inputRef.current.setSelectionRange(pendingCaret.current, pendingCaret.current)
-      pendingCaret.current = null
+      inputRef.current.setSelectionRange(pendingCaret.current, pendingCaret.current);
+      pendingCaret.current = null;
     }
-  }, [text])
+  }, [text]);
 
-  const tokenRef = useRef(token)
-  tokenRef.current = token
+  const tokenRef = useLatest(token);
 
   const syncCaret = (e: SyntheticEvent<HTMLInputElement>) => {
     // apply 已程序化移动光标并写入 pendingCaret，跳过紧随的 keyup/click 同步，避免回写脏值。
-    if (pendingCaret.current != null) return
-    const pos = e.currentTarget.selectionStart
-    if (pos != null) setCaret(pos)
-  }
+    if (pendingCaret.current != null) return;
+    const pos = e.currentTarget.selectionStart;
+    if (pos != null) setCaret(pos);
+  };
 
   const apply = (item: Sug) => {
-    const t = tokenRef.current
-    if (!t) return
-    const before = text.slice(0, t.start)
-    const after = text.slice(t.end)
-    let insert = ''
-    if (item.kind === 'priority') insert = `!${item.value} `
-    else if (item.kind === 'tag' || item.kind === 'newTag') insert = `#${item.value} `
-    else if (item.kind === 'list') insert = `/${item.value} `
-    const newCaret = before.length + insert.length
-    setText(before + insert + after)
-    setCaret(newCaret)
-    pendingCaret.current = newCaret
-    setSuppress(false)
-    setActiveIndex(0)
-    inputRef.current?.focus()
-  }
+    const t = tokenRef.current;
+    if (!t) return;
+    const before = text.slice(0, t.start);
+    const after = text.slice(t.end);
+    let insert = '';
+    if (item.kind === 'priority') insert = `!${item.value} `;
+    else if (item.kind === 'tag' || item.kind === 'newTag') insert = `#${item.value} `;
+    else if (item.kind === 'list') insert = `/${item.value} `;
+    const newCaret = before.length + insert.length;
+    setText(before + insert + after);
+    setCaret(newCaret);
+    pendingCaret.current = newCaret;
+    setSuppress(false);
+    setActiveIndex(0);
+    inputRef.current?.focus();
+  };
 
   const submit = async () => {
-    const title = parsed.title.trim()
+    const title = parsed.title.trim();
     if (!title) {
       // 只敲了「#工作」这类记号、没写标题时，原先按回车毫无反应 —— 说清差什么。
-      if (text.trim()) toast('还差一个标题', 'info')
-      return
+      if (text.trim()) toast('还差一个标题', 'info');
+      return;
     }
-    let tagIds: number[] | undefined
+    let tagIds: number[] | undefined;
     if (parsed.tagNames.length) {
-      const created = await ensureTags(parsed.tagNames)
-      if (created === null) return // 标签没建成：中止建任务，保留输入（错误已 toast）
-      tagIds = created.map((t) => t.id)
+      const created = await ensureTags(parsed.tagNames);
+      if (created === null) return; // 标签没建成：中止建任务，保留输入（错误已 toast）
+      tagIds = created.map((t) => t.id);
     }
     // 智能视图兜底日期：在「今天/明天」清单里记的事没写日期就落收集箱、
     // 视图里再也看不见；标题解析与 defaults 都没给时补一个。nodate/其它键不注入。
@@ -996,7 +1092,7 @@ export function QuickAdd({
           ? todayStr()
           : selection.kind === 'smart' && selection.key === 'tomorrow'
             ? addDays(todayStr(), 1)
-            : undefined
+            : undefined;
     const t = await createTask({
       ...defaults,
       ...(smartDue ? { dueDate: smartDue } : {}),
@@ -1008,13 +1104,13 @@ export function QuickAdd({
       ...(parsed.important !== null ? { important: parsed.important } : {}),
       ...(parsed.urgent !== null ? { urgent: parsed.urgent } : {}),
       ...(parsed.listId !== null ? { listId: parsed.listId } : {}),
-      ...(tagIds ? { tagIds } : {}),
-    })
-    if (!t) return // 创建失败：保留输入与光标，别让用户重敲一遍
-    setText('')
-    setCaret(0)
-    inputRef.current?.focus()
-  }
+      ...(tagIds ? { tagIds } : {})
+    });
+    if (!t) return; // 创建失败：保留输入与光标，别让用户重敲一遍
+    setText('');
+    setCaret(0);
+    inputRef.current?.focus();
+  };
 
   const chipIcon: Record<Chip['kind'], IconCmp> = {
     date: IconClock,
@@ -1023,17 +1119,22 @@ export function QuickAdd({
     priority: IconFlag,
     tag: IconTag,
     list: IconList,
-    quadrant: IconSparkle,
-  }
+    quadrant: IconSparkle
+  };
 
-  const targetName = selection.kind === 'list' ? (lists.find((l) => l.id === selection.id)?.name ?? '清单') : '收集箱'
+  const targetName =
+    selection.kind === 'list'
+      ? (lists.find((l) => l.id === selection.id)?.name ?? '清单')
+      : '收集箱';
 
   return (
     <div className="relative">
       <div
         className={cx(
           'flex items-center gap-2 rounded-xl border bg-surface px-3 py-2 transition-all',
-          expanded ? 'border-seal/45 shadow-[var(--shadow-sm)]' : 'border-line hover:border-line-strong',
+          expanded
+            ? 'border-seal/45 shadow-[var(--shadow-sm)]'
+            : 'border-line hover:border-line-strong'
         )}
       >
         <IconPlus size={15} className="shrink-0 text-ink-3" />
@@ -1044,8 +1145,8 @@ export function QuickAdd({
           {...compositionProps}
           value={text}
           onChange={(e) => {
-            setText(e.target.value)
-            syncCaret(e)
+            setText(e.target.value);
+            syncCaret(e);
           }}
           onFocus={() => setExpanded(true)}
           onBlur={() => window.setTimeout(() => setExpanded(false), 160)}
@@ -1053,46 +1154,48 @@ export function QuickAdd({
           onClick={(e) => syncCaret(e)}
           onKeyDown={(e) => {
             // 输入法组合期间（选词/取消候选），Enter 与 Esc 属于 IME，不触发提交或清空。
-            if (isComposing(e)) return
+            if (isComposing(e)) return;
             if (showSuggest) {
               if (e.key === 'ArrowDown') {
-                e.preventDefault()
-                setActiveIndex((i) => Math.min(i + 1, suggestions.length - 1))
-                return
+                e.preventDefault();
+                setActiveIndex((i) => Math.min(i + 1, suggestions.length - 1));
+                return;
               }
               if (e.key === 'ArrowUp') {
-                e.preventDefault()
-                setActiveIndex((i) => Math.max(i - 1, 0))
-                return
+                e.preventDefault();
+                setActiveIndex((i) => Math.max(i - 1, 0));
+                return;
               }
               if (e.key === 'Enter' || e.key === 'Tab') {
                 // 查询已与某条建议完全一致：符号已经写完整了（如「!高」「#工作」），
                 // Enter 的语义是「记下这件事」，而不是再补一个空格关掉弹层——
                 // 否则用户要按两次 Enter 才能建任务。Tab 与部分匹配仍走补全。
-                const q = tokenRef.current?.query.toLowerCase() ?? ''
+                const q = tokenRef.current?.query.toLowerCase() ?? '';
                 const complete =
-                  e.key === 'Enter' && q !== '' && suggestions.some((s) => s.value.toLowerCase() === q)
+                  e.key === 'Enter' &&
+                  q !== '' &&
+                  suggestions.some((s) => s.value.toLowerCase() === q);
                 if (!complete) {
-                  e.preventDefault()
-                  const it = suggestions[activeIndex]
-                  if (it) apply(it)
-                  return
+                  e.preventDefault();
+                  const it = suggestions[activeIndex];
+                  if (it) apply(it);
+                  return;
                 }
               }
               if (e.key === 'Escape') {
-                e.preventDefault()
-                setSuppress(true)
-                return
+                e.preventDefault();
+                setSuppress(true);
+                return;
               }
             }
             if (e.key === 'Enter') {
-              e.preventDefault()
-              void submit()
+              e.preventDefault();
+              void submit();
             }
             if (e.key === 'Escape') {
-              setText('')
-              setCaret(0)
-              inputRef.current?.blur()
+              setText('');
+              setCaret(0);
+              inputRef.current?.blur();
             }
           }}
           placeholder={placeholder ?? '记下一件事… 试试「明天下午3点交材料 #工作 !高 /项目推进」'}
@@ -1119,7 +1222,9 @@ export function QuickAdd({
         <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[0.6875rem] text-ink-3">
           {QUICK_ADD_HINTS.filter((h) => /^[#/!@＃！／]/.test(h.syntax)).map((h) => (
             <span key={h.syntax} className="inline-flex items-center gap-1">
-              <code className="rounded border border-line bg-surface-2 px-1 py-px font-mono text-[0.625rem] text-ink-2">{h.syntax}</code>
+              <code className="rounded border border-line bg-surface-2 px-1 py-px font-mono text-[0.625rem] text-ink-2">
+                {h.syntax}
+              </code>
               <span>{h.desc}</span>
             </span>
           ))}
@@ -1128,7 +1233,14 @@ export function QuickAdd({
 
       {/* 符号触发的自动建议 */}
       {showSuggest ? (
-        <Popover open={showSuggest} onClose={() => setSuppress(true)} align="left" side="bottom" width={320} className="max-w-[88vw]">
+        <Popover
+          open={showSuggest}
+          onClose={() => setSuppress(true)}
+          align="left"
+          side="bottom"
+          width={320}
+          className="max-w-[88vw]"
+        >
           <div className="max-h-64 overflow-y-auto py-1">
             {suggestions.map((s, i) => (
               <button
@@ -1136,32 +1248,50 @@ export function QuickAdd({
                 type="button"
                 onMouseEnter={() => setActiveIndex(i)}
                 onMouseDown={(e) => {
-                  e.preventDefault()
-                  apply(s)
+                  e.preventDefault();
+                  apply(s);
                 }}
                 className={cx(
                   'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[0.8125rem] transition-colors',
-                  i === activeIndex ? 'bg-seal/10 text-seal' : 'text-ink hover:bg-surface-2',
+                  i === activeIndex ? 'bg-seal/10 text-seal' : 'text-ink hover:bg-surface-2'
                 )}
               >
                 {s.kind === 'tag' || s.kind === 'list' ? (
-                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: s.color }} />
+                  <span
+                    className="h-2.5 w-2.5 shrink-0 rounded-full"
+                    style={{ background: s.color }}
+                  />
                 ) : s.kind === 'priority' ? (
                   <IconFlag
                     size={14}
                     className="shrink-0"
-                    style={{ color: s.priority === 3 ? 'var(--p-high)' : s.priority === 2 ? 'var(--p-mid)' : 'var(--p-low)' }}
+                    style={{
+                      color:
+                        s.priority === 3
+                          ? 'var(--p-high)'
+                          : s.priority === 2
+                            ? 'var(--p-mid)'
+                            : 'var(--p-low)'
+                    }}
                   />
                 ) : (
                   <IconPlus size={14} className="shrink-0 text-ink-3" />
                 )}
                 <span className="flex-1 truncate">
-                  {s.kind === 'newTag' ? `#${s.label}` : s.kind === 'priority' ? `!${s.label}` : s.kind === 'list' ? `/${s.label}` : s.label}
+                  {s.kind === 'newTag'
+                    ? `#${s.label}`
+                    : s.kind === 'priority'
+                      ? `!${s.label}`
+                      : s.kind === 'list'
+                        ? `/${s.label}`
+                        : s.label}
                 </span>
                 {s.kind === 'priority' ? (
                   <span className="shrink-0 text-[0.6875rem] text-ink-3">{s.desc}</span>
                 ) : s.kind === 'list' && s.folderName ? (
-                  <span className="shrink-0 truncate text-[0.6875rem] text-ink-3">{s.folderName}</span>
+                  <span className="shrink-0 truncate text-[0.6875rem] text-ink-3">
+                    {s.folderName}
+                  </span>
                 ) : s.kind === 'newTag' ? (
                   <span className="shrink-0 text-[0.6875rem] text-ink-3">新建标签</span>
                 ) : null}
@@ -1174,9 +1304,13 @@ export function QuickAdd({
       {/* 识别结果预览 */}
       {text && (parsed.chips.length > 0 || parsed.title) && !showSuggest ? (
         // 解析结果（标签/日期/归入哪张清单）过去只有视觉呈现，读屏用户完全不知道
-        <div role="status" aria-live="polite" className="mt-1.5 flex flex-wrap items-center gap-1.5 px-1">
+        <div
+          role="status"
+          aria-live="polite"
+          className="mt-1.5 flex flex-wrap items-center gap-1.5 px-1"
+        >
           {parsed.chips.map((c, i) => {
-            const Icon = chipIcon[c.kind]
+            const Icon = chipIcon[c.kind];
             return (
               <span
                 key={`${c.kind}-${i}`}
@@ -1185,20 +1319,20 @@ export function QuickAdd({
                 <Icon size={11} />
                 {c.label}
               </span>
-            )
+            );
           })}
           {parsed.title ? (
-            <span className="text-[0.71875rem] text-ink-3">
-              标题：{parsed.title}
-            </span>
+            <span className="text-[0.71875rem] text-ink-3">标题：{parsed.title}</span>
           ) : (
             <span className="text-[0.71875rem] text-ink-3">还差一个标题</span>
           )}
-          <span className="ml-auto hidden text-[0.6875rem] text-ink-3 sm:block">放入「{targetName}」</span>
+          <span className="ml-auto hidden text-[0.6875rem] text-ink-3 sm:block">
+            放入「{targetName}」
+          </span>
         </div>
       ) : null}
     </div>
-  )
+  );
 }
 
 /* ---------------- 列表视图 ---------------- */
@@ -1207,81 +1341,74 @@ export function TaskListView({
   tasks,
   onOpen,
   emptyKey,
-  showQuickAdd = true,
+  showQuickAdd = true
 }: {
-  tasks: Task[]
-  onOpen: (t: Task) => void
-  emptyKey: keyof typeof QUOTES | string
-  showQuickAdd?: boolean
+  tasks: Task[];
+  onOpen: (t: Task) => void;
+  emptyKey: keyof typeof QUOTES | string;
+  showQuickAdd?: boolean;
 }) {
-  const {
-    multiSelect,
-    sortBy,
-    reorderTasks,
-    selection,
-    purgeCompleted,
-    confirm,
-  } = useStore()
+  const { multiSelect, sortBy, reorderTasks, selection, purgeCompleted, confirm } = useStore();
   // 折叠状态持久化：原先切走视图再回来会全部展开，每次都要重新收起一遍。
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
     try {
-      const raw = localStorage.getItem('shenshi.collapsed.sections')
-      const parsed = raw ? (JSON.parse(raw) as unknown) : null
-      return parsed && typeof parsed === 'object' ? (parsed as Record<string, boolean>) : {}
+      const raw = localStorage.getItem('shenshi.collapsed.sections');
+      const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+      return parsed && typeof parsed === 'object' ? (parsed as Record<string, boolean>) : {};
     } catch {
-      return {}
+      return {};
     }
-  })
+  });
   useEffect(() => {
     try {
-      localStorage.setItem('shenshi.collapsed.sections', JSON.stringify(collapsed))
+      localStorage.setItem('shenshi.collapsed.sections', JSON.stringify(collapsed));
     } catch {
       // 隐私模式 / 配额满时不可写，静默降级为「本次会话内有效」
     }
-  }, [collapsed])
-  const buckets = useMemo(() => bucketize(tasks), [tasks])
+  }, [collapsed]);
+  const buckets = useMemo(() => bucketize(tasks), [tasks]);
 
   /** 清空已完成：在清单内就只清这个清单，在智能视图里则清全部。 */
   const purgeDone = async () => {
-    const listId = selection.kind === 'list' ? selection.id : undefined
+    const listId = selection.kind === 'list' ? selection.id : undefined;
     const ok = await confirm({
       title: '清空已完成任务',
       message: listId
         ? '将删除当前清单里所有已完成的任务。删除记录会留在操作历史中。'
         : '将删除全部已完成的任务。删除记录会留在操作历史中。',
       confirmText: '清空',
-      danger: true,
-    })
-    if (ok) await purgeCompleted(listId)
-  }
+      danger: true
+    });
+    if (ok) await purgeCompleted(listId);
+  };
 
   // 手动排序仅在「手动」模式下开放，避免与其它排序规则打架。
-  const sortable = sortBy === 'manual' && !multiSelect
-  const [dragId, setDragId] = useState<number | null>(null)
-  const [dropAt, setDropAt] = useState<{ id: number; after: boolean } | null>(null)
+  const sortable = sortBy === 'manual' && !multiSelect;
+  const [dragId, setDragId] = useState<number | null>(null);
+  const [dropAt, setDropAt] = useState<{ id: number; after: boolean } | null>(null);
   // 排序回调必须引用稳定：TaskRow 包了 memo，内联箭头会让每一行的 props 都变，
   // memo 等于白包（折叠/悬浮引发的整列表重渲染也拦不住）。
-  const handleSortStart = useCallback((id: number) => setDragId(id), [])
+  const handleSortStart = useCallback((id: number) => setDragId(id), []);
   const handleSortEnd = useCallback(() => {
-    setDragId(null)
-    setDropAt(null)
-  }, [])
+    setDragId(null);
+    setDropAt(null);
+  }, []);
 
   /** 松手落位：把拖动行插到目标行之前或之后，新顺序以整个可见列表为准。 */
   const commitSort = (bucketTasks: Task[], targetId: number, after: boolean) => {
-    if (dragId === null || dragId === targetId) return
-    if (!bucketTasks.some((t) => t.id === dragId)) return
-    const ids = tasks.map((t) => t.id)
-    const from = ids.indexOf(dragId)
-    if (from < 0) return
-    ids.splice(from, 1)
+    if (dragId === null || dragId === targetId) return;
+    if (!bucketTasks.some((t) => t.id === dragId)) return;
+    const ids = tasks.map((t) => t.id);
+    const from = ids.indexOf(dragId);
+    if (from < 0) return;
+    ids.splice(from, 1);
     // 移除拖动行后，目标下标会左移一位，必须重新定位。
-    let to = ids.indexOf(targetId)
-    if (to < 0) return
-    if (after) to += 1
-    ids.splice(to, 0, dragId)
-    void reorderTasks(ids)
-  }
+    let to = ids.indexOf(targetId);
+    if (to < 0) return;
+    if (after) to += 1;
+    ids.splice(to, 0, dragId);
+    void reorderTasks(ids);
+  };
 
   return (
     <div className="relative">
@@ -1294,7 +1421,8 @@ export function TaskListView({
       <div className="px-3 pb-24 md:px-5">
         {buckets.length === 0 ? (
           <EmptyForView emptyKey={emptyKey} />
-        ) : (          buckets.map((b) => (
+        ) : (
+          buckets.map((b) => (
             <section key={b.key} className="mb-1">
               <div className="mb-1 flex w-full items-center gap-2 px-3 pt-3">
                 <button
@@ -1306,7 +1434,11 @@ export function TaskListView({
                   <span
                     className={cx(
                       'text-[0.75rem] font-semibold tracking-wide',
-                      b.tone === 'danger' ? 'text-p-high' : b.tone === 'accent' ? 'text-seal' : 'text-ink-2',
+                      b.tone === 'danger'
+                        ? 'text-p-high'
+                        : b.tone === 'accent'
+                          ? 'text-seal'
+                          : 'text-ink-2'
                     )}
                   >
                     {b.label}
@@ -1334,26 +1466,26 @@ export function TaskListView({
                     <div
                       key={t.id}
                       onDragOver={(e) => {
-                        if (!sortable || dragId === null) return
-                        e.preventDefault()
-                        e.dataTransfer.dropEffect = 'move'
-                        const r = e.currentTarget.getBoundingClientRect()
-                        setDropAt({ id: t.id, after: e.clientY > r.top + r.height / 2 })
+                        if (!sortable || dragId === null) return;
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                        const r = e.currentTarget.getBoundingClientRect();
+                        setDropAt({ id: t.id, after: e.clientY > r.top + r.height / 2 });
                       }}
                       onDragLeave={(e) => {
-                        if (e.currentTarget.contains(e.relatedTarget as Node)) return
-                        setDropAt((prev) => (prev?.id === t.id ? null : prev))
+                        if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+                        setDropAt((prev) => (prev?.id === t.id ? null : prev));
                       }}
                       onDrop={(e) => {
-                        if (!sortable || dragId === null) return
-                        e.preventDefault()
+                        if (!sortable || dragId === null) return;
+                        e.preventDefault();
                         // 落点在这里现算，不依赖 dropAt —— 它可能还停在上一帧的判定上。
-                        const r = e.currentTarget.getBoundingClientRect()
-                        const after = e.clientY > r.top + r.height / 2
+                        const r = e.currentTarget.getBoundingClientRect();
+                        const after = e.clientY > r.top + r.height / 2;
                         // 落点只在「同一分区内」有意义：跨分区拖动不改变日期与优先级，本就不该允许。
-                        commitSort(b.tasks, t.id, after)
-                        setDragId(null)
-                        setDropAt(null)
+                        commitSort(b.tasks, t.id, after);
+                        setDragId(null);
+                        setDropAt(null);
                       }}
                       className={cx(
                         'rounded-xl border-t-2 border-b-2',
@@ -1361,7 +1493,7 @@ export function TaskListView({
                           ? 'border-t-transparent border-b-seal'
                           : dropAt?.id === t.id
                             ? 'border-t-seal border-b-transparent'
-                            : 'border-transparent',
+                            : 'border-transparent'
                       )}
                     >
                       <TaskRow
@@ -1384,7 +1516,7 @@ export function TaskListView({
       {/* 多选操作条由 App 全局统一渲染一份（见 App.tsx）——此处若再挂一份会与
           全局那份同位置叠加：Tab 键序翻倍、读屏把操作读两遍、双层 backdrop-blur。 */}
     </div>
-  )
+  );
 }
 
 /**
@@ -1398,25 +1530,25 @@ export function TaskListView({
  * 在这一处直接消失，和侧栏看到的层级对不上。
  */
 function groupListsForSelect(tree: Folder[], lists: List[]): { label: string; items: List[] }[] {
-  const out: { label: string; items: List[] }[] = []
+  const out: { label: string; items: List[] }[] = [];
   const walk = (nodes: Folder[], prefix: string) => {
     for (const f of nodes) {
-      const path = prefix ? `${prefix} / ${f.name}` : f.name
-      const items = lists.filter((l) => l.folderId === f.id)
-      if (items.length > 0) out.push({ label: path, items })
-      walk(f.children ?? [], path)
+      const path = prefix ? `${prefix} / ${f.name}` : f.name;
+      const items = lists.filter((l) => l.folderId === f.id);
+      if (items.length > 0) out.push({ label: path, items });
+      walk(f.children ?? [], path);
     }
-  }
-  walk(tree, '')
-  const loose = lists.filter((l) => l.folderId == null)
-  if (loose.length > 0) out.unshift({ label: '未分组', items: loose })
-  return out
+  };
+  walk(tree, '');
+  const loose = lists.filter((l) => l.folderId == null);
+  if (loose.length > 0) out.unshift({ label: '未分组', items: loose });
+  return out;
 }
 
 export function BatchBar() {
-  const { multiSelect, selectedIds, clearSelected, batch, lists, folders, confirm } = useStore()
-  if (!multiSelect || selectedIds.length === 0) return null
-  const listGroups = groupListsForSelect(folders, lists)
+  const { multiSelect, selectedIds, clearSelected, batch, lists, folders, confirm } = useStore();
+  if (!multiSelect || selectedIds.length === 0) return null;
+  const listGroups = groupListsForSelect(folders, lists);
   return (
     // 抬到底部固定浮层（专注指示条 / 提醒中心）之上，三者不再互相遮挡；
     // 移动端再抬高避开底部视图标签栏（3rem 栏高 + safe-area + 0.75rem 间距）
@@ -1435,8 +1567,8 @@ export function BatchBar() {
           size="sm"
           icon={IconMove}
           onClick={() => {
-            const today = todayStr()
-            void batch('move', { dueDate: today })
+            const today = todayStr();
+            void batch('move', { dueDate: today });
           }}
         >
           移到今天
@@ -1446,9 +1578,9 @@ export function BatchBar() {
           className="h-7 rounded-lg border border-control-line bg-surface px-1.5 text-[0.75rem]"
           defaultValue=""
           onChange={(e) => {
-            if (!e.target.value) return
-            void batch('move', { listId: Number(e.target.value) })
-            e.currentTarget.value = ''
+            if (!e.target.value) return;
+            void batch('move', { listId: Number(e.target.value) });
+            e.currentTarget.value = '';
           }}
         >
           <option value="">移到清单…</option>
@@ -1478,9 +1610,9 @@ export function BatchBar() {
               title: `删除已选的 ${selectedIds.length} 项`,
               message: '删除后可在底部状态栏撤销，超过 10 分钟才彻底消失。',
               confirmText: '删除',
-              danger: true,
-            })
-            if (ok) await batch('delete')
+              danger: true
+            });
+            if (ok) await batch('delete');
           }}
         >
           删除
@@ -1488,7 +1620,7 @@ export function BatchBar() {
         <IconButton icon={IconX} label="取消选择" onClick={clearSelected} />
       </div>
     </div>
-  )
+  );
 }
 
 /* ---------------- 空状态 ---------------- */
@@ -1513,62 +1645,62 @@ const EMPTY_HINT: Record<string, string> = {
   search: '没有匹配的任务，换个关键词试试。',
   calendar: '这一段时间没有安排。',
   board: '这一列还是空的，把任务拖进来即可。',
-  table: '这张表还没有内容。',
-}
+  table: '这张表还没有内容。'
+};
 
 export function EmptyForView({ emptyKey }: { emptyKey: keyof typeof QUOTES | string }) {
-  const quote = QUOTES[emptyKey as keyof typeof QUOTES] ?? QUOTES.all
+  const quote = QUOTES[emptyKey as keyof typeof QUOTES] ?? QUOTES.all;
   return (
     <EmptyState
       text={quote.text}
       source={quote.source}
       hint={EMPTY_HINT[emptyKey as string] ?? EMPTY_HINT.all}
     />
-  )
+  );
 }
 
 export function SearchBar({ className, autoFocus }: { className?: string; autoFocus?: boolean }) {
-  const { keyword, setKeyword } = useStore()
-  const { compositionProps, isComposing } = useIMEGuard()
+  const { keyword, setKeyword } = useStore();
+  const { compositionProps, isComposing } = useIMEGuard();
   // 本地草稿 + 250ms 防抖：每敲一个字就打一次请求会让搜索明显发顿，
   // 响应乱序时结果还会串台（store 侧另有请求序号兜底，这里是第一道闸）。
-  const [draft, setDraft] = useState(keyword)
-  const timer = useRef<number | null>(null)
+  const [draft, setDraft] = useState(keyword);
+  const timer = useRef<number | null>(null);
 
   // 外部改动关键词（清空、切换清单、快捷键）时同步回输入框
   useEffect(() => {
-    setDraft(keyword)
-  }, [keyword])
+    setDraft(keyword);
+  }, [keyword]);
 
   useEffect(
     () => () => {
-      if (timer.current !== null) window.clearTimeout(timer.current)
+      if (timer.current !== null) window.clearTimeout(timer.current);
     },
-    [],
-  )
+    []
+  );
 
   const queue = (value: string) => {
-    if (timer.current !== null) window.clearTimeout(timer.current)
-    timer.current = window.setTimeout(() => setKeyword(value), 250)
-  }
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setKeyword(value), 250);
+  };
 
   const clear = () => {
-    if (timer.current !== null) window.clearTimeout(timer.current)
-    setDraft('')
-    setKeyword('')
-  }
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    setDraft('');
+    setKeyword('');
+  };
 
   // 识别出的算子（含在原串中的下标，点 × 时据此删除）。
   // 与后端 query.go 同规则：识别不出的词一律不当算子。
   const ops = splitQueryTokens(draft)
     .map((t, index) => ({ ...t, index }))
-    .filter((t) => isQueryOperator(t.text, t.quoted))
+    .filter((t) => isQueryOperator(t.text, t.quoted));
 
   return (
     <div
       className={cx(
         'relative flex h-8 items-center gap-2 rounded-lg border border-line bg-surface px-2.5 focus-within:border-seal/50',
-        className,
+        className
       )}
     >
       <IconSearch size={14} className="shrink-0 text-ink-3" />
@@ -1579,20 +1711,20 @@ export function SearchBar({ className, autoFocus }: { className?: string; autoFo
         value={draft}
         aria-label="搜索任务与备注"
         onChange={(e) => {
-          setDraft(e.target.value)
+          setDraft(e.target.value);
           // 输入法组合中先不提交：此刻的 value 还是拼音串
-          if (!(e.nativeEvent as InputEvent).isComposing) queue(e.target.value)
+          if (!(e.nativeEvent as InputEvent).isComposing) queue(e.target.value);
         }}
         onKeyDown={(e) => {
-          if (isComposing(e)) return
+          if (isComposing(e)) return;
           if (e.key === 'Escape') {
-            clear()
-            e.currentTarget.blur()
+            clear();
+            e.currentTarget.blur();
           }
         }}
         placeholder={SEARCH_HINT}
         // 移动档（搜索展开行）随容器伸展；桌面端保持定宽 + 聚焦加宽的原有行为。
-        className="min-w-0 flex-1 bg-transparent text-[0.8125rem] outline-none transition-all placeholder:text-ink-3 lg:w-40 lg:flex-none lg:focus:w-56"
+        className="min-w-0 flex-1 bg-transparent text-[0.8125rem] transition-all outline-none placeholder:text-ink-3 lg:w-40 lg:flex-none lg:focus:w-56"
       />
       {draft ? (
         <button
@@ -1608,12 +1740,12 @@ export function SearchBar({ className, autoFocus }: { className?: string; autoFo
           走文档流而非浮层——搜索框宽度随档位变化（移动档满宽、桌面定宽），
           内联渲染天然跟随，也躲开了「祖先 backdrop-blur 让 fixed 偏移」那个坑。 */}
       {ops.length > 0 ? (
-        <div className="absolute left-0 top-[calc(100%+0.375rem)] z-30 flex max-w-[min(100%,28rem)] flex-wrap items-center gap-1 rounded-lg border border-line bg-surface px-1.5 py-1 shadow-[0_4px_12px_rgba(0,0,0,0.08)]">
+        <div className="absolute top-[calc(100%+0.375rem)] left-0 z-30 flex max-w-[min(100%,28rem)] flex-wrap items-center gap-1 rounded-lg border border-line bg-surface px-1.5 py-1 shadow-[0_4px_12px_rgba(0,0,0,0.08)]">
           {ops.map((op) => (
             <span
               key={op.index}
               title={describeOperator(op.text)}
-              className="flex shrink-0 items-center gap-0.5 rounded-md bg-surface-2 py-0.5 pl-1.5 pr-0.5 text-[0.6875rem] text-ink-2"
+              className="flex shrink-0 items-center gap-0.5 rounded-md bg-surface-2 py-0.5 pr-0.5 pl-1.5 text-[0.6875rem] text-ink-2"
             >
               <span className="max-w-[9rem] truncate whitespace-nowrap">{op.text}</span>
               <button
@@ -1621,9 +1753,9 @@ export function SearchBar({ className, autoFocus }: { className?: string; autoFo
                 aria-label={`去掉条件 ${op.text}`}
                 className="shrink-0 rounded p-0.5 text-ink-3 hover:bg-surface hover:text-ink"
                 onClick={() => {
-                  const next = removeToken(draft, op.index)
-                  setDraft(next)
-                  setKeyword(next)
+                  const next = removeToken(draft, op.index);
+                  setDraft(next);
+                  setKeyword(next);
                 }}
               >
                 <IconX size={10} />
@@ -1633,5 +1765,5 @@ export function SearchBar({ className, autoFocus }: { className?: string; autoFo
         </div>
       ) : null}
     </div>
-  )
+  );
 }

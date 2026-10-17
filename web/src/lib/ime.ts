@@ -1,5 +1,5 @@
-import { useRef } from 'react'
-import type { KeyboardEvent } from 'react'
+import { useRef } from 'react';
+import type { KeyboardEvent } from 'react';
 
 /**
  * 中文输入法（IME）组合期守卫。
@@ -15,25 +15,25 @@ import type { KeyboardEvent } from 'react'
  * compositionend 之后的极短窗口内继续拦截这两个键。
  */
 export function useIMEGuard() {
-  const composingRef = useRef(false)
-  const endedAtRef = useRef(0)
+  const composingRef = useRef(false);
+  const endedAtRef = useRef(0);
 
   const compositionProps = {
     onCompositionStart: () => {
-      composingRef.current = true
+      composingRef.current = true;
     },
     onCompositionEnd: () => {
-      composingRef.current = false
-      endedAtRef.current = Date.now()
-    },
-  }
+      composingRef.current = false;
+      endedAtRef.current = Date.now();
+    }
+  };
 
   /** 该按键是否属于输入法组合过程（应忽略，不触发提交/清空）。 */
   const isComposing = (e: KeyboardEvent<HTMLInputElement>) =>
     composingRef.current ||
     e.nativeEvent.isComposing ||
     e.keyCode === 229 ||
-    (Date.now() - endedAtRef.current < 150 && (e.key === 'Enter' || e.key === 'Escape'))
+    (Date.now() - endedAtRef.current < 150 && (e.key === 'Enter' || e.key === 'Escape'));
 
-  return { compositionProps, isComposing }
+  return { compositionProps, isComposing };
 }

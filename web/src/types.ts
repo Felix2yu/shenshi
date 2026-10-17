@@ -1,183 +1,183 @@
 /** 与 Go 端 model 包一一对应的类型定义。 */
 
-export type Priority = 0 | 1 | 2 | 3
+export type Priority = 0 | 1 | 2 | 3;
 
 export const PRIORITY_LABEL: Record<Priority, string> = {
   0: '无',
   1: '低',
   2: '中',
-  3: '高',
-}
+  3: '高'
+};
 
 export interface Subtask {
-  id: number
-  taskId: number
+  id: number;
+  taskId: number;
   /** 父级子任务：null 表示顶层，非空表示挂在另一条子任务之下（可多层嵌套） */
-  parentId: number | null
-  title: string
+  parentId: number | null;
+  title: string;
   /** 子任务自己的日期（YYYY-MM-DD），独立于父任务 */
-  dueDate: string | null
+  dueDate: string | null;
   /** 子任务自己的提醒（提前分钟数） */
-  reminders: number[]
-  done: boolean
-  sortOrder: number
-  children: Subtask[]
+  reminders: number[];
+  done: boolean;
+  sortOrder: number;
+  children: Subtask[];
 }
 
 /** 任务间关联：related 互相关注（对称），blocked_by 依赖（有向），blocks 被谁阻塞的反向视图。 */
 export interface TaskLink {
-  id: number
-  taskId: number
-  linkedTaskId: number
-  kind: 'related' | 'blocked_by' | 'blocks'
-  title: string
-  status: 'todo' | 'in_progress' | 'done'
-  listName: string
+  id: number;
+  taskId: number;
+  linkedTaskId: number;
+  kind: 'related' | 'blocked_by' | 'blocks';
+  title: string;
+  status: 'todo' | 'in_progress' | 'done';
+  listName: string;
 }
 
 export interface Tag {
-  id: number
-  name: string
-  color: string
-  createdAt?: string
-  taskCount?: number
+  id: number;
+  name: string;
+  color: string;
+  createdAt?: string;
+  taskCount?: number;
 }
 
 export interface Task {
-  id: number
-  listId: number
-  title: string
-  notes: string
-  status: 'todo' | 'in_progress' | 'done'
-  priority: Priority
+  id: number;
+  listId: number;
+  title: string;
+  notes: string;
+  status: 'todo' | 'in_progress' | 'done';
+  priority: Priority;
   /** 计划开始日 YYYY-MM-DD */
-  startDate: string | null
-  dueDate: string | null
-  dueTime: string | null
-  endTime: string | null
+  startDate: string | null;
+  dueDate: string | null;
+  dueTime: string | null;
+  endTime: string | null;
   /** 关联链接（会议、文档、单号），与附件分开存放 */
-  url: string
-  reminders: number[]
+  url: string;
+  reminders: number[];
   /** 绝对时刻提醒（RFC3339，本机时区）。与 reminders 的「提前 N 分钟」互不干涉。 */
-  remindAt: string | null
-  repeatRule: string | null
+  remindAt: string | null;
+  repeatRule: string | null;
   /** 重复任务的续期基准：due=从原到期日推，done=从实际完成日推 */
-  repeatFrom: 'due' | 'done'
-  important: boolean
-  urgent: boolean
+  repeatFrom: 'due' | 'done';
+  important: boolean;
+  urgent: boolean;
   /** 置顶：始终排在未完成列表最前 */
-  pinned: boolean
+  pinned: boolean;
   /** 收藏：进入「收藏」智能清单 */
-  starred: boolean
+  starred: boolean;
   /** 归档：从日常视野收起，侧栏「已归档」可恢复 */
-  archived: boolean
+  archived: boolean;
   /** 预计时长（分钟），0 表示未估；专注计时记录的是事后实际值 */
-  estimateMinutes: number
+  estimateMinutes: number;
   /** 手工进度百分比 0-100；有子任务时可与其完成度互为印证 */
-  progress: number
-  completedAt: string | null
+  progress: number;
+  completedAt: string | null;
   /** 单调自增版本号，每次写入 +1；并发控制（If-Match）比对的就是它。 */
-  version: number
-  sortOrder: number
-  createdAt: string
-  updatedAt: string
-  subtasks: Subtask[]
-  attachments: Attachment[]
-  tags: Tag[]
+  version: number;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+  subtasks: Subtask[];
+  attachments: Attachment[];
+  tags: Tag[];
   /** 关联 / 依赖的其他任务 */
-  links: TaskLink[]
-  listName: string
-  listColor: string
-  folderId: number | null
-  subtaskDone: number
-  subtaskOpen: number
+  links: TaskLink[];
+  listName: string;
+  listColor: string;
+  folderId: number | null;
+  subtaskDone: number;
+  subtaskOpen: number;
 }
 
 /** 任务附件。内容存在服务端数据目录，这里只描述它。 */
 export interface Attachment {
-  id: number
-  taskId: number
-  name: string
-  file: string
-  size: number
-  mime: string
-  createdAt: string
+  id: number;
+  taskId: number;
+  name: string;
+  file: string;
+  size: number;
+  mime: string;
+  createdAt: string;
 }
 
 /** 出站 Webhook：任务变更时向外部地址推送一条 JSON。 */
 export interface Webhook {
-  id: number
-  name: string
-  url: string
+  id: number;
+  name: string;
+  url: string;
   /** 列表接口一律脱敏，只有 hasSecret 表示是否配过签名密钥 */
-  secret: string
-  hasSecret: boolean
-  events: string[]
-  enabled: boolean
-  createdAt: string
-  updatedAt: string
+  secret: string;
+  hasSecret: boolean;
+  events: string[];
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface WebhookDelivery {
-  id: number
-  webhookId: number
-  event: string
-  code: number
-  ok: boolean
-  error: string
-  createdAt: string
+  id: number;
+  webhookId: number;
+  event: string;
+  code: number;
+  ok: boolean;
+  error: string;
+  createdAt: string;
 }
 
 /** 模板任务：反复要做的事存成底稿，一键铺开成真正的任务。 */
 export interface TaskTemplate {
-  id: number
-  name: string
-  title: string
-  notes: string
-  listId: number | null
-  priority: Priority
+  id: number;
+  name: string;
+  title: string;
+  notes: string;
+  listId: number | null;
+  priority: Priority;
   /** 相对生成日的天数偏移，null 表示不带日期 */
-  dueOffset: number | null
-  dueTime: string | null
-  reminders: number[]
-  repeatRule: string | null
-  important: boolean
-  urgent: boolean
-  tagIds: number[]
-  subtasks: string[]
-  sortOrder: number
-  createdAt: string
-  updatedAt: string
+  dueOffset: number | null;
+  dueTime: string | null;
+  reminders: number[];
+  repeatRule: string | null;
+  important: boolean;
+  urgent: boolean;
+  tagIds: number[];
+  subtasks: string[];
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** 模板写入载荷，字段缺席表示不改动。 */
 export interface TemplatePatch {
-  name?: string
-  title?: string
-  notes?: string
-  listId?: number | null
-  priority?: Priority
-  dueOffset?: number | null
-  dueTime?: string | null
-  reminders?: number[]
-  repeatRule?: string | null
-  important?: boolean
-  urgent?: boolean
-  tagIds?: number[]
-  subtasks?: string[]
-  sortOrder?: number
+  name?: string;
+  title?: string;
+  notes?: string;
+  listId?: number | null;
+  priority?: Priority;
+  dueOffset?: number | null;
+  dueTime?: string | null;
+  reminders?: number[];
+  repeatRule?: string | null;
+  important?: boolean;
+  urgent?: boolean;
+  tagIds?: number[];
+  subtasks?: string[];
+  sortOrder?: number;
 }
 
 /** 自动备份的状态与设置。 */
 export interface BackupStatus {
-  enabled: boolean
-  hour: string
-  keep: string
-  lastAt: string
-  lastFile: string
-  lastError: string
-  dir: string
-  files: string[]
+  enabled: boolean;
+  hour: string;
+  keep: string;
+  lastAt: string;
+  lastFile: string;
+  lastError: string;
+  dir: string;
+  files: string[];
 }
 
 /** 可订阅的 Webhook 事件。 */
@@ -186,43 +186,43 @@ export const WEBHOOK_EVENTS = [
   'task.updated',
   'task.completed',
   'task.reopened',
-  'task.deleted',
-] as const
+  'task.deleted'
+] as const;
 
 export const WEBHOOK_EVENT_LABEL: Record<string, string> = {
   'task.created': '新建任务',
   'task.updated': '任务被修改',
   'task.completed': '任务完成',
   'task.reopened': '任务恢复未完成',
-  'task.deleted': '任务被删除',
-}
+  'task.deleted': '任务被删除'
+};
 
 export interface List {
-  id: number
-  folderId: number | null
-  name: string
-  color: string
-  icon: string
-  sortOrder: number
-  archived: boolean
-  starred: boolean
-  createdAt: string
-  taskCount: number
+  id: number;
+  folderId: number | null;
+  name: string;
+  color: string;
+  icon: string;
+  sortOrder: number;
+  archived: boolean;
+  starred: boolean;
+  createdAt: string;
+  taskCount: number;
 }
 
 export interface Folder {
-  id: number
-  parentId: number | null
-  name: string
-  color: string
-  icon: string
-  sortOrder: number
-  collapsed: boolean
-  archived: boolean
-  createdAt: string
-  lists: List[]
+  id: number;
+  parentId: number | null;
+  name: string;
+  color: string;
+  icon: string;
+  sortOrder: number;
+  collapsed: boolean;
+  archived: boolean;
+  createdAt: string;
+  lists: List[];
   /** 子分组：分组可以再套分组 */
-  children: Folder[]
+  children: Folder[];
 }
 
 export type SmartKey =
@@ -238,35 +238,35 @@ export type SmartKey =
   | 'updated'
   | 'recentdone'
   | 'all'
-  | 'done'
+  | 'done';
 
 /** 保存下来的筛选条件。query 是 TaskFilter 的 JSON 原文，由前端自行解释。 */
 export interface SavedFilter {
-  id: number
-  name: string
-  query: string
-  sortOrder: number
-  createdAt: string
+  id: number;
+  name: string;
+  query: string;
+  sortOrder: number;
+  createdAt: string;
 }
 
 /** 撤销槽位状态：最近一次删除是否还可以挽回。 */
 export interface UndoState {
-  available: boolean
-  label: string
-  count: number
-  at: string
+  available: boolean;
+  label: string;
+  count: number;
+  at: string;
 }
 
 /** 一条操作历史。 */
 export interface Activity {
-  id: number
-  kind: string
-  taskId: number | null
-  title: string
-  detail: string
+  id: number;
+  kind: string;
+  taskId: number | null;
+  title: string;
+  detail: string;
   /** 这条改动来自哪里：web / caldav / import / api。老记录读作 web。 */
-  source: string
-  createdAt: string
+  source: string;
+  createdAt: string;
 }
 
 /** 活动来源的中文名。与后端 store.ActivitySourceLabel 对齐。 */
@@ -274,8 +274,8 @@ export const ACTIVITY_SOURCE_LABEL: Record<string, string> = {
   web: '网页',
   caldav: '日历同步',
   import: '导入',
-  api: '接口',
-}
+  api: '接口'
+};
 
 export const ACTIVITY_LABEL: Record<string, string> = {
   created: '新建',
@@ -287,152 +287,152 @@ export const ACTIVITY_LABEL: Record<string, string> = {
   purged: '清空',
   undone: '撤销',
   archived: '归档',
-  unarchived: '取消归档',
-}
+  unarchived: '取消归档'
+};
 
 export interface Bootstrap {
-  app: string
-  motto: string
-  today: string
-  folders: Folder[]
-  lists: List[]
-  tags: Tag[]
-  settings: Record<string, string>
-  inboxListId: number
-  counts: Record<string, number>
-  savedFilters: SavedFilter[]
-  undo: UndoState
+  app: string;
+  motto: string;
+  today: string;
+  folders: Folder[];
+  lists: List[];
+  tags: Tag[];
+  settings: Record<string, string>;
+  inboxListId: number;
+  counts: Record<string, number>;
+  savedFilters: SavedFilter[];
+  undo: UndoState;
 }
 
 export interface TrendPoint {
-  date: string
-  created: number
-  done: number
-  focus: number
+  date: string;
+  created: number;
+  done: number;
+  focus: number;
 }
 
 export interface CountByKey {
-  key: string
-  label: string
-  count: number
+  key: string;
+  label: string;
+  count: number;
 }
 
 export interface Stats {
-  totalOpen: number
-  totalDone: number
-  totalAll: number
-  doneToday: number
-  dueToday: number
-  dueTodayDone: number
-  overdue: number
-  completion: number
-  streakDays: number
-  focusMinutes: number
-  trend: TrendPoint[]
-  byList: CountByKey[]
-  byPriority: CountByKey[]
-  byQuadrant: CountByKey[]
+  totalOpen: number;
+  totalDone: number;
+  totalAll: number;
+  doneToday: number;
+  dueToday: number;
+  dueTodayDone: number;
+  overdue: number;
+  completion: number;
+  streakDays: number;
+  focusMinutes: number;
+  trend: TrendPoint[];
+  byList: CountByKey[];
+  byPriority: CountByKey[];
+  byQuadrant: CountByKey[];
 }
 
 export interface Review {
-  id: number
-  date: string
-  mood: string
-  wins: string
-  blockers: string
-  tomorrow: string
-  createdAt: string
-  updatedAt: string
+  id: number;
+  date: string;
+  mood: string;
+  wins: string;
+  blockers: string;
+  tomorrow: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface FocusSession {
-  id: number
-  taskId: number | null
-  taskTitle: string
-  minutes: number
-  startedAt: string
-  endedAt: string
+  id: number;
+  taskId: number | null;
+  taskTitle: string;
+  minutes: number;
+  startedAt: string;
+  endedAt: string;
 }
 
 export interface ReminderHit {
-  task: Task
+  task: Task;
   /** 子任务自己的提醒（非空时通知文案用它） */
-  subtask?: { id: number; taskId: number; title: string } | null
+  subtask?: { id: number; taskId: number; title: string } | null;
   /** 回执 id：任务为正 id，子任务为 -子任务ID；去重与 ack 都用它 */
-  ackId: number
-  fireAt: string
-  offset: number
-  overdue: boolean
-  dueLabel: string
+  ackId: number;
+  fireAt: string;
+  offset: number;
+  overdue: boolean;
+  dueLabel: string;
 }
 
 export interface ToggleResult {
-  task: Task
-  nextTask: Task | null
-  completed: boolean
+  task: Task;
+  nextTask: Task | null;
+  completed: boolean;
 }
 
 export interface RepeatPreset {
-  value: string
-  label: string
-  group: string
+  value: string;
+  label: string;
+  group: string;
 }
 
 export interface RepeatMeta {
-  presets: RepeatPreset[]
-  ebbinghausOffsets: number[]
+  presets: RepeatPreset[];
+  ebbinghausOffsets: number[];
 }
 
 /** 一天的农历 / 节气 / 法定节假日信息。全部由后端计算，前端只负责渲染。 */
 export interface CalendarDayInfo {
-  date: string
+  date: string;
   /** 农历月 1~12 */
-  lunarMonth: number
+  lunarMonth: number;
   /** 农历日 1~30 */
-  lunarDay: number
-  isLeapMonth: boolean
+  lunarDay: number;
+  isLeapMonth: boolean;
   /** 初一显示「九月」，其余显示「十五」 */
-  lunarText: string
+  lunarText: string;
   /** 「农历九月初五」 */
-  lunarFull: string
-  ganZhi: string
-  zodiac: string
+  lunarFull: string;
+  ganZhi: string;
+  zodiac: string;
   /** 农历传统节日：春节 / 中秋 / 除夕 … */
-  festival: string
+  festival: string;
   /** 二十四节气 */
-  solarTerm: string
+  solarTerm: string;
   /** 法定节假日名称（放假办法规定的 13 天口径）：元旦 / 春节 / 国庆节 … */
-  holiday: string
+  holiday: string;
   /** 所在官方连休区间的节名：10 月 5 日不是法定假日，但仍属「国庆节」假期 */
-  holidaySpan: string
+  holidaySpan: string;
   /** 日历格里要显示的那一行文本 */
-  label: string
+  label: string;
   /** 该行文本的来源：festival（农历节日）/ holiday（法定节假日）/ term（节气）/ lunar（农历日） */
-  labelKind: 'festival' | 'holiday' | 'term' | 'lunar'
+  labelKind: 'festival' | 'holiday' | 'term' | 'lunar';
   /** normal（普通工作日）/ weekend（周末）/ holiday（法定节假日）/ rest（调休放假）/ workday（调休上班） */
-  kind: 'normal' | 'weekend' | 'holiday' | 'rest' | 'workday'
+  kind: 'normal' | 'weekend' | 'holiday' | 'rest' | 'workday';
   /** 法定休息日 */
-  isRest: boolean
+  isRest: boolean;
   /** 法定工作日 */
-  isWorkday: boolean
+  isWorkday: boolean;
   /** 法定节假日（放假办法规定的 13 天） */
-  isHoliday: boolean
+  isHoliday: boolean;
   /** 周末调休上班 */
-  makeUpWork: boolean
+  makeUpWork: boolean;
   /** 该年的调休安排尚未公布，休息日为按放假办法推算的结果 */
-  estimated: boolean
+  estimated: boolean;
   /** 超出农历数据范围（1900 ~ 2100 之外） */
-  notSupported: boolean
+  notSupported: boolean;
 }
 
 export interface CalendarMeta {
-  days: CalendarDayInfo[]
+  days: CalendarDayInfo[];
   /** 已录入官方放假安排的年份 */
-  officialYears: number[]
+  officialYears: number[];
 }
 
 /** 列表视图类型 */
-export type ViewKind = 'list' | 'board' | 'table' | 'calendar' | 'quadrant' | 'stats' | 'habits'
+export type ViewKind = 'list' | 'board' | 'table' | 'calendar' | 'quadrant' | 'stats' | 'habits';
 
 /** 当前侧边栏选中的目标 */
 export type Selection =
@@ -440,104 +440,104 @@ export type Selection =
   | { kind: 'folder'; id: number }
   | { kind: 'list'; id: number }
   | { kind: 'tag'; id: number }
-  | { kind: 'search'; q: string }
+  | { kind: 'search'; q: string };
 
 /** 习惯的重复节奏 */
-export type HabitCadence = 'daily' | 'weekly'
+export type HabitCadence = 'daily' | 'weekly';
 
 /** 习惯：需要长期重复的修身之事，与一次性任务分开建模。 */
 export interface Habit {
-  id: number
-  name: string
-  icon: string
-  color: string
-  cadence: HabitCadence
+  id: number;
+  name: string;
+  icon: string;
+  color: string;
+  cadence: HabitCadence;
   /** 逗号分隔，0=周日；仅 weekly 生效 */
-  weekdays: string
+  weekdays: string;
   /** 单次达标所需打卡次数 */
-  target: number
+  target: number;
   /** 起始日 YYYY-MM-DD；之前的日期不计入欠账 */
-  startDate: string
-  note: string
-  archived: boolean
-  sortOrder: number
-  createdAt: string
-  updatedAt: string
+  startDate: string;
+  note: string;
+  archived: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface HabitLog {
-  id: number
-  habitId: number
-  day: string
-  count: number
-  note: string
-  createdAt: string
+  id: number;
+  habitId: number;
+  day: string;
+  count: number;
+  note: string;
+  createdAt: string;
 }
 
 /** 单个习惯在区间内的统计 */
 export interface HabitStat {
-  habitId: number
+  habitId: number;
   /** 当前连续（按节奏计，单位为「次」） */
-  streak: number
-  best: number
-  done: number
-  due: number
-  rate: number
-  today: boolean
-  todayAt: number
+  streak: number;
+  best: number;
+  done: number;
+  due: number;
+  rate: number;
+  today: boolean;
+  todayAt: number;
 }
 
 export interface HabitBoard {
-  from: string
-  to: string
-  today: string
-  habits: Habit[]
-  logs: HabitLog[]
-  stats: HabitStat[]
+  from: string;
+  to: string;
+  today: string;
+  habits: Habit[];
+  logs: HabitLog[];
+  stats: HabitStat[];
 }
 
 /** 习惯写入载荷，字段缺席表示不改动。 */
 export interface HabitPatch {
-  name?: string
-  icon?: string
-  color?: string
-  cadence?: HabitCadence
-  weekdays?: string
-  target?: number
-  startDate?: string
-  note?: string
-  archived?: boolean
-  sortOrder?: number
+  name?: string;
+  icon?: string;
+  color?: string;
+  cadence?: HabitCadence;
+  weekdays?: string;
+  target?: number;
+  startDate?: string;
+  note?: string;
+  archived?: boolean;
+  sortOrder?: number;
 }
 
 /** 任务写入载荷，字段缺席表示不改动。 */
 export interface TaskPatch {
-  title?: string
-  notes?: string
-  listId?: number
-  status?: 'todo' | 'in_progress' | 'done'
-  priority?: Priority
-  startDate?: string | null
-  dueDate?: string | null
-  dueTime?: string | null
-  endTime?: string | null
-  url?: string
-  reminders?: number[]
-  remindAt?: string | null
-  repeatRule?: string | null
-  repeatFrom?: 'due' | 'done'
-  important?: boolean
-  urgent?: boolean
-  pinned?: boolean
-  starred?: boolean
-  archived?: boolean
-  tagIds?: number[]
-  subtasks?: { title: string; done: boolean; sortOrder: number }[]
-  sortOrder?: number
+  title?: string;
+  notes?: string;
+  listId?: number;
+  status?: 'todo' | 'in_progress' | 'done';
+  priority?: Priority;
+  startDate?: string | null;
+  dueDate?: string | null;
+  dueTime?: string | null;
+  endTime?: string | null;
+  url?: string;
+  reminders?: number[];
+  remindAt?: string | null;
+  repeatRule?: string | null;
+  repeatFrom?: 'due' | 'done';
+  important?: boolean;
+  urgent?: boolean;
+  pinned?: boolean;
+  starred?: boolean;
+  archived?: boolean;
+  tagIds?: number[];
+  subtasks?: { title: string; done: boolean; sortOrder: number }[];
+  sortOrder?: number;
   /** 预计时长（分钟） */
-  estimateMinutes?: number
+  estimateMinutes?: number;
   /** 手工进度百分比 0-100 */
-  progress?: number
+  progress?: number;
 }
 
 /** 批量操作的 action 取值。 */
@@ -551,51 +551,51 @@ export type BatchAction =
   | 'star'
   | 'unstar'
   | 'archive'
-  | 'unarchive'
+  | 'unarchive';
 
 /** 任务状态的三种档位。 */
 export const STATUS_LABEL: Record<Task['status'], string> = {
   todo: '未开始',
   in_progress: '进行中',
-  done: '已完成',
-}
+  done: '已完成'
+};
 
 /** 明暗模式。auto 表示跟随系统外观，由 AppStore 解析成实际生效的 light / dark。 */
-export type ThemeMode = 'light' | 'dark' | 'auto'
+export type ThemeMode = 'light' | 'dark' | 'auto';
 
 /** 界面字号档位：作用于根元素 font-size，正文、间距随之等比缩放。 */
 export const FONT_SCALES = [
   { value: '0.9', label: '紧凑', percent: '90%' },
   { value: '1', label: '标准', percent: '100%' },
   { value: '1.1', label: '舒适', percent: '110%' },
-  { value: '1.2', label: '大号', percent: '120%' },
-] as const
+  { value: '1.2', label: '大号', percent: '120%' }
+] as const;
 
 /** 把设置里的字号取值收敛到安全区间，非法值一律按标准（1）处理。 */
 export function fontScaleOf(value?: string): number {
-  const n = Number(value)
-  return Number.isFinite(n) && n >= 0.75 && n <= 1.5 ? n : 1
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0.75 && n <= 1.5 ? n : 1;
 }
 
 export interface Settings {
-  theme?: ThemeMode
-  accent?: string
-  fontScale?: string
-  weekStart?: '0' | '1'
-  showCompleted?: '0' | '1'
-  soundOn?: '0' | '1'
-  dailyFocus?: string
-  morningPlanDone?: string
-  reviewDone?: string
-  priorityEnabled?: '0' | '1'
-  [key: string]: string | undefined
+  theme?: ThemeMode;
+  accent?: string;
+  fontScale?: string;
+  weekStart?: '0' | '1';
+  showCompleted?: '0' | '1';
+  soundOn?: '0' | '1';
+  dailyFocus?: string;
+  morningPlanDone?: string;
+  reviewDone?: string;
+  priorityEnabled?: '0' | '1';
+  [key: string]: string | undefined;
 }
 
 /** 服务端推送（Apprise）单条地址的测试结果。 */
 export interface PushTestResult {
-  url: string
-  ok: boolean
-  error?: string
+  url: string;
+  ok: boolean;
+  error?: string;
 }
 
 /**
@@ -603,45 +603,45 @@ export interface PushTestResult {
  * 刻意不叫 PushSubscription：那是 DOM 的全局类型，重名会让两种含义在同一个文件里打架。
  */
 export interface WebPushSubscription {
-  endpoint: string
-  keys: { p256dh: string; auth: string }
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
 }
 
 /** Web Push 通道状态。三种未就绪的情形必须分得清，否则用户没法判断该不该去弄。 */
 export interface WebPushStatus {
   /** 服务端配好了 VAPID 密钥对。 */
-  configured: boolean
+  configured: boolean;
   /** 公钥，前端 subscribe 时用。 */
-  publicKey: string
-  subject: string
+  publicKey: string;
+  subject: string;
   /** 当前有几台设备订阅了。 */
-  subs: number
-  lastEndpoint?: string
+  subs: number;
+  lastEndpoint?: string;
   /** 最近一次成功投递的时间（ISO）。 */
-  lastOkAt?: string
+  lastOkAt?: string;
 }
 
 /**
  * 推送自检：服务端视角的推送状态与最近的投递台账。
  */
 export interface PushStatus {
-  enabled: boolean
-  channels: number
-  daily: boolean
-  dailyTime: string
-  baseUrl: string
+  enabled: boolean;
+  channels: number;
+  daily: boolean;
+  dailyTime: string;
+  baseUrl: string;
   recent: {
-    key: string
+    key: string;
     /** reminder（提醒）/ daily（每日概览） */
-    kind: string
-    ok: boolean
-    error: string
-    sentAt: string
-    attempts: number
-  }[]
+    kind: string;
+    ok: boolean;
+    error: string;
+    sentAt: string;
+    attempts: number;
+  }[];
 }
 
 export interface DailyFocus {
-  date: string
-  ids: number[]
+  date: string;
+  ids: number[];
 }
