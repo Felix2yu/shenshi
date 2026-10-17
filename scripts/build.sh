@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
-# 「慎始」一键构建：前端产物 → 内嵌进 Go 二进制。
-# 产出一个可执行文件 bin/shenshi，运行时只需要它 + 一个 SQLite 数据文件。
+# 慎始构建脚本 —— 前端产物内嵌进 Go 二进制，产出自包含单文件。
+#
+# 产物：bin/shenshi（前端已内嵌；运行时只需要它 + 一个 SQLite 数据文件）
+# 前置：Go + Node（大版本见 .nvmrc）+ pnpm
+#
+# 用法：
+#   ./scripts/build.sh
+#   GO_BIN=/path/to/go NODE_BIN=/path/to/node ./scripts/build.sh
+#
+# 约定见 Felix2yu/.github/docs/build-script.md
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
 
-# 工具链版本**不写死在这里**：Node 的大版本从 .nvmrc 读，Go 交给 go.mod 的 go 指令去要求。
-# 于是升级版本只需要改声明文件（.nvmrc / web/package.json 的 engines / Dockerfile / go.mod），
-# 不必回头动脚本 —— 大版本刻意不冻结，脚本里也就没有需要跟着改的数字。
-# 两段查找都支持环境变量覆盖：NODE_BIN / GO_BIN。
+step() { printf '\033[1;34m==>\033[0m %s\n' "$1"; }
+die() { printf '\033[1;31m错误：\033[0m %s\n' "$1" >&2; exit 1; }
 
-# ---------- Node（大版本见 .nvmrc）----------
+# ---------- Node（大版本从 .nvmrc 读，脚本里不写死版本号）----------
+# 升级 Node 只改 .nvmrc / web/package.json 的 engines / Dockerfile / go.mod，不必回头动脚本。
 node_major() { "$1" -v 2>/dev/null | sed 's/^v\([0-9]*\).*/\1/'; }
 
 REQ_MAJOR="$(sed -n 's/^v\{0,1\}\([0-9][0-9]*\).*/\1/p' "$ROOT/.nvmrc" | head -1)"
-if [ -z "$REQ_MAJOR" ]; then
-  echo "读不出 $ROOT/.nvmrc 里的 Node 大版本。" >&2
-  exit 1
-fi
+[ -n "$REQ_MAJOR" ] || die "读不出 $ROOT/.nvmrc 里的 Node 大版本"
 
 # 候选依次为：PATH → nvm → Homebrew / usr-local（含未带版本号的 node，即当前默认大版本）。
 # 只看大版本，不锁小版本，避免升个补丁就要改脚本。
@@ -51,29 +56,22 @@ if [ -z "${NODE_BIN:-}" ]; then
 fi
 
 if [ -z "${NODE_BIN:-}" ] || [ ! -x "${NODE_BIN:-}" ]; then
-  echo "找不到 Node ${REQ_MAJOR}（当前 PATH 上的是 $(node -v 2>/dev/null || echo '无')）。" >&2
-  echo "请安装 Node ${REQ_MAJOR}（nvm install ${REQ_MAJOR}），或显式指定：NODE_BIN=/path/to/node $0" >&2
-  exit 1
+  die "找不到 Node ${REQ_MAJOR}（当前 PATH 上是 $(node -v 2>/dev/null || echo 无)）。
+     请安装：nvm install ${REQ_MAJOR}，或显式指定：NODE_BIN=/path/to/node $0"
 fi
 
 ACTUAL_MAJOR="$(node_major "$NODE_BIN")"
-if [ -z "$ACTUAL_MAJOR" ]; then
-  echo "无法识别 $NODE_BIN 的版本。" >&2
-  exit 1
-fi
-# 硬校验：低于 .nvmrc 要求的大版本直接拒绝构建。
-# 有了这一条，「CI 里构建成功」本身就证明 CI 用的是够新的 Node，不必去翻日志。
-# 显式传 NODE_BIN 时同样会校验，避免用错版本编出与 CI 不一致的产物。
-if [ "$ACTUAL_MAJOR" -lt "$REQ_MAJOR" ]; then
-  echo "Node 大版本过低：.nvmrc 要求 ${REQ_MAJOR}，$NODE_BIN 是 ${ACTUAL_MAJOR}。" >&2
-  exit 1
-fi
+[ -n "$ACTUAL_MAJOR" ] || die "无法识别 $NODE_BIN 的版本"
 
-# 让 npm / pnpm 与 NODE_BIN 同源，避免「node 来自一处、包管理器却来自另一处」。
+# 硬校验：低于 .nvmrc 要求的大版本直接拒绝构建。有了这一条，「CI 里构建成功」
+# 本身就证明 CI 用的是够新的 Node，不必去翻日志。显式传 NODE_BIN 时同样校验。
+[ "$ACTUAL_MAJOR" -ge "$REQ_MAJOR" ] || \
+  die "Node 大版本过低：.nvmrc 要求 ${REQ_MAJOR}，$NODE_BIN 是 ${ACTUAL_MAJOR}"
+
+# 让 pnpm 与 NODE_BIN 同源，避免「node 来自一处、包管理器来自另一处」。
 export PATH="$(dirname "$NODE_BIN"):$PATH"
 
 # ---------- Go（版本要求见 go.mod 的 go 指令）----------
-# Go 常见安装位置兜底（GUI 启动的终端常常没有配好 PATH）
 if [ -z "${GO_BIN:-}" ]; then
   if command -v go >/dev/null 2>&1; then
     GO_BIN="$(command -v go)"
@@ -82,51 +80,44 @@ if [ -z "${GO_BIN:-}" ]; then
   elif [ -x /usr/local/go/bin/go ]; then
     GO_BIN=/usr/local/go/bin/go
   else
-    echo "找不到 go，可显式指定：GO_BIN=/path/to/go $0" >&2
-    exit 1
+    die "找不到 go，可显式指定：GO_BIN=/path/to/go $0"
   fi
 fi
+[ -x "$GO_BIN" ] || die "GO_BIN 不可执行：$GO_BIN"
 
-say() { printf '\033[2m▸\033[0m %s\n' "$1"; }
+# ---------- pnpm（版本由 web/package.json 的 packageManager 决定）----------
+PNPM_BIN="${PNPM_BIN:-$(command -v pnpm || true)}"
+[ -n "$PNPM_BIN" ] && [ -x "$PNPM_BIN" ] || \
+  die "找不到 pnpm（安装：npm i -g pnpm；版本由 web/package.json 的 packageManager 决定）"
 
-# bash 3.2（macOS 自带）会把 $VAR 后紧跟的全角字符首字节吞进变量名，
-# 报 "unbound variable"——变量一律用 ${VAR} 显式闭合。
-say "node $("$NODE_BIN" -v)（${NODE_BIN}）"
-say "go   $("$GO_BIN" version | awk '{print $3}')（${GO_BIN}）"
+printf '  node %s（%s）\n' "$("$NODE_BIN" -v)" "$NODE_BIN"
+printf '  go   %s（%s）\n' "$("$GO_BIN" version | awk '{print $3}')" "$GO_BIN"
 
-# 「.nvmrc 写 26、本机只装了 28」这类情况：能跑，但要让用的人知道自己用的不是声明的大版本。
+# 「.nvmrc 写 26、本机只装了 28」这类情况：能跑，但要让用的人知道用的不是声明的大版本。
 if [ "$ACTUAL_MAJOR" != "$REQ_MAJOR" ]; then
-  printf '  ⚠ .nvmrc 要求的是 Node %s，上面用的是 %s（本机没有 %s 大版本，已退让到更高的版本）\n' \
+  printf '  ⚠ .nvmrc 要求 Node %s，实际用的是 %s（本机没有 %s 大版本，已退让到更高的版本）\n' \
     "$REQ_MAJOR" "$ACTUAL_MAJOR" "$REQ_MAJOR" >&2
 fi
 
-# 1) 前端
+step "[1/3] 构建前端（vite）"
 cd "$ROOT/web"
-# pnpm 版本由 web/package.json 的 packageManager 决定：本机装的 pnpm 若比声明新，
-# 它会自动切到声明的那一个（CI 里则由 pnpm/action-setup 装）。
-if ! command -v pnpm >/dev/null 2>&1; then
-  echo "找不到 pnpm。安装：npm i -g pnpm（装好后它会按 packageManager 自行选版本）" >&2
-  exit 1
-fi
 if [ ! -d node_modules ]; then
-  say "安装前端依赖"
-  pnpm install --frozen-lockfile
+  printf '  安装前端依赖\n'
+  "$PNPM_BIN" install --frozen-lockfile
 fi
-say "构建前端（vite）"
-pnpm run build
+"$PNPM_BIN" run build
 
-# 2) 产物落到 internal/web/dist，供 go:embed 使用
-say "同步前端产物到 internal/web/dist"
+step "[2/3] 同步前端产物到 internal/web/dist"
+cd "$ROOT"
 rm -rf "$ROOT/internal/web/dist"
 mkdir -p "$ROOT/internal/web/dist"
 cp -R "$ROOT/web/dist/." "$ROOT/internal/web/dist/"
+# tracked 的 .gitkeep 会被上面的 rm -rf 一起删掉，不补回来工作区就永久挂着一条删除记录。
 touch "$ROOT/internal/web/dist/.gitkeep"
 
-# 3) Go 二进制（回到仓库根：./cmd/shenshi 相对根解析）
-cd "$ROOT"
+step "[3/3] 构建后端（go build）"
 mkdir -p "$ROOT/bin"
-say "构建后端（go build）"
 "$GO_BIN" build -trimpath -ldflags "-s -w" -o "$ROOT/bin/shenshi" ./cmd/shenshi
 
-say "完成：$ROOT/bin/shenshi"
-printf '运行：%s\n' "cd $ROOT && ./bin/shenshi -addr :8787"
+printf '\n完成：%s\n' "$ROOT/bin/shenshi"
+printf '运行：cd %s && ./bin/shenshi -addr :8787\n' "$ROOT"
