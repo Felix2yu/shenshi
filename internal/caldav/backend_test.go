@@ -1,6 +1,7 @@
 package caldav
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"strings"
@@ -333,7 +334,7 @@ func TestPathConstantsAndResolve(t *testing.T) {
 // 数据库错误 503（客户端会重试），查无此物 404。
 func TestForbiddenAndErrorWrappers(t *testing.T) {
 	b := &Backend{}
-	if code := httpErrorCode(t, b.CreateCalendar(nil, nil)); code != 403 {
+	if code := httpErrorCode(t, b.CreateCalendar(context.TODO(), nil)); code != 403 {
 		t.Errorf("CreateCalendar 状态码 = %d，Apple 见到 501 会放弃；必须 403", code)
 	}
 	if code := httpErrorCode(t, unavailable(errors.New("db down"))); code != 503 {

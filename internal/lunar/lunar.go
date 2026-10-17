@@ -335,7 +335,6 @@ const (
 // ChinaTZ 是国内日历使用的时区：节气、农历都以北京时间为准。
 var ChinaTZ = time.FixedZone("CST", 8*3600)
 
-func jdOf(t time.Time) float64      { return float64(t.UTC().Unix())/86400 + jdUnixEpoch }
 func timeOfJD(jd float64) time.Time { return time.Unix(int64((jd-jdUnixEpoch)*86400), 0).UTC() }
 
 // solarLongitude 返回某时刻的太阳视黄经（度），采用《天文年历》的低精度公式，

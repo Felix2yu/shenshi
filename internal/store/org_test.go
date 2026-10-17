@@ -376,11 +376,11 @@ func TestSettingsRoundTrip(t *testing.T) {
 
 // TestErrorTypes 错误类型的可判定性（API 层据此映射 400/403）。
 func TestErrorTypes(t *testing.T) {
-	var ve ValidationError = ValidationError{Msg: "任务标题不能为空"}
+	ve := ValidationError{Msg: "任务标题不能为空"}
 	if ve.Error() != "任务标题不能为空" {
 		t.Errorf("ValidationError.Error = %q", ve.Error())
 	}
-	var fe ForbiddenError = ForbiddenError{Msg: "收集箱不可删除"}
+	fe := ForbiddenError{Msg: "收集箱不可删除"}
 	if fe.Error() != "收集箱不可删除" {
 		t.Errorf("ForbiddenError.Error = %q", fe.Error())
 	}
@@ -391,6 +391,8 @@ func TestErrorTypes(t *testing.T) {
 		t.Errorf("errForbidden = %q", err.Error())
 	}
 	// 类型断言互不混淆。
+	// 刻意声明成 error 接口：errors.As 的语义就是沿接口往上找具体类型。
+	//nolint:staticcheck // ST1023 会建议省略类型，省略后就不是接口断言了
 	var e error = errBlank("x")
 	var gotFE ForbiddenError
 	if errors.As(e, &gotFE) {

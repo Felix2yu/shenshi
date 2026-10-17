@@ -205,12 +205,10 @@ func (h *Handler) trySyncCollection(w http.ResponseWriter, r *http.Request) bool
 		}
 		if _, dup := byUID[c.UID]; !dup {
 			order = append(order, c.UID)
-		} else if e.deleted {
-			// 已存在且本次是删除：删除优先，客户端不该再渲染它。
 		}
-		if prev, ok := byUID[c.UID]; ok && !e.deleted && prev.deleted {
-			// 删了又建（理论上不会），以最新为准。
-		}
+		// 已存在且本次是删除：后一行 byUID 赋值直接覆盖，删除标记随之生效，
+		// 客户端不会再把这条渲染出来。
+		// 删了又建（理论上不会）：同样由后一行以最新为准。
 		byUID[c.UID] = e
 	}
 
