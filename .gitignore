@@ -41,3 +41,17 @@ coverage.html
 # 本机程序坞图标：由 scripts/make-dock-icon.py 从 bundle 导出（310KB），
 # 每人机器上重跑一次即可，源素材都在 web/public/icons 里，入库只会变成二进制噪声
 /shenshi-dock.icns
+
+# ---- AI Agent 生成目录（不进版本库，本地保留）----
+.workbuddy/
+.trae/
+.trea/
+.qoder/
+.opencode/
+.cursor/
+.claude/
+.codex/
+.gemini/
+.continue/
+.windsurf/
+.aider*
