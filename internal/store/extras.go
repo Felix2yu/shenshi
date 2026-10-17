@@ -157,11 +157,6 @@ func (s *Store) DeleteAttachment(id int64) error {
 	return nil
 }
 
-// deleteTaskAttachments 清空一个任务上的全部附件（删除任务前调用）。
-func (s *Store) deleteTaskAttachments(taskID int64) error {
-	return s.dropTaskAttachments(taskID, true)
-}
-
 // dropTaskAttachments 清掉任务名下的附件记录。
 //
 // removeFiles 为 false 时只删库里的行、把文件留在磁盘上 —— 这是「可撤销删除」需要的行为：
