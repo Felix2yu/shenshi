@@ -8,6 +8,10 @@ on:
     branches: [main]
   release:
     types: [published]
+  # 公共基镜 ghcr.io/felix2yu/base 更新后由 .github 仓库的 base-image.yml 触发即时重建，
+  # 把新基镜带进镜像（build 时 pull:true 重解析 tag）。下面的每周 schedule 是兜底。
+  repository_dispatch:
+    types: [base-image-updated]
   schedule:
     - cron: '0 3 * * 1'
   workflow_dispatch:

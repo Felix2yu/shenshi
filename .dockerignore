@@ -20,9 +20,8 @@ data/
 web/node_modules/
 
 # 开发与文档
-# scripts/ 不排除：Dockerfile 要 COPY scripts/docker-entrypoint.sh，
-# 而排除单个文件再取反会绕过 check-docker.py 的静态判位（假阳性）。
-# 这些脚本本就是源码的一部分，进上下文无代价。
+# scripts/ 不排除：虽是源码、Dockerfile 已不再 COPY（入口脚本下沉到基镜），
+# 但保留进上下文无代价，也避免「排除目录再取反」绕过 check-docker.py 的静态判位。
 docs/
 README.md
 Dockerfile
