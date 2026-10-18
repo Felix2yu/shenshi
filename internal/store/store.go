@@ -97,6 +97,42 @@ func orDefault(v, fallback string) string {
 	return v
 }
 
+// OpenForExport 打开数据库用于导出，与 Open 的区别只有一点：不执行迁移与种子写入，
+// 也不创建任何目录。
+//
+// 导出子命令会在应用运行时被外部备份工具（docker exec）触发：表结构升级只应由应用
+// 进程自己执行，一个"顺手打开数据库"的导出进程不该把 schema 改了，更不该与正在
+// 运行的应用抢写。数据文件不存在时直接报错——那是路径配错，不是需要新建一个空库。
+func OpenForExport(path string, opt Options) (*Store, error) {
+	if path == "" {
+		path = filepath.Join("data", "shenshi.db")
+	}
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("数据文件不可用: %w", err)
+	}
+	base := filepath.Dir(path)
+	if base == "" || base == "." {
+		base = "data"
+	}
+	// 不设置 journal_mode：连接不应改写库的头部；已有的 WAL 数据照常读取。
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)", path)
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("打开数据库失败: %w", err)
+	}
+	// 导出是顺序读，一条连接足够，避免多余连接各自开 -shm 句柄。
+	db.SetMaxOpenConns(1)
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("连接数据库失败: %w", err)
+	}
+	return &Store{
+		db:            db,
+		attachmentDir: orDefault(opt.AttachmentDir, filepath.Join(base, "attachments")),
+		backupDir:     orDefault(opt.BackupDir, filepath.Join(base, "backups")),
+	}, nil
+}
+
 // AttachmentDir 返回附件存放目录。
 func (s *Store) AttachmentDir() string { return s.attachmentDir }
 

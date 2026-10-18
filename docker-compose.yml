@@ -34,6 +34,15 @@ services:
       # 时区直接决定「今天」「逾期」「习惯打卡」的归属日，务必与使用者一致。
       TZ: ${TZ:-Asia/Shanghai}
       SHENSHI_DB: /data/shenshi.db
+      # 外部备份工具（docker-db-auto-backup）经 docker exec 触发本应用的导出：
+      #   docker exec shenshi shenshi backup               → 数据 + 附件的 zip
+      #   docker exec shenshi shenshi backup --format db   → SQLite 一致性快照
+      # EXT/USER 让工具按 zip 校验产物，并以数据属主身份执行——docker exec 不经过
+      # 入口脚本，默认是 root，属主错误的 -shm 会让降权运行的应用打不开库。
+      # 若下方 PUID/PGID 改成了别的值，BACKUP_SQLITE_USER 要同步改。
+      BACKUP_SQLITE_CMD: "shenshi backup"
+      BACKUP_SQLITE_EXT: zip
+      BACKUP_SQLITE_USER: "1000:1000"
       # 运行身份：绑定挂载到宿主目录时，设成宿主目录的属主 uid/gid，基镜入口会自动
       # chown /data，避免 SQLite 报 unable to open database file (14)。
       # 用 `id <你的用户>` 查宿主属主；不设则默认 1000:1000。

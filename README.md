@@ -99,8 +99,16 @@ docker compose up -d
 openssl rand -base64 24
 ```
 
-**数据落在具名卷 `shenshi-data`**（容器内 `/data/shenshi.db`）。备份有两条路：
-应用内「导出完整备份 ZIP」（JSON 连同任务附件，一份即可独立还原）；或直接取卷里的文件：
+**数据落在具名卷 `shenshi-data`**（容器内 `/data/shenshi.db`）。备份有三条路：
+应用内「导出完整备份 ZIP」（JSON 连同任务附件，一份即可独立还原）；把导出子命令交给外部备份工具
+（如 docker-db-auto-backup 经 `docker exec` 调度）：
+
+```bash
+docker exec shenshi shenshi backup > shenshi-$(date +%F).zip             # 数据 + 附件（可经「导入备份」还原）
+docker exec shenshi shenshi backup --format db > shenshi-$(date +%F).db  # SQLite 一致性快照（VACUUM INTO）
+```
+
+或直接取卷里的文件：
 
 ```bash
 docker run --rm -v shenshi-data:/data -v "$PWD:/backup" alpine \
@@ -390,6 +398,7 @@ shendu/
 │   │   ├── habits.go             # 习惯与打卡、连续天数与达标率
 │   │   ├── backup.go             # 全量导出与导入（merge / replace）
 │   │   ├── backup_zip.go         # ZIP 备份：打包与读回（含附件）
+│   │   ├── backup_snapshot.go    # SQLite 一致性快照（VACUUM INTO）与导出专用打开方式
 │   │   ├── autobackup.go         # 进程内定时备份与裁剪
 │   │   ├── extras.go             # 附件、Webhook、模板、CalDAV 变更日志
 │   │   ├── reminders.go          # 提醒调度与台账

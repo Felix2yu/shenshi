@@ -8,6 +8,8 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -26,6 +28,16 @@ import (
 )
 
 func main() {
+	// 外部备份工具（docker-db-auto-backup 等）经 docker exec 调用 `shenshi backup`，
+	// 在进程内导出一致快照写到 stdout。必须放在最前面：导出进程不初始化存储、
+	// 不跑迁移、不起后台任务，只做这一件事。
+	if len(os.Args) > 1 && os.Args[1] == "backup" {
+		if err := runBackup(os.Args[2:], os.Stdout); err != nil {
+			log.Fatalf("备份导出失败: %v", err)
+		}
+		return
+	}
+
 	addr := flag.String("addr", ":8787", "监听地址")
 	dbPath := flag.String("db", defaultDBPath(), "SQLite 数据文件路径")
 	devDir := flag.String("web", "", "使用磁盘上的前端目录（开发模式），留空则使用内嵌资源")
@@ -34,6 +46,45 @@ func main() {
 
 	if err := run(*addr, *dbPath, *devDir, *token); err != nil {
 		log.Fatalf("启动失败: %v", err)
+	}
+}
+
+// runBackup 实现 `shenshi backup`：把一份备份写到 w（由调用方给 os.Stdout）。
+//
+// zip（默认）与界面上的"导出备份"同构：整库 JSON + 全部附件，能经导入功能完整还原；
+// db 是 SQLite 自身的一致性快照（VACUUM INTO），恢复即把文件放回数据目录。
+// 日志一律走 stderr，stdout 只承载备份数据本身。
+func runBackup(args []string, w io.Writer) error {
+	fs := flag.NewFlagSet("shenshi backup", flag.ContinueOnError)
+	dbPath := fs.String("db", defaultDBPath(), "SQLite 数据文件路径")
+	format := fs.String("format", "zip", "导出格式：zip（数据 + 附件）或 db（SQLite 一致性快照）")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+
+	st, err := store.OpenForExport(*dbPath, store.Options{})
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	switch strings.ToLower(strings.TrimSpace(*format)) {
+	case "zip":
+		res, err := st.WriteZIP(w)
+		if err != nil {
+			return err
+		}
+		if res.Missing > 0 {
+			log.Printf("有 %d 个附件记录的文件已不在磁盘上，未打包", res.Missing)
+		}
+		return nil
+	case "db":
+		return st.WriteSQLiteSnapshot(w)
+	default:
+		return fmt.Errorf("未知格式 %q（可选 zip / db）", *format)
 	}
 }
 

@@ -36,6 +36,18 @@ type ZipExport struct {
 // 于是 JSON 留在根上，附件按存储名放进 attachments/，导入时按名字重新对上。
 // 包内用存储名而不是原始文件名：它是库里的主键，同名文件、非法字符都干扰不到。
 func (s *Store) ExportZIP() (*ZipExport, error) {
+	var buf bytes.Buffer
+	out, err := s.WriteZIP(&buf)
+	if err != nil {
+		return nil, err
+	}
+	out.Data = buf.Bytes()
+	return out, nil
+}
+
+// WriteZIP 与 ExportZIP 内容一致，但压缩包边生成边写进 w。
+// 附件动辄上百 MB，给导出子命令与自动备份用流式路径，省掉一份整包内存。
+func (s *Store) WriteZIP(w io.Writer) (*ZipExport, error) {
 	bundle, err := s.Export()
 	if err != nil {
 		return nil, err
@@ -45,14 +57,13 @@ func (s *Store) ExportZIP() (*ZipExport, error) {
 		return nil, err
 	}
 
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
+	zw := zip.NewWriter(w)
 
-	w, err := zw.Create(ZipManifest)
+	entry, err := zw.Create(ZipManifest)
 	if err != nil {
 		return nil, fmt.Errorf("创建压缩包失败: %w", err)
 	}
-	if _, err := w.Write(data); err != nil {
+	if _, err := entry.Write(data); err != nil {
 		return nil, fmt.Errorf("写入备份内容失败: %w", err)
 	}
 
@@ -81,7 +92,6 @@ func (s *Store) ExportZIP() (*ZipExport, error) {
 	if err := zw.Close(); err != nil {
 		return nil, fmt.Errorf("完成压缩包失败: %w", err)
 	}
-	out.Data = buf.Bytes()
 	return out, nil
 }
 

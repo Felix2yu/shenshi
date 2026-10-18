@@ -143,10 +143,6 @@ func (a *AutoBackup) BackupOnce(keep int) (string, error) {
 	if keep <= 0 {
 		keep = defaultBackupKeep
 	}
-	res, err := a.s.ExportZIP()
-	if err != nil {
-		return "", err
-	}
 	if err := os.MkdirAll(a.s.BackupDir(), 0o755); err != nil {
 		return "", fmt.Errorf("创建备份目录失败: %w", err)
 	}
@@ -154,13 +150,15 @@ func (a *AutoBackup) BackupOnce(keep int) (string, error) {
 	name := "shenshi-backup-" + stamp + ".zip"
 	target := filepath.Join(a.s.BackupDir(), name)
 
-	// 先写临时文件再改名：中途失败不会留下半截的「备份」骗人。
+	// 先把压缩包写进临时文件再改名：中途失败不会留下半截的「备份」骗人。
+	// 压缩包直接流式写入临时文件，附件再多也不用在内存里装下整份备份。
 	tmp, err := os.CreateTemp(a.s.BackupDir(), ".backup-*")
 	if err != nil {
 		return "", err
 	}
 	tmpName := tmp.Name()
-	if _, err := tmp.Write(res.Data); err != nil {
+	res, err := a.s.WriteZIP(tmp)
+	if err != nil {
 		tmp.Close()
 		_ = os.Remove(tmpName)
 		return "", err
