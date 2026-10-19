@@ -9,9 +9,9 @@
 # 多架构 manifest，服务器是什么架构都拉同一个 tag；公开仓库的镜像可匿名拉取。
 #
 # 数据放在具名卷里而不是绑定挂载：具名卷由 Docker 按容器内用户归属初始化，天然无权限问题。
-# 若确实想绑定挂载到宿主目录（如 ./data:/data），无需手动 chown —— 只要在下方 environment
-# 里设 PUID / PGID 为宿主目录的属主 uid/gid，基镜的降权入口会自动把 /data chown 到该身份，
-# 从而让 SQLite（WAL 模式，需对 /data 可写）正常写入。不设置时默认 1000:1000。
+# 若确实想绑定挂载到宿主目录（如 ./data:/app/data），无需手动 chown —— 只要在下方 environment
+# 里设 PUID / PGID 为宿主目录的属主 uid/gid，基镜的降权入口会自动把 /app/data chown 到该身份，
+# 从而让 SQLite（WAL 模式，需对 /app/data 可写）正常写入。不设置时默认 1000:1000。
 
 services:
   shenshi:
@@ -33,18 +33,20 @@ services:
     environment:
       # 时区直接决定「今天」「逾期」「习惯打卡」的归属日，务必与使用者一致。
       TZ: ${TZ:-Asia/Shanghai}
-      SHENSHI_DB: /data/shenshi.db
-      # 外部备份工具（docker-db-auto-backup）经 docker exec 触发本应用的导出：
-      #   docker exec shenshi shenshi backup               → 数据 + 附件的 zip
-      #   docker exec shenshi shenshi backup --format db   → SQLite 一致性快照
+      SHENSHI_DB: /app/data/shenshi.db
+      # 外部备份工具（docker-db-auto-backup）经 docker exec 触发本应用的导出。
+      # 二进制在 /app/shenshi，而 /app 不在 PATH 上，命令必须写成绝对路径：
+      #   docker exec shenshi /app/shenshi backup              → 数据 + 附件的 zip
+      #   docker exec shenshi /app/shenshi backup --format db  → SQLite 一致性快照
       # EXT/USER 让工具按 zip 校验产物，并以数据属主身份执行——docker exec 不经过
       # 入口脚本，默认是 root，属主错误的 -shm 会让降权运行的应用打不开库。
-      # 若下方 PUID/PGID 改成了别的值，BACKUP_SQLITE_USER 要同步改。
-      BACKUP_SQLITE_CMD: "shenshi backup"
+      # 基镜烘入 PUID/PGID=1000，工具据此派生出的身份与下面写的值一致；这里显式
+      # 声明只是把口径钉死。若把 PUID/PGID 改成别的值，BACKUP_SQLITE_USER 要同步改。
+      BACKUP_SQLITE_CMD: "/app/shenshi backup"
       BACKUP_SQLITE_EXT: zip
       BACKUP_SQLITE_USER: "1000:1000"
       # 运行身份：绑定挂载到宿主目录时，设成宿主目录的属主 uid/gid，基镜入口会自动
-      # chown /data，避免 SQLite 报 unable to open database file (14)。
+      # chown /app/data，避免 SQLite 报 unable to open database file (14)。
       # 用 `id <你的用户>` 查宿主属主；不设则默认 1000:1000。
       # PUID: ${PUID:-1000}
       # PGID: ${PGID:-1000}
@@ -53,7 +55,7 @@ services:
       SHENSHI_TOKEN: ${SHENSHI_TOKEN:?请先在 .env 设置 SHENSHI_TOKEN，或显式留空以关闭鉴权}
 
     volumes:
-      - shenshi-data:/data
+      - shenshi-data:/app/data
 
 volumes:
   shenshi-data:

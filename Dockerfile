@@ -10,14 +10,21 @@
 
 FROM ghcr.io/felix2yu/base:alpine-3.24
 
-# 数据落在挂载卷里，容器重建不丢数据；/data 由基镜入口按 PUID/PGID chown。
+WORKDIR /app
+
 # ca-certificates：外呼 HTTPS 依赖系统根证书。
-ENV SHENSHI_DB=/data/shenshi.db
+#
+# 容器内布局（全 fleet 统一）：二进制放 /app/shenshi，数据放 /app/data 挂载卷。
+# /app 不在 PATH 上，所以外部备份工具的 BACKUP_SQLITE_CMD 必须写绝对路径
+# `/app/shenshi backup`，裸名 `shenshi backup` 在 docker exec 里会 command not found。
+# /app/data 由基镜入口按 PUID/PGID chown，容器重建不丢数据。
+ENV SHENSHI_DB=/app/data/shenshi.db \
+    APP_DATA_DIR=/app/data
 
-COPY --chmod=755 bin/shenshi /usr/local/bin/shenshi
+COPY --chmod=755 bin/shenshi /app/shenshi
 
-RUN mkdir -p /data
-VOLUME ["/data"]
+RUN mkdir -p /app/data
+VOLUME ["/app/data"]
 
 EXPOSE 8787
 
@@ -26,4 +33,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget -q -O- http://127.0.0.1:8787/api/health >/dev/null || exit 1
 
 # ENTRYPOINT 由基镜提供（PUID/PGID 降权后 exec 本命令），这里只给服务命令
-CMD ["shenshi", "-addr", ":8787"]
+CMD ["/app/shenshi", "-addr", ":8787"]

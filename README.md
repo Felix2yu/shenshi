@@ -99,20 +99,20 @@ docker compose up -d
 openssl rand -base64 24
 ```
 
-**数据落在具名卷 `shenshi-data`**（容器内 `/data/shenshi.db`）。备份有三条路：
-应用内「导出完整备份 ZIP」（JSON 连同任务附件，一份即可独立还原）；把导出子命令交给外部备份工具
-（如 docker-db-auto-backup 经 `docker exec` 调度）：
+**数据落在具名卷 `shenshi-data`**（容器内 `/app/data/shenshi.db`，二进制在 `/app/shenshi`）。
+备份有三条路：应用内「导出完整备份 ZIP」（JSON 连同任务附件，一份即可独立还原）；把导出子命令交给外部备份工具
+（如 docker-db-auto-backup 经 `docker exec` 调度）。镜像里 `/app` 不在 PATH 上，命令要写绝对路径：
 
 ```bash
-docker exec shenshi shenshi backup > shenshi-$(date +%F).zip             # 数据 + 附件（可经「导入备份」还原）
-docker exec shenshi shenshi backup --format db > shenshi-$(date +%F).db  # SQLite 一致性快照（VACUUM INTO）
+docker exec shenshi /app/shenshi backup > shenshi-$(date +%F).zip             # 数据 + 附件（可经「导入备份」还原）
+docker exec shenshi /app/shenshi backup --format db > shenshi-$(date +%F).db  # SQLite 一致性快照（VACUUM INTO）
 ```
 
 或直接取卷里的文件：
 
 ```bash
-docker run --rm -v shenshi-data:/data -v "$PWD:/backup" alpine \
-  cp /data/shenshi.db /backup/shenshi-$(date +%F).db
+docker run --rm -v shenshi-data:/app/data -v "$PWD:/backup" alpine \
+  cp /app/data/shenshi.db /backup/shenshi-$(date +%F).db
 ```
 
 **时区很要紧**：`TZ` 直接决定「今天」「逾期」「习惯打卡」算在哪一天。
