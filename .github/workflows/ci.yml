@@ -34,6 +34,9 @@ jobs:
       go-dir: .
       test-packages: ./...
       web-dir: web
+      # lint 纳入 CI：本仓 `pnpm run lint` 已本地实测绿（prettier --check + eslint）。
+      # 只有构建侧被验证过是不够的 —— typescript-eslint 对 TS 7 是加载期硬失败。
+      web-lint-command: pnpm run lint
       # 把真实产物摆进 embed 位：让 embed 相关用例真跑起来（而非在
       # 「没有产物」的状态下空转），也顺带验证打包路径本身
       frontend-stage-command: |
