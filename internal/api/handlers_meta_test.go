@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yufei/shendu/server/internal/model"
-	"github.com/yufei/shendu/server/internal/store"
+	"github.com/Felix2yu/shenshi/internal/model"
+	"github.com/Felix2yu/shenshi/internal/store"
 )
 
 // taskInputTitle 构造一条最小任务输入。

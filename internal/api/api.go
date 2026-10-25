@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	shenshicaldav "github.com/yufei/shendu/server/internal/caldav"
-	"github.com/yufei/shendu/server/internal/store"
+	shenshicaldav "github.com/Felix2yu/shenshi/internal/caldav"
+	"github.com/Felix2yu/shenshi/internal/store"
 )
 
 // Server 持有依赖并对外暴露 http.Handler。

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/yufei/shendu/server/internal/model"
+	"github.com/Felix2yu/shenshi/internal/model"
 )
 
 // pushMaxAttempts 单条推送的最大尝试次数。失败会随下一个轮询周期重试，

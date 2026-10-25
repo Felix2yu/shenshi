@@ -21,10 +21,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yufei/shendu/server/internal/api"
-	"github.com/yufei/shendu/server/internal/push"
-	"github.com/yufei/shendu/server/internal/store"
-	"github.com/yufei/shendu/server/internal/web"
+	"github.com/Felix2yu/shenshi/internal/api"
+	"github.com/Felix2yu/shenshi/internal/push"
+	"github.com/Felix2yu/shenshi/internal/store"
+	"github.com/Felix2yu/shenshi/internal/web"
 )
 
 func main() {

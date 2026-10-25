@@ -5,9 +5,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/yufei/shendu/server/internal/lunar"
-	"github.com/yufei/shendu/server/internal/model"
-	"github.com/yufei/shendu/server/internal/store"
+	"github.com/Felix2yu/shenshi/internal/lunar"
+	"github.com/Felix2yu/shenshi/internal/model"
+	"github.com/Felix2yu/shenshi/internal/store"
 )
 
 // ---------- 分组 / 清单 ----------

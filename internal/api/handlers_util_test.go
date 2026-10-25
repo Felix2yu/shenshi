@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yufei/shendu/server/internal/store"
+	"github.com/Felix2yu/shenshi/internal/store"
 )
 
 // TestWriteErrorStatus 错误 → 状态码映射；内部错误不回传细节。

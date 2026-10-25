@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yufei/shendu/server/internal/model"
+	"github.com/Felix2yu/shenshi/internal/model"
 )
 
 // Stats 汇总统计视图所需数据。days 为趋势窗口长度。

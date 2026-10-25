@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/yufei/shendu/server/internal/push"
-	"github.com/yufei/shendu/server/internal/store"
+	"github.com/Felix2yu/shenshi/internal/push"
+	"github.com/Felix2yu/shenshi/internal/store"
 )
 
 // subscribePush 保存一条浏览器推送订阅。

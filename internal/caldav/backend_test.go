@@ -10,7 +10,7 @@ import (
 
 	"github.com/emersion/go-ical"
 
-	"github.com/yufei/shendu/server/internal/model"
+	"github.com/Felix2yu/shenshi/internal/model"
 )
 
 // httpErrorCode 从 go-webdav 的 *internal.HTTPError（外部无法 import）里取出状态码。

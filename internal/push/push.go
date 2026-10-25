@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Felix2yu/shenshi/internal/store"
 	apprise "github.com/unraid/apprise-go"
-	"github.com/yufei/shendu/server/internal/store"
 )
 
 // 设置键，与前端「推送通知」设置区块一一对应。

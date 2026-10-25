@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yufei/shendu/server/internal/model"
+	"github.com/Felix2yu/shenshi/internal/model"
 )
 
 // ReminderHit 是一条待投递的提醒。

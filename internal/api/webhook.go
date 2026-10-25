@@ -13,8 +13,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/yufei/shendu/server/internal/model"
-	"github.com/yufei/shendu/server/internal/store"
+	"github.com/Felix2yu/shenshi/internal/model"
+	"github.com/Felix2yu/shenshi/internal/store"
 )
 
 // webhookTimeout 单次投递的超时。外部系统卡住不该拖住任务写入的返回。

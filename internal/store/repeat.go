@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yufei/shendu/server/internal/lunar"
+	"github.com/Felix2yu/shenshi/internal/lunar"
 )
 
 // 重复规则采用紧凑的字符串语法（由前端生成、后端解析），形如：

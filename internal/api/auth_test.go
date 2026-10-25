@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yufei/shendu/server/internal/store"
+	"github.com/Felix2yu/shenshi/internal/store"
 )
 
 // TestGateDisabled 未启用口令：全放行、Enabled 为假。

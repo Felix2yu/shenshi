@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yufei/shendu/server/internal/model"
+	"github.com/Felix2yu/shenshi/internal/model"
 )
 
 // 自动备份的设置项与默认值。

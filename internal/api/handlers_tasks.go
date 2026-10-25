@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yufei/shendu/server/internal/model"
-	"github.com/yufei/shendu/server/internal/store"
+	"github.com/Felix2yu/shenshi/internal/model"
+	"github.com/Felix2yu/shenshi/internal/store"
 )
 
 // smartCounts 计算侧边栏各智能清单的角标数量。

@@ -1,4 +1,4 @@
-module github.com/yufei/shendu/server
+module github.com/Felix2yu/shenshi
 
 go 1.27.1
 

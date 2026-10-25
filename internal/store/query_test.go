@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yufei/shendu/server/internal/model"
+	"github.com/Felix2yu/shenshi/internal/model"
 )
 
 // TestParseQueryOperators 算子解析：结构化的部分被摘走，剩下的仍是自由文本。

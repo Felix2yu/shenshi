@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yufei/shendu/server/internal/store"
+	"github.com/Felix2yu/shenshi/internal/store"
 )
 
 // staticHandler 是 go:embed 链的最后一环，必须两种状态都成立：

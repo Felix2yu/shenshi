@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yufei/shendu/server/internal/model"
+	"github.com/Felix2yu/shenshi/internal/model"
 )
 
 // multipartBody 构造 multipart/form-data 上传体。

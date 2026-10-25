@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yufei/shendu/server/internal/model"
+	"github.com/Felix2yu/shenshi/internal/model"
 )
 
 // TestExportImportRoundtrip 导出 → 另一库导入：任务、清单、标签、习惯完整往返。

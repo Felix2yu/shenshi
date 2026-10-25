@@ -11,7 +11,7 @@ import (
 
 	emcaldav "github.com/emersion/go-webdav/caldav"
 
-	"github.com/yufei/shendu/server/internal/store"
+	"github.com/Felix2yu/shenshi/internal/store"
 )
 
 // DavHeader 必须出现在每一个 CalDAV 响应上，包括 401 挑战。

@@ -3,8 +3,8 @@ package api
 import (
 	"net/http"
 
-	"github.com/yufei/shendu/server/internal/model"
-	"github.com/yufei/shendu/server/internal/store"
+	"github.com/Felix2yu/shenshi/internal/model"
+	"github.com/Felix2yu/shenshi/internal/store"
 )
 
 // listTemplates 返回全部模板。

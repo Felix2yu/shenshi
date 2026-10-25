@@ -3,7 +3,7 @@ package store
 import (
 	"time"
 
-	"github.com/yufei/shendu/server/internal/model"
+	"github.com/Felix2yu/shenshi/internal/model"
 )
 
 // RollOverdue 把逾期未完成的任务改到某一天（默认今天）。

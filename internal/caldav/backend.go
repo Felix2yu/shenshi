@@ -25,8 +25,8 @@ import (
 	"github.com/emersion/go-webdav"
 	emcaldav "github.com/emersion/go-webdav/caldav"
 
-	"github.com/yufei/shendu/server/internal/model"
-	"github.com/yufei/shendu/server/internal/store"
+	"github.com/Felix2yu/shenshi/internal/model"
+	"github.com/Felix2yu/shenshi/internal/store"
 )
 
 // 固定路径。带尾斜杠是 CalDAV 的惯例，也是 Apple 客户端的行为。

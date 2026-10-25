@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yufei/shendu/server/internal/store"
+	"github.com/Felix2yu/shenshi/internal/store"
 )
 
 // TestExportHandlers 三种导出的头与内容。

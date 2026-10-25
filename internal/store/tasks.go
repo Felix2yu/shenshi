@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yufei/shendu/server/internal/model"
+	"github.com/Felix2yu/shenshi/internal/model"
 )
 
 // ErrNotFound 表示目标记录不存在。

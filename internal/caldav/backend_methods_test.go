@@ -9,8 +9,8 @@ import (
 	"github.com/emersion/go-ical"
 	emcaldav "github.com/emersion/go-webdav/caldav"
 
-	"github.com/yufei/shendu/server/internal/model"
-	"github.com/yufei/shendu/server/internal/store"
+	"github.com/Felix2yu/shenshi/internal/model"
+	"github.com/Felix2yu/shenshi/internal/store"
 )
 
 // newTestBackend 建一个带临时库的 CalDAV 后端。

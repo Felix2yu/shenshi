@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yufei/shendu/server/internal/model"
+	"github.com/Felix2yu/shenshi/internal/model"
 )
 
 // undoTTL 是撤销槽位的保鲜期。过期之后被删任务的文件才真正从磁盘清理干净。

@@ -1,6 +1,6 @@
 package store
 
-import "github.com/yufei/shendu/server/internal/model"
+import "github.com/Felix2yu/shenshi/internal/model"
 
 // activityKeep 是操作历史的保留条数。这是一份「回看用的清单」，不是审计日志，
 // 无限增长只会让弹窗越来越难读。

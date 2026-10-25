@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/yufei/shendu/server/internal/store"
+	"github.com/Felix2yu/shenshi/internal/store"
 )
 
 // listHabits 返回习惯视图所需的全部数据：习惯、区间流水与统计。

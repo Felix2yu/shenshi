@@ -3,8 +3,8 @@ package api
 import (
 	"net/http"
 
-	"github.com/yufei/shendu/server/internal/push"
-	"github.com/yufei/shendu/server/internal/store"
+	"github.com/Felix2yu/shenshi/internal/push"
+	"github.com/Felix2yu/shenshi/internal/store"
 )
 
 // pushStatus 返回推送的自检信息：开关、渠道条数、最近几条投递结果。

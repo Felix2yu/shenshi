@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yufei/shendu/server/internal/model"
+	"github.com/Felix2yu/shenshi/internal/model"
 )
 
 // TestAttachmentLifecycle 上传 → 列表 → 读取 → 删除 的全链路与不存在路径。

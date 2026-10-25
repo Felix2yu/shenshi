@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yufei/shendu/server/internal/model"
+	"github.com/Felix2yu/shenshi/internal/model"
 )
 
 // TestTemplateHandlers 模板的接口层 CRUD 与实例化。

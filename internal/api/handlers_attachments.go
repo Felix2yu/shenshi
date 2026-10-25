@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yufei/shendu/server/internal/store"
+	"github.com/Felix2yu/shenshi/internal/store"
 )
 
 // 上传请求的整体上限：比单个附件的 32MB 略大，留给 multipart 的边界与表单字段。

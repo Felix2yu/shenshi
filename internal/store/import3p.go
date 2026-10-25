@@ -8,7 +8,7 @@ import (
 
 	"github.com/emersion/go-ical"
 
-	"github.com/yufei/shendu/server/internal/model"
+	"github.com/Felix2yu/shenshi/internal/model"
 )
 
 // 第三方格式导入。

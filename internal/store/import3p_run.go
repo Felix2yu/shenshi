@@ -3,7 +3,7 @@ package store
 import (
 	"strconv"
 
-	"github.com/yufei/shendu/server/internal/model"
+	"github.com/Felix2yu/shenshi/internal/model"
 )
 
 // PreviewThirdParty 解析第三方文件并返回预览，不落库。

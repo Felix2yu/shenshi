@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yufei/shendu/server/internal/model"
+	"github.com/Felix2yu/shenshi/internal/model"
 )
 
 // maxAttachmentSize 单个附件的上限。再大的文件不该进任务详情，挂个网盘链接更合适。

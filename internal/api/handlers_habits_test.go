@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yufei/shendu/server/internal/model"
+	"github.com/Felix2yu/shenshi/internal/model"
 )
 
 // reqWithID 构造带路径参数的请求。

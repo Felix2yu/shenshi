@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yufei/shendu/server/internal/model"
-	"github.com/yufei/shendu/server/internal/store"
+	"github.com/Felix2yu/shenshi/internal/model"
+	"github.com/Felix2yu/shenshi/internal/store"
 )
 
 // newTestStore 开一个临时库（含迁移与种子数据）。

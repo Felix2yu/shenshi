@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yufei/shendu/server/internal/model"
+	"github.com/Felix2yu/shenshi/internal/model"
 )
 
 // TestRollOverdue 逾期顺延：只动「未完成 + 未归档 + 到期日早于目标日」的那些。

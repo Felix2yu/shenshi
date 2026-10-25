@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/yufei/shendu/server/internal/model"
+	"github.com/Felix2yu/shenshi/internal/model"
 )
 
 // TestFoldersTree 分组建删改、嵌套与环路防护。

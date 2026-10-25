@@ -3,7 +3,7 @@ package store
 import (
 	"testing"
 
-	"github.com/yufei/shendu/server/internal/model"
+	"github.com/Felix2yu/shenshi/internal/model"
 )
 
 // TestParseTodoistCSV Todoist 导出解析。

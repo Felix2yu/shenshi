@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yufei/shendu/server/internal/store"
+	"github.com/Felix2yu/shenshi/internal/store"
 )
 
 // TestGenerateVAPIDKeys 生成的密钥对必须自洽：私钥能解出、公钥是对应的那个点。

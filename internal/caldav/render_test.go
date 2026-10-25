@@ -7,7 +7,7 @@ import (
 
 	"github.com/emersion/go-ical"
 
-	"github.com/yufei/shendu/server/internal/model"
+	"github.com/Felix2yu/shenshi/internal/model"
 )
 
 func task(mut func(*model.Task)) *model.Task {

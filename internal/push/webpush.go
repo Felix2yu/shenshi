@@ -12,7 +12,7 @@ import (
 
 	"github.com/daaku/webpush"
 
-	"github.com/yufei/shendu/server/internal/store"
+	"github.com/Felix2yu/shenshi/internal/store"
 )
 
 // Web Push 通道：页面完全关掉也能把提醒送到。
@@ -95,7 +95,7 @@ func NewWebSender(kv map[string]string) (WebSender, error) {
 	}
 	subject := strings.TrimSpace(kv[SetVAPIDSubject])
 	if subject == "" {
-		subject = "https://github.com/yufei/shendu"
+		subject = "https://github.com/Felix2yu/shenshi"
 	}
 	client := &webpush.Client{
 		Client:     &http.Client{Timeout: sendTimeout},
