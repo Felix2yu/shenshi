@@ -1,0 +1,7 @@
+# pnpm 11 起不再读取 package.json 中的 "pnpm" 字段，配置统一放在此文件。
+# 以下 overrides 用于修复 Dependabot 告警：
+# - minimatch <11.0.1: ReDoS（经 @typescript-eslint/typescript-estree 引入）
+# - source-map-js <1.2.2: 事件循环 DoS（经 @tailwindcss/node 引入）
+overrides:
+  minimatch@>=10.0.0 <11.0.1: ^11.0.5
+  source-map-js@<1.2.2: ^1.2.2
