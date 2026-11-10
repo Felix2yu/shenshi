@@ -44,6 +44,20 @@ jobs:
         mkdir -p internal/web/dist
         cp -R web/dist/. internal/web/dist/
 
+  # 每周定时任务（holiday-data.yml）之外再给一道即时反馈：那次结构迁移漏改脚本路径，
+  # PR 的 test job 照样全绿，直到一周后的定时任务才报 ENOENT。这里纯离线跑，
+  # 不访问 jsdelivr，几秒结束。
+  holiday:
+    name: 节假日数据自洽
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - name: 校验脚本写入路径与 holidays.json
+        run: node scripts/holiday-cn.mjs --verify
+
   image:
     needs: test
     permissions:
