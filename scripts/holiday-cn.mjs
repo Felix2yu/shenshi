@@ -22,7 +22,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
-const DATA = path.join(HERE, '..', 'server', 'internal', 'lunar', 'holidays.json')
+const DATA = path.join(HERE, '..', 'internal', 'lunar', 'holidays.json')
 const BASE = 'https://cdn.jsdelivr.net/gh/NateScarlet/holiday-cn@master'
 const API = process.env.SHENSHI_URL ?? 'http://127.0.0.1:8787'
 
@@ -105,11 +105,13 @@ async function sync(spec) {
   const wanted = spec.split(',').map((s) => s.trim()).filter(Boolean)
   for (const y of wanted) if (!/^\d{4}$/.test(y)) throw new Error(`年份格式不对：${y}`)
 
-  let data = { source: 'https://github.com/NateScarlet/holiday-cn', years: {} }
-  if (fs.existsSync(DATA)) {
-    data = JSON.parse(fs.readFileSync(DATA, 'utf8'))
-    data.years ??= {}
+  // 这个文件随仓库提交。读不到就说明路径算错了（结构迁移时踩过一次：DATA 还指着
+  // 已不存在的 server/internal/），此时若退回空对象继续写，会把历史年份整段丢掉。
+  if (!fs.existsSync(DATA)) {
+    throw new Error(`找不到 ${path.relative(process.cwd(), DATA)}，请确认脚本在仓库内运行`)
   }
+  const data = JSON.parse(fs.readFileSync(DATA, 'utf8'))
+  data.years ??= {}
 
   // 单年取不到（国务院还没发文）只跳过，不算失败 —— 定时任务每周都会带上「次年」，
   // 若因此整体失败，就会出现「每周都红、但其实没事」的假警报。

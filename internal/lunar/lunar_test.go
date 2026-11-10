@@ -164,6 +164,51 @@ func TestOfficialHolidays2026(t *testing.T) {
 	}
 }
 
+// TestOfficialHolidays2027 核对 2027 年官方安排（国办 2026-11 发布）。
+func TestOfficialHolidays2027(t *testing.T) {
+	cases := []struct {
+		date string
+		name string
+		kind string
+		rest bool
+		work bool
+	}{
+		{"2027-01-01", "元旦", "holiday", true, false},
+		{"2027-01-02", "", "weekend", true, false},   // 元旦连休里的周六
+		{"2027-01-03", "", "weekend", true, false},   // 元旦连休里的周日
+		{"2027-01-31", "", "workday", false, true},   // 春节前补班
+		{"2027-02-05", "春节", "holiday", true, false}, // 除夕
+		{"2027-02-06", "春节", "holiday", true, false}, // 正月初一（周六）
+		{"2027-02-09", "", "rest", true, false},      // 正月初四：调休凑出来的假
+		{"2027-02-14", "", "workday", false, true},   // 春节后补班
+		{"2027-04-05", "清明节", "holiday", true, false},
+		{"2027-05-01", "劳动节", "holiday", true, false},
+		{"2027-05-08", "", "workday", false, true},
+		{"2027-06-09", "端午节", "holiday", true, false},
+		{"2027-09-15", "中秋节", "holiday", true, false},
+		{"2027-09-26", "", "workday", false, true},
+		{"2027-10-01", "国庆节", "holiday", true, false},
+		{"2027-10-04", "", "rest", true, false}, // 调休凑出来的假
+		{"2027-10-09", "", "workday", false, true},
+		{"2027-03-01", "", "normal", false, true}, // 普通周一
+	}
+	for _, c := range cases {
+		info := DayInfoOf(day(c.date))
+		if info.Holiday != c.name {
+			t.Errorf("%s 节假日名 = %q，应为 %q", c.date, info.Holiday, c.name)
+		}
+		if info.Kind != c.kind {
+			t.Errorf("%s kind = %s，应为 %s", c.date, info.Kind, c.kind)
+		}
+		if info.IsRest != c.rest {
+			t.Errorf("%s isRest = %v，应为 %v", c.date, info.IsRest, c.rest)
+		}
+		if info.IsWorkday != c.work {
+			t.Errorf("%s isWorkday = %v，应为 %v", c.date, info.IsWorkday, c.work)
+		}
+	}
+}
+
 // TestStatutoryDaysEras 法定假日天数分两个时代：2024 及以前 11 天，2025 年起 13 天。
 // 修订后的《放假办法》自 2025-01-01 施行，除夕与 5 月 2 日才成为法定假日；
 // 若一视同仁按 13 天算，2024-02-09（除夕）会被误标成放假。
@@ -245,7 +290,7 @@ func firstEstimatedYear() int {
 // TestEmbeddedHolidayData 校验 go:embed 进来的 holidays.json。
 // 文件缺失或 JSON 坏了会在包 init 里 panic，测试根本跑不起来；这里只管内容对不对。
 func TestEmbeddedHolidayData(t *testing.T) {
-	for _, year := range []int{2024, 2025, 2026} {
+	for _, year := range []int{2024, 2025, 2026, 2027} {
 		if !HasOfficialData(year) {
 			t.Errorf("%d 年应有官方数据", year)
 		}
@@ -261,7 +306,7 @@ func TestEmbeddedHolidayData(t *testing.T) {
 		t.Errorf("%d 年尚无官方数据，应标记为推算值", y)
 	}
 	// 每年的法定假日必须都被官方标成放假：法律写死放假，通知不可能安排上班。
-	for _, year := range []int{2024, 2025, 2026} {
+	for _, year := range []int{2024, 2025, 2026, 2027} {
 		for _, d := range StatutoryDays(year) {
 			t0, _ := time.ParseInLocation("2006-01-02", d.Day, time.Local)
 			if !IsRestDay(t0) {
@@ -270,7 +315,7 @@ func TestEmbeddedHolidayData(t *testing.T) {
 		}
 	}
 	// 抽查几个补班日确实被标成上班。
-	for _, d := range []string{"2024-04-07", "2025-09-28", "2026-09-20", "2026-10-10"} {
+	for _, d := range []string{"2024-04-07", "2025-09-28", "2026-09-20", "2026-10-10", "2027-02-14", "2027-10-09"} {
 		if !IsMakeUpWorkday(day(d)) {
 			t.Errorf("%s 应为调休上班日", d)
 		}
