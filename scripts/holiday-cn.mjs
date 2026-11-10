@@ -10,6 +10,7 @@
  *   --sync 2027            拉取该年数据并写入 holidays.json（可逗号分隔多年）
  *   --sync 2027 --dry-run  只打印将要写入的内容，不改文件
  *   --check 2027           与运行中的本地服务逐日核对，报出差异
+ *   --verify               离线校验 holidays.json 与脚本写入路径（CI 每次 PR 都跑）
  *
  * 每年 11 月国务院发文后的标准动作：
  *   node scripts/holiday-cn.mjs --sync 2028
@@ -22,7 +23,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
-const DATA = path.join(HERE, '..', 'server', 'internal', 'lunar', 'holidays.json')
+const DATA = path.join(HERE, '..', 'internal', 'lunar', 'holidays.json')
 const BASE = 'https://cdn.jsdelivr.net/gh/NateScarlet/holiday-cn@master'
 const API = process.env.SHENSHI_URL ?? 'http://127.0.0.1:8787'
 
@@ -33,9 +34,10 @@ function arg(flag) {
 
 const syncYears = arg('--sync')
 const checkYear = arg('--check')
+const verifyLocal = process.argv.includes('--verify')
 const dryRun = process.argv.includes('--dry-run')
-if (!syncYears && !checkYear) {
-  console.error('用法：node scripts/holiday-cn.mjs (--sync <年[,年]> [--dry-run] | --check <年>)')
+if (!syncYears && !checkYear && !verifyLocal) {
+  console.error('用法：node scripts/holiday-cn.mjs (--sync <年[,年]> [--dry-run] | --check <年> | --verify)')
   process.exit(1)
 }
 
@@ -105,11 +107,13 @@ async function sync(spec) {
   const wanted = spec.split(',').map((s) => s.trim()).filter(Boolean)
   for (const y of wanted) if (!/^\d{4}$/.test(y)) throw new Error(`年份格式不对：${y}`)
 
-  let data = { source: 'https://github.com/NateScarlet/holiday-cn', years: {} }
-  if (fs.existsSync(DATA)) {
-    data = JSON.parse(fs.readFileSync(DATA, 'utf8'))
-    data.years ??= {}
+  // 这个文件随仓库提交。读不到就说明路径算错了（结构迁移时踩过一次：DATA 还指着
+  // 已不存在的 server/internal/），此时若退回空对象继续写，会把历史年份整段丢掉。
+  if (!fs.existsSync(DATA)) {
+    throw new Error(`找不到 ${path.relative(process.cwd(), DATA)}，请确认脚本在仓库内运行`)
   }
+  const data = JSON.parse(fs.readFileSync(DATA, 'utf8'))
+  data.years ??= {}
 
   // 单年取不到（国务院还没发文）只跳过，不算失败 —— 定时任务每周都会带上「次年」，
   // 若因此整体失败，就会出现「每周都红、但其实没事」的假警报。
@@ -148,6 +152,41 @@ async function sync(spec) {
   fs.writeFileSync(DATA, text)
   console.log(`✅ 已写入 ${path.relative(process.cwd(), DATA)}：${done.join('，')}`)
   console.log('   该文件由 go:embed 打进二进制，重新 build 后生效。')
+}
+
+// ---------- --verify：离线自洽校验（CI 用，不访问网络） ----------
+async function verify() {
+  if (!fs.existsSync(DATA)) {
+    throw new Error(`找不到 ${path.relative(process.cwd(), DATA)}，请确认脚本在仓库内运行`)
+  }
+  let data
+  try {
+    data = JSON.parse(fs.readFileSync(DATA, 'utf8'))
+  } catch (e) {
+    throw new Error(`${path.basename(DATA)} 不是合法 JSON：${e.message}`)
+  }
+  const years = Object.keys(data.years ?? {}).sort()
+  if (years.length === 0) throw new Error(`${path.basename(DATA)} 的 years 为空`)
+
+  // 脚本写的文件必须就是 go:embed 读的那份。结构迁移时漏改路径，
+  // 曾让工作流每周拿到新数据却写进不存在的老目录（ENOENT）。
+  const dir = path.dirname(DATA)
+  const embedded = fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith('.go'))
+    .some((f) => fs.readFileSync(path.join(dir, f), 'utf8').includes('//go:embed holidays.json'))
+  if (!embedded) {
+    throw new Error(`${path.relative(process.cwd(), dir)} 下没有 //go:embed holidays.json，脚本写入的文件不会被编进二进制`)
+  }
+
+  for (const y of years) {
+    if (!/^\d{4}$/.test(y)) throw new Error(`年份键格式不对：${y}`)
+    const v = data.years[y]
+    if (!Array.isArray(v?.papers) || v.papers.length === 0) throw new Error(`${y} 年缺国务院原文链接（papers）`)
+    if (!Array.isArray(v.days) || v.days.length === 0) throw new Error(`${y} 年没有 days`)
+    validateYear(y, v)
+  }
+  console.log(`✅ ${path.relative(process.cwd(), DATA)} 自洽：${years.map((y) => `${y}（${data.years[y].days.length} 天）`).join('、')}`)
 }
 
 // ---------- --check：与本地服务逐日核对 ----------
@@ -190,7 +229,7 @@ async function check(y) {
   process.exitCode = 1
 }
 
-;(syncYears ? sync(syncYears) : check(checkYear)).catch((e) => {
+;(verifyLocal ? verify() : syncYears ? sync(syncYears) : check(checkYear)).catch((e) => {
   console.error('失败：' + e.message)
   process.exit(1)
 })
