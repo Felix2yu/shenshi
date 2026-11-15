@@ -29,6 +29,7 @@ import {
   IconSparkle,
   IconStar,
   IconTable,
+  IconTimer,
   IconX
 } from './icons';
 import { SearchBar } from './TaskViews';
@@ -67,6 +68,7 @@ const VIEW_TABS: { key: ViewKind; label: string; icon: typeof IconList }[] = [
   { key: 'table', label: '表格', icon: IconTable },
   { key: 'calendar', label: '日历', icon: IconGrid },
   { key: 'quadrant', label: '四象限', icon: IconSparkle },
+  { key: 'focus', label: '专注', icon: IconTimer },
   { key: 'habits', label: '习惯', icon: IconSeedling },
   { key: 'stats', label: '统计', icon: IconChart }
 ];
@@ -197,6 +199,7 @@ export function Toolbar({
     if (view === 'table') return '表格';
     if (view === 'calendar') return '日历';
     if (view === 'quadrant') return '四象限';
+    if (view === 'focus') return '专注 · 番茄钟';
     if (view === 'habits') return '习惯打卡';
     if (view === 'stats') return '统计与复盘';
     if (selection.kind === 'smart') return SMART_TITLE[selection.key];

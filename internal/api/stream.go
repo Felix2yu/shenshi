@@ -66,6 +66,11 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) error {
 	h.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	_ = rc.Flush()
+	// 立刻发一行注释并冲刷：iOS 的 URLSession.bytes 要收到第一个身体字节才算
+	// 「响应到达」，只有空响应头它会一直挂到第一次心跳（20 秒）——
+	// 客户端的「已连接」指示灯也跟着迟 20 秒。注释行对任何 SSE 客户端都无害。
+	_, _ = fmt.Fprint(w, ": hello\n\n")
+	_ = rc.Flush()
 
 	ch := make(chan string, 16)
 	s.stream.add(ch)

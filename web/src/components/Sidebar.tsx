@@ -625,6 +625,7 @@ export function Sidebar({ onCloseRequest }: { onCloseRequest?: () => void }) {
     if (view === 'table') return '表格';
     if (view === 'calendar') return '日历';
     if (view === 'quadrant') return '四象限';
+    if (view === 'focus') return '专注 · 番茄钟';
     if (view === 'habits') return '习惯打卡';
     if (view === 'stats') return '统计与复盘';
     if (selection.kind === 'smart')

@@ -30,12 +30,13 @@ import { Button, Modal, ProgressRing, RoundCheck, cx, inputClass } from './ui';
 export function AppOverlays() {
   const [morningOpen, setMorningOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
-  const [focusOpen, setFocusOpen] = useState(false);
+  const { setView } = useStore();
 
   useEffect(() => {
     const onMorning = () => setMorningOpen(true);
     const onReview = () => setReviewOpen(true);
-    const onFocus = () => setFocusOpen(true);
+    // 专注已是独立视图页（FocusView）：所有「打开专注」的入口统一改为导航过去。
+    const onFocus = () => setView('focus');
     window.addEventListener('shenshi:morning', onMorning);
     window.addEventListener('shenshi:review', onReview);
     window.addEventListener('shenshi:focus', onFocus);
@@ -44,13 +45,12 @@ export function AppOverlays() {
       window.removeEventListener('shenshi:review', onReview);
       window.removeEventListener('shenshi:focus', onFocus);
     };
-  }, []);
+  }, [setView]);
 
   return (
     <>
       <MorningPlan open={morningOpen} onClose={() => setMorningOpen(false)} />
       <DailyReview open={reviewOpen} onClose={() => setReviewOpen(false)} />
-      <FocusPanel open={focusOpen} onClose={() => setFocusOpen(false)} />
       <FocusIndicator />
       <ReminderCenter />
       <ConfirmHost />
@@ -61,10 +61,10 @@ export function AppOverlays() {
   );
 }
 
-/** 专注进行中的迷你计时条。任务详情开始专注后面板会自动弹出；关掉面板后靠它保持可见，
- *  点击即可重新打开专注面板。 */
+/** 专注进行中的迷你计时条：计时跨视图存活，这条小条是它全程唯一的
+ *  可见入口 —— 点击切到专注页。 */
 function FocusIndicator() {
-  const { focus, tasks } = useStore();
+  const { focus, tasks, setView } = useStore();
   if (!focus.running) return null;
   const mm = String(Math.floor(focus.remaining / 60)).padStart(2, '0');
   const ss = String(focus.remaining % 60).padStart(2, '0');
@@ -72,8 +72,8 @@ function FocusIndicator() {
   return (
     <button
       type="button"
-      onClick={() => window.dispatchEvent(new CustomEvent('shenshi:focus'))}
-      title="打开专注面板"
+      onClick={() => setView('focus')}
+      title="打开专注页"
       className="kb-lift fixed bottom-[calc(3.5rem+env(safe-area-inset-bottom))] left-4 z-40 flex items-center gap-2 rounded-full border border-seal/40 bg-surface px-3 py-1.5 text-[0.75rem] text-ink shadow-[var(--shadow-sm)] transition-colors hover:bg-surface-2 lg:bottom-4"
     >
       <IconTimer size={13} className="text-seal" />
@@ -780,139 +780,6 @@ function ReviewField({
         className={cx(inputClass, 'resize-none leading-6')}
       />
     </label>
-  );
-}
-
-/* ---------------- 专注 ---------------- */
-
-const FOCUS_PRESETS = [
-  { minutes: 25, label: '25 分钟 · 一番茄' },
-  { minutes: 45, label: '45 分钟 · 深度一段' },
-  { minutes: 15, label: '15 分钟 · 启动一下' }
-];
-
-function FocusPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { focus, startFocus, stopFocus, tasks } = useStore();
-  const [taskId, setTaskId] = useState<number | ''>('');
-  const [minutes, setMinutes] = useState(25);
-
-  useEffect(() => {
-    if (open && focus.taskId) setTaskId(focus.taskId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  const mm = String(Math.floor(focus.remaining / 60)).padStart(2, '0');
-  const ss = String(focus.remaining % 60).padStart(2, '0');
-  const progress = focus.running ? 1 - focus.remaining / (focus.minutes * 60) : 0;
-  const current = tasks.find((t) => t.id === focus.taskId) ?? tasks.find((t) => t.id === taskId);
-
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={
-        <span className="inline-flex items-center gap-2">
-          <IconTimer size={17} className="text-seal" />
-          专注
-        </span>
-      }
-      subtitle={QUOTES.focus.text + ' —— ' + QUOTES.focus.source}
-      width={420}
-      footer={
-        focus.running ? (
-          <>
-            <Button variant="ghost" onClick={() => void stopFocus(false)}>
-              放弃本次
-            </Button>
-            <Button variant="primary" icon={IconCheck} onClick={() => void stopFocus(true)}>
-              提前结束并记录
-            </Button>
-          </>
-        ) : (
-          <>
-            <Button variant="ghost" onClick={onClose}>
-              关闭
-            </Button>
-            <Button
-              variant="primary"
-              icon={IconTimer}
-              onClick={() => startFocus(typeof taskId === 'number' ? taskId : null, minutes)}
-            >
-              开始专注
-            </Button>
-          </>
-        )
-      }
-    >
-      {focus.running ? (
-        <div className="flex flex-col items-center gap-3 py-2">
-          <ProgressRing value={progress} size={148} stroke={8}>
-            <div className="text-center">
-              <div className="brand-serif text-[1.875rem] leading-none font-semibold text-ink tabular-nums">
-                {mm}:{ss}
-              </div>
-              <div className="mt-1 text-[0.6875rem] text-ink-3">共 {focus.minutes} 分钟</div>
-            </div>
-          </ProgressRing>
-          <p className="max-w-[16rem] text-center text-[0.78125rem] leading-relaxed text-ink-2">
-            {current ? `正在专注：${current.title}` : '未关联任务，专注时间仍会记录。'}
-          </p>
-          <p className="text-[0.71875rem] text-ink-3">倒计时结束会自动记录时长并提示。</p>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          <div>
-            <span className="mb-1.5 block text-[0.71875rem] font-medium tracking-wide text-ink-3">
-              专注时长
-            </span>
-            <div className="space-y-1.5">
-              {FOCUS_PRESETS.map((p) => (
-                <button
-                  key={p.minutes}
-                  type="button"
-                  onClick={() => setMinutes(p.minutes)}
-                  className={cx(
-                    'flex w-full items-center justify-between rounded-lg border px-3 py-2 text-[0.8125rem] transition-colors',
-                    minutes === p.minutes
-                      ? 'border-seal bg-seal/10 text-seal'
-                      : 'border-line text-ink-2 hover:bg-surface-2'
-                  )}
-                >
-                  {p.label}
-                  {minutes === p.minutes ? <IconCheck size={14} /> : null}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <span className="mb-1.5 block text-[0.71875rem] font-medium tracking-wide text-ink-3">
-              关联任务（可选）
-            </span>
-            <select
-              className={inputClass}
-              aria-label="关联任务"
-              value={taskId}
-              onChange={(e) => setTaskId(e.target.value ? Number(e.target.value) : '')}
-            >
-              <option value="">不关联</option>
-              {tasks
-                .filter((t) => t.status !== 'done')
-                .slice(0, 60)
-                .map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.title}
-                  </option>
-                ))}
-            </select>
-            {tasks.filter((t) => t.status !== 'done').length > 60 ? (
-              <p className="mt-1 text-[0.6875rem] text-ink-3">
-                仅列出当前视图的前 60 项；先在列表里搜索可缩小范围
-              </p>
-            ) : null}
-          </div>
-        </div>
-      )}
-    </Modal>
   );
 }
 

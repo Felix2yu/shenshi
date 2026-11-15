@@ -38,6 +38,9 @@ const HabitsView = lazy(() =>
 const TableView = lazy(() =>
   import('./components/TableView').then((m) => ({ default: m.TableView }))
 );
+const FocusView = lazy(() =>
+  import('./components/FocusView').then((m) => ({ default: m.FocusView }))
+);
 import { SealLogo } from './components/icons';
 import { MobileTabBar, Toolbar } from './components/Toolbar';
 import { IconRefresh } from './components/icons';
@@ -155,7 +158,8 @@ export default function App() {
         q: 'quadrant',
         b: 'board',
         s: 'stats',
-        h: 'habits'
+        h: 'habits',
+        f: 'focus'
       };
       if (key in goView) {
         e.preventDefault();
@@ -278,6 +282,8 @@ export default function App() {
                 <QuadrantView onOpen={openTask} filter={filters} />
               ) : view === 'habits' ? (
                 <HabitsView />
+              ) : view === 'focus' ? (
+                <FocusView />
               ) : (
                 <StatsView />
               )}
