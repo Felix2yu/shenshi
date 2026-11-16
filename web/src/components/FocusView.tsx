@@ -32,8 +32,7 @@ export function FocusView() {
   const mm = String(Math.floor(focus.remaining / 60)).padStart(2, '0');
   const ss = String(focus.remaining % 60).padStart(2, '0');
   const progress = focus.running ? 1 - focus.remaining / (focus.minutes * 60) : 0;
-  const current =
-    tasks.find((t) => t.id === focus.taskId) ?? tasks.find((t) => t.id === taskId);
+  const current = tasks.find((t) => t.id === focus.taskId) ?? tasks.find((t) => t.id === taskId);
   const openTasks = tasks.filter((t) => t.status !== 'done');
 
   return (
@@ -41,7 +40,7 @@ export function FocusView() {
       <div className="flex w-full max-w-[26rem] flex-col items-center gap-5">
         <ProgressRing value={progress} size={180} stroke={10}>
           <div className="text-center">
-            <div className="brand-serif text-[2rem] leading-none font-semibold tabular-nums text-ink">
+            <div className="brand-serif text-[2rem] leading-none font-semibold text-ink tabular-nums">
               {mm}:{ss}
             </div>
             <div className="mt-1.5 text-[0.6875rem] text-ink-3">
@@ -147,7 +146,9 @@ export function FocusView() {
           </>
         )}
 
-        <p className="text-[0.75rem] text-ink-3">{QUOTES.focus.text + ' —— ' + QUOTES.focus.source}</p>
+        <p className="text-[0.75rem] text-ink-3">
+          {QUOTES.focus.text + ' —— ' + QUOTES.focus.source}
+        </p>
         {stats && stats.focusMinutes > 0 ? (
           <p className="text-[0.75rem] text-ink-3">近期已专注 {stats.focusMinutes} 分钟</p>
         ) : null}

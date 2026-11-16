@@ -20,7 +20,7 @@ import {
   IconTimer,
   IconX
 } from './icons';
-import { Button, Modal, ProgressRing, RoundCheck, cx, inputClass } from './ui';
+import { Button, Modal, RoundCheck, cx, inputClass } from './ui';
 
 /* ============================================================
    全局覆盖层集合：晨省、日省、专注、确认框、提醒中心、轻提示。

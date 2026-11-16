@@ -432,7 +432,8 @@ export interface CalendarMeta {
 }
 
 /** 列表视图类型 */
-export type ViewKind = 'list' | 'board' | 'table' | 'calendar' | 'quadrant' | 'stats' | 'habits' | 'focus';
+export type ViewKind =
+  'list' | 'board' | 'table' | 'calendar' | 'quadrant' | 'stats' | 'habits' | 'focus';
 
 /** 当前侧边栏选中的目标 */
 export type Selection =
