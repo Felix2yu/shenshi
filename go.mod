@@ -4,10 +4,10 @@ go 1.27.1
 
 require (
 	github.com/daaku/webpush v0.5.0
-	github.com/emersion/go-ical v0.0.0-20240127095438-fc1c9d8fb2b6
-	github.com/emersion/go-webdav v0.7.0
+	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
+	github.com/emersion/go-webdav v0.8.0
 	github.com/unraid/apprise-go v0.4.0
-	modernc.org/sqlite v1.62.0
+	modernc.org/sqlite v1.63.0
 )
 
 require (
